@@ -7,3 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes for the upcoming release live in `changelog.d/`.
 
 <!-- towncrier release notes start -->
+
+## [0.1.0](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.0) - 2026-01-07
+
+#### Added
+- Initial public release of devqubit (core + engine + adapters + optional local UI).
