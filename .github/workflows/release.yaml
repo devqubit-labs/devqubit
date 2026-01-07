@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -89,6 +89,9 @@ jobs:
       name: pypi
       url: https://pypi.org/
 
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
     steps:
       - name: Download dists
         uses: actions/download-artifact@v4
@@ -96,19 +99,19 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      # 1) Bootstrap
-      - name: Publish (bootstrap via PyPI token if PYPI_TOKEN is set)
-        if: ${{ secrets.PYPI_TOKEN != '' }}
+      # 1) Bootstrap (when PYPI_TOKEN is set)
+      - name: Publish (bootstrap via PyPI token)
+        if: ${{ env.PYPI_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
+          password: ${{ env.PYPI_TOKEN }}
           packages-dir: dist/
           skip-existing: true
           verbose: true
 
-      # 2) Trusted Publishing
+      # 2) Trusted Publishing OIDC (when PYPI_TOKEN is not set)
       - name: Publish (Trusted Publishing / OIDC)
-        if: ${{ secrets.PYPI_TOKEN == '' }}
+        if: ${{ env.PYPI_TOKEN == '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
