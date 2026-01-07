@@ -29,7 +29,7 @@ jobs:
         run: uv run pytest
 
       - name: Install build backend
-        run: uv run python -m pip install --upgrade build
+        run: uv pip install --upgrade build
 
       - name: Verify tag matches all package versions
         run: |
