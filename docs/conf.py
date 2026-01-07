@@ -54,8 +54,8 @@ autosectionlabel_prefix_document = True
 
 # MyST (Markdown) configuration
 myst_enable_extensions = [
-    "colon_fence",  # ::: fences for admonitions
-    "deflist",  # definition lists
+    "colon_fence",
+    "deflist",
     "tasklist",
 ]
 myst_heading_anchors = 3  # auto-generate anchors for h1-h3
@@ -77,5 +77,5 @@ html_context = {
 }
 
 intersphinx_mapping = {
-    "python": ("https://docs.python.org/3", {}),
+    "python": ("https://docs.python.org/3", None),
 }
