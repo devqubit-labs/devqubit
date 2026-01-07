@@ -1,0 +1,48 @@
+name: Bug report
+description: Report a reproducible bug in devqubit
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal snippet or CLI command.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: devqubit version
+      placeholder: e.g. 0.1.0 (or commit SHA)
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        OS:
+        Python:
+        SDK (Qiskit/Braket/Cirq/PennyLane/Other):
+        Backend (sim/hardware):
