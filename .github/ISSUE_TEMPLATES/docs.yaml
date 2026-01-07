@@ -1,0 +1,10 @@
+name: Documentation
+description: Report missing/unclear docs
+labels: ["documentation"]
+body:
+  - type: textarea
+    id: change
+    attributes:
+      label: What should be improved?
+    validations:
+      required: true

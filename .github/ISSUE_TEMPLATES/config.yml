@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions / Discussions
+    url: https://github.com/devqubit-labs/devqubit/discussions
+    about: Please ask questions here (Issues are for bugs and actionable requests).
+  - name: Security vulnerability report
+    url: https://github.com/devqubit-labs/devqubit/security/advisories/new
+    about: Please report security issues privately.

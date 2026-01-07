@@ -35,7 +35,7 @@ dependencies = [
 Homepage = "https://devqubit.com"
 Repository = "https://github.com/devqubit-labs/devqubit"
 Issues = "https://github.com/devqubit-labs/devqubit/issues"
-Documentation = "https://<YOUR-DOCS>"
+Documentation = "https://devqubit.readthedocs.io"
 
 [project.optional-dependencies]
 # Remote storage dependencies

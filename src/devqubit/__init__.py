@@ -28,9 +28,14 @@ Verification
 >>> result = verify_against_baseline(candidate, project="my_project", policy=VerifyPolicy())
 >>> assert result.ok
 
+Snapshots
+---------
+>>> from devqubit.snapshot import ExecutionEnvelope, DeviceSnapshot
+>>> envelope = ExecutionEnvelope(device=device_snapshot, ...)
+
 UI
 ------------
->>> from devqubit_ui import run_server
+>>> from devqubit import run_server
 >>> run_server(port=8080)
 
 Submodules
@@ -39,6 +44,7 @@ Submodules
 - devqubit.ci: CI/CD integration (JUnit, GitHub annotations)
 - devqubit.bundle: Run packaging utilities
 - devqubit.config: Configuration management
+- devqubit.snapshot: UEC snapshot schemas
 """
 
 from __future__ import annotations

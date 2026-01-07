@@ -4,6 +4,7 @@ Thanks for your interest in contributing to **devqubit**! This guide keeps contr
 
 - Please follow our community rules in **CODE_OF_CONDUCT.md**.
 - For security issues, **do not** open a public issue (see [Security](#security)).
+- Questions / support: prefer **GitHub Discussions** (Issues are for actionable bugs/requests).
 
 ## Project tooling
 
@@ -14,16 +15,23 @@ This repository uses:
 - **pytest** for tests
 - **towncrier** for changelog fragments (only for user-facing changes)
 
+CI runs:
+- `pre-commit` (lint/format)
+- `pytest` on multiple Python versions (matrix)
+
 ## Quickstart
 
 ```bash
-git clone <REPO_URL>
-cd <REPO_DIR>
+git clone https://github.com/devqubit-labs/devqubit.git
+cd devqubit
 
-# Create/update .venv and install the workspace environment.
+# Create/update .venv and install the workspace environment from uv.lock.
 # --all-packages installs all workspace members.
-# --all-extras installs all optional dependencies (extras) for all members.
-uv sync --all-packages --all-extras
+# dev dependencies are synced by default (unless you opt out
+uv sync --locked --all-packages
+
+# OPTIONAL: install all extras (optional dependencies) as well
+uv sync --locked --all-packages --all-extras
 
 # Install git hooks (required)
 uv run pre-commit install
@@ -38,7 +46,7 @@ uv run pytest
 If you only want the core packages and want to avoid heavy adapter/UI dependencies:
 
 ```bash
-uv sync --all-packages
+uv sync --locked --all-packages
 uv run pytest
 ```
 
@@ -182,20 +190,22 @@ Keep PRs focused and small when possible. If a change is large, split it into in
 
 If you change dependencies:
 
-1. Update the relevant `pyproject.toml`
+1. Update the relevant `pyproject.toml` (or use `uv add` / `uv remove`)
 2. Update the lockfile and re-sync:
 
 ```bash
 uv lock
-uv sync
+uv sync --locked --all-packages
 ```
 
 If you want to upgrade locked versions:
 
 ```bash
 uv lock --upgrade
-uv sync
+uv sync --locked --all-packages
 ```
+
+Tip: If `uv sync --locked` fails, it usually means uv.lock is out of date - run `uv lock` and commit the updated lockfile.
 
 ## Documentation
 
@@ -215,7 +225,7 @@ When filing a bug report, please include:
 
 Please do **not** report security vulnerabilities via public GitHub issues.
 
-Instead, email: **info@devqubit.com**
+Use GitHub “Report a vulnerability” (Private Vulnerability Reporting).
 
 ## License
 
