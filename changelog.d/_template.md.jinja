@@ -5,7 +5,7 @@
 {% for category, val in definitions.items() if category in entries %}
 #### {{ definitions[category]['name'] }}
 {% for text, values in entries[category].items() %}
-- {{ text }} ({{ values|join(", ") }})
+- {{ text }}{% if values %} ({{ values|join(", ") }}){% endif %}
 {% endfor %}
 {% endfor %}
 {% endfor %}
