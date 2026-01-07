@@ -7,7 +7,7 @@ so runs are reproducible, comparable, and easy to share.
 
 ## Documentation
 
-📚 Read the Docs: **https://<RTD_SLUG>.readthedocs.io**
+📚 Read the Docs: **https://devqubit.readthedocs.io**
 
 The documentation source lives in this repository under `docs/`, but the canonical, rendered docs are on Read the Docs.
 
