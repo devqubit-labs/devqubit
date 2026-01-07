@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch: {}
 
 jobs:
   build:
@@ -11,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -71,13 +72,13 @@ jobs:
           done
 
       - name: Upload dists artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
 
   publish:
-    name: Publish to PyPI (Trusted Publishing)
+    name: Publish to PyPI
     needs: [build]
     runs-on: ubuntu-latest
 
@@ -96,5 +97,21 @@ jobs:
           name: python-package-distributions
           path: dist/
 
-      - name: Publish
+      # 1) Bootstrap
+      - name: Publish (bootstrap via PyPI token if PYPI_TOKEN is set)
+        if: ${{ secrets.PYPI_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+          packages-dir: dist/
+          skip-existing: true
+          verbose: true
+
+      # 2) Trusted Publishing
+      - name: Publish (Trusted Publishing / OIDC)
+        if: ${{ secrets.PYPI_TOKEN == '' }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+          verbose: true
