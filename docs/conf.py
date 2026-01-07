@@ -4,22 +4,43 @@
 
 from __future__ import annotations
 
+import tomllib
 from datetime import date
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as pkg_version
+from pathlib import Path
 
 
 project = "devqubit"
 author = "devqubit"
 copyright = f"{date.today().year}, {author}"
 
-# Read package version
-release = "0.0.0"
-try:
-    release = pkg_version("devqubit")
-except PackageNotFoundError:
-    pass
 
+def _version_from_pyproject() -> str | None:
+    """Reads version from repository's pyproject.toml."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return None
+
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    # PEP 621
+    proj = data.get("project", {})
+    v = proj.get("version")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+
+    # Poetry fallback (optional)
+    poetry = data.get("tool", {}).get("poetry", {})
+    v = poetry.get("version")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+
+    return None
+
+
+# Read package version
+release = _version_from_pyproject()
 version = release.split("+")[0]
 
 extensions = [
@@ -39,12 +60,12 @@ myst_enable_extensions = [
 ]
 myst_heading_anchors = 3  # auto-generate anchors for h1-h3
 
-templates_path = []
+templates_path: list[str] = []
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 # HTML output
 html_theme = "sphinx_rtd_theme"
-html_static_path = []
+html_static_path: list[str] = []
 
 # Show "Edit on GitHub"
 html_context = {
