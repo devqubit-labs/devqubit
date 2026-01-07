@@ -1,9 +1,9 @@
 name: Release
+run-name: Release (package=${{ inputs.package || 'all' }} ref=${{ github.ref_name }})
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       package:
@@ -24,108 +24,78 @@ on:
 
 jobs:
   build:
-    name: Build + test + package (monorepo)
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Install uv (Python 3.12)
-        uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
           enable-cache: true
 
-      - name: Sync (workspace + dev + all extras)
-        run: uv sync --all-packages --all-extras --dev --locked
-
-      - name: Run tests
-        run: uv run pytest
-
-      - name: Install build backend
-        run: uv run python -m pip install --upgrade build
+      - run: uv sync --all-packages --all-extras --dev --locked
+      - run: uv run pytest
+      - run: uv run python -m pip install --upgrade build
 
       - name: Verify tag matches all package versions (tag runs only)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           uv run python - << 'PY'
           import os, sys, pathlib, tomllib
-
-          tag = os.environ["GITHUB_REF_NAME"]  # v0.1.0
+          tag = os.environ["GITHUB_REF_NAME"]
           ver = tag[1:] if tag.startswith("v") else tag
-
-          pyprojects = [pathlib.Path("pyproject.toml")]
-          pyprojects += sorted(pathlib.Path("packages").glob("*/pyproject.toml"))
-
-          mismatches = []
+          pyprojects = [pathlib.Path("pyproject.toml")] + sorted(pathlib.Path("packages").glob("*/pyproject.toml"))
+          bad = []
           for p in pyprojects:
-            data = tomllib.loads(p.read_text(encoding="utf-8"))
-            v = data.get("project", {}).get("version")
+            v = tomllib.loads(p.read_text(encoding="utf-8")).get("project", {}).get("version")
             if v != ver:
-              mismatches.append((str(p), v))
-
-          if mismatches:
-            for p, v in mismatches:
+              bad.append((str(p), v))
+          if bad:
+            for p, v in bad:
               print(f"Version mismatch: {p}: {v!r} != {ver!r}")
             sys.exit(1)
-
-          print("OK: all versions match", ver)
+          print("OK:", ver)
           PY
 
       - name: Build all distributions into per-package dirs
         run: |
           uv run python - << 'PY'
           import pathlib, tomllib, subprocess, sys
-
           root = pathlib.Path(".").resolve()
-          dist_root = root / "dist"
-          dist_root.mkdir(exist_ok=True)
+          dist = root / "dist"
+          dist.mkdir(exist_ok=True)
 
-          def project_name(pyproject: pathlib.Path) -> str:
-            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
-            name = data.get("project", {}).get("name")
-            if not name:
-              raise RuntimeError(f"Missing [project].name in {pyproject}")
-            return name
+          def name(pp):
+            return tomllib.loads(pp.read_text(encoding="utf-8"))["project"]["name"]
 
-          # root package
-          root_name = project_name(root / "pyproject.toml")
-          (dist_root / root_name).mkdir(parents=True, exist_ok=True)
-          subprocess.check_call([sys.executable, "-m", "build", "--outdir", str(dist_root / root_name), str(root)])
+          # root
+          root_name = name(root / "pyproject.toml")
+          (dist / root_name).mkdir(parents=True, exist_ok=True)
+          subprocess.check_call([sys.executable, "-m", "build", "--outdir", str(dist / root_name), str(root)])
 
-          # workspace members
-          pkgs_dir = root / "packages"
-          if pkgs_dir.exists():
-            for pyproject in sorted(pkgs_dir.glob("*/pyproject.toml")):
-              pkg_dir = pyproject.parent
-              name = project_name(pyproject)
-              out = dist_root / name
-              out.mkdir(parents=True, exist_ok=True)
-              print(f"Building {name} from {pkg_dir}")
-              subprocess.check_call([sys.executable, "-m", "build", "--outdir", str(out), str(pkg_dir)])
-
-          print("Built dists into:", dist_root)
+          # members
+          for pp in sorted((root / "packages").glob("*/pyproject.toml")):
+            pkg = pp.parent
+            n = name(pp)
+            (dist / n).mkdir(parents=True, exist_ok=True)
+            subprocess.check_call([sys.executable, "-m", "build", "--outdir", str(dist / n), str(pkg)])
           PY
 
-      - name: Upload dists artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
 
   publish:
-    name: Publish to PyPI (Trusted Publishing)
     needs: [build]
     runs-on: ubuntu-latest
-
     permissions:
       id-token: write
       contents: read
 
-    # One job per package (recommended; invoking pypi-publish multiple times in one job is not supported)
     strategy:
       fail-fast: false
       matrix:
@@ -139,25 +109,19 @@ jobs:
           - devqubit-cirq
           - devqubit-braket
 
-    # On tag push: publish all packages.
-    # On manual run: publish only the selected one (or all).
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'workflow_dispatch' && (inputs.package == 'all' || inputs.package == matrix.package))
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.package == 'all' || inputs.package == matrix.package)) }}
 
     environment:
       name: pypi
-      url: https://pypi.org/p/${{ matrix.package }}
+      url: https://pypi.org/project/${{ matrix.package }}/
 
     steps:
-      - name: Download dists
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
 
-      - name: Publish ${{ matrix.package }}
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/${{ matrix.package }}
           skip-existing: true
