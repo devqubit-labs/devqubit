@@ -1,0 +1,211 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 devqubit
+
+"""
+Environment capture utilities.
+
+This module provides functions for capturing the current execution environment,
+including Python version, platform information, installed packages, and git
+repository state.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import platform
+import subprocess
+import sys
+from typing import Any
+
+
+logger = logging.getLogger(__name__)
+
+# Timeout for subprocess calls (seconds)
+_SUBPROCESS_TIMEOUT = 30.0
+_GIT_TIMEOUT = 5.0
+
+
+def _pip_freeze() -> list[str] | None:
+    """
+    Get installed packages via pip freeze.
+
+    Runs ``pip freeze --local`` to capture the list of installed packages
+    in the current environment.
+
+    Returns
+    -------
+    list of str or None
+        List of installed packages in pip freeze format
+        (e.g., ``["numpy==1.24.0", "scipy==1.10.0"]``),
+        or None if pip freeze fails or times out.
+
+    Notes
+    -----
+    This function has a 30-second timeout to prevent hanging on
+    slow or unresponsive pip installations.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "freeze", "--local"],
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+        if result.returncode == 0:
+            packages = [
+                line.strip()
+                for line in result.stdout.splitlines()
+                if line.strip() and not line.startswith("#")
+            ]
+            logger.debug("Captured %d packages from pip freeze", len(packages))
+            return packages
+        else:
+            logger.debug("pip freeze failed with return code %d", result.returncode)
+    except subprocess.TimeoutExpired:
+        logger.warning("pip freeze timed out after %.1f seconds", _SUBPROCESS_TIMEOUT)
+    except FileNotFoundError:
+        logger.debug("pip not found in PATH")
+    except OSError as e:
+        logger.debug("pip freeze failed: %s", e)
+
+    return None
+
+
+def capture_environment(include_pip: bool | None = None) -> dict[str, Any]:
+    """
+    Capture current execution environment information.
+
+    Collects Python version, platform details, and optionally the list
+    of installed packages for reproducibility tracking.
+
+    Parameters
+    ----------
+    include_pip : bool, optional
+        Whether to include pip freeze output:
+
+        - ``True``: Always run pip freeze
+        - ``False``: Skip pip freeze
+        - ``None`` (default): Check ``DEVQUBIT_CAPTURE_PIP`` environment
+          variable (enabled if set to "1" or "true")
+
+    Returns
+    -------
+    dict
+        Environment snapshot containing:
+
+        - ``python_version``: Full Python version string
+        - ``platform``: Platform identifier (e.g., "Linux-5.15.0-x86_64")
+        - ``machine``: Machine type (e.g., "x86_64")
+        - ``processor``: Processor name
+        - ``env_vars``: Relevant environment variables (if any)
+        - ``packages``: List of installed packages (if include_pip is True)
+    """
+    if include_pip is None:
+        env_value = os.environ.get("DEVQUBIT_CAPTURE_PIP", "").strip().lower()
+        include_pip = env_value in {"1", "true", "yes", "on"}
+
+    env: dict[str, Any] = {
+        "python_version": sys.version,
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor() or None,
+    }
+
+    # Capture relevant environment variables
+    relevant_vars = [
+        "VIRTUAL_ENV",
+        "CONDA_DEFAULT_ENV",
+        "CONDA_PREFIX",
+    ]
+    env_vars = {k: os.environ[k] for k in relevant_vars if k in os.environ}
+    if env_vars:
+        env["env_vars"] = env_vars
+
+    if include_pip:
+        packages = _pip_freeze()
+        if packages:
+            env["packages"] = packages
+
+    logger.debug(
+        "Captured environment: platform=%s, pip=%s", env["platform"], include_pip
+    )
+    return env
+
+
+def capture_git_provenance(cwd: str | None = None) -> dict[str, Any] | None:
+    """
+    Capture git repository provenance information.
+
+    Best-effort capture that returns None if not in a git repository
+    or if git is not available.
+
+    Parameters
+    ----------
+    cwd : str, optional
+        Working directory to check. Defaults to the current working directory.
+
+    Returns
+    -------
+    dict or None
+        Git provenance containing:
+
+        - ``commit``: Full commit SHA (40 hex characters)
+        - ``branch``: Current branch name (e.g., "main", "feature/xyz")
+        - ``dirty``: Whether working directory has uncommitted changes
+        - ``describe``: Output of ``git describe --tags --always --dirty``
+        - ``remote``: Remote origin URL (if configured)
+
+        Returns None if not in a git repository or git is unavailable.
+    """
+
+    def _run_git(args: list[str]) -> str | None:
+        """Run a git command and return stdout, or None on failure."""
+        try:
+            proc = subprocess.run(
+                ["git", *args],
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                timeout=_GIT_TIMEOUT,
+            )
+            if proc.returncode == 0:
+                return proc.stdout.strip()
+        except subprocess.TimeoutExpired:
+            logger.debug("git %s timed out", " ".join(args))
+        except FileNotFoundError:
+            pass  # git not installed
+        except OSError as e:
+            logger.debug("git %s failed: %s", " ".join(args), e)
+        return None
+
+    # Check if we're inside a git repository
+    inside = _run_git(["rev-parse", "--is-inside-work-tree"])
+    if inside != "true":
+        logger.debug("Not inside a git repository")
+        return None
+
+    # Gather git information
+    commit = _run_git(["rev-parse", "HEAD"])
+    branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
+    status_output = _run_git(["status", "--porcelain"])
+    dirty = bool(status_output)
+    remote = _run_git(["config", "--get", "remote.origin.url"])
+    describe = _run_git(["describe", "--tags", "--always", "--dirty"])
+
+    result = {
+        "commit": commit,
+        "branch": branch,
+        "dirty": dirty,
+        "describe": describe,
+        "remote": remote,
+    }
+
+    logger.debug(
+        "Captured git provenance: commit=%s, branch=%s, dirty=%s",
+        (commit or "")[:8],
+        branch,
+        dirty,
+    )
+
+    return result

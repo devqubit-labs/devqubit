@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}Artifact - {{ artifact.kind }} - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">{{ artifact.kind }}</h1>
+        <p class="text-muted text-sm">
+            <a href="/runs/{{ run_id }}">← Back to run {{ run_id | short_id }}</a>
+        </p>
+    </div>
+    <a href="/runs/{{ run_id }}/artifacts/{{ idx }}/raw" class="btn btn-primary">Download</a>
+</div>
+
+<div class="card mb-2">
+    <dl class="kv">
+        <dt>Kind</dt>
+        <dd class="font-mono">{{ artifact.kind }}</dd>
+        <dt>Role</dt>
+        <dd><span class="badge badge-gray">{{ artifact.role }}</span></dd>
+        <dt>Media Type</dt>
+        <dd>{{ artifact.media_type }}</dd>
+        <dt>Digest</dt>
+        <dd class="font-mono text-sm">{{ artifact.digest }}</dd>
+        <dt>Size</dt>
+        <dd>{{ size }} bytes{% if size > 1048576 %} ({{ "%.1f" | format(size / 1048576) }} MB){% elif size > 1024 %} ({{ "%.1f" | format(size / 1024) }} KB){% endif %}</dd>
+    </dl>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Content</h3>
+    </div>
+
+    {% if error %}
+    <p class="text-sm" style="color: var(--danger);">
+        ⚠ Error loading artifact: {{ error }}
+    </p>
+    <p class="text-muted mt-2">
+        <a href="/runs/{{ run_id }}/artifacts/{{ idx }}/raw" class="btn btn-primary">Download to view</a>
+    </p>
+    {% elif not preview_available %}
+    <p class="text-muted">
+        <strong>Artifact too large for preview</strong> ({{ "%.1f" | format(size / 1048576) }} MB exceeds {{ "%.0f" | format(max_preview_size / 1048576) }} MB limit)
+    </p>
+    <p class="text-sm text-muted mt-1">
+        Download the artifact to view its contents.
+    </p>
+    <p class="mt-2">
+        <a href="/runs/{{ run_id }}/artifacts/{{ idx }}/raw" class="btn btn-primary">Download</a>
+    </p>
+    {% elif content_json %}
+    <pre>{{ content_json | json_pretty }}</pre>
+    {% elif content %}
+    <pre>{{ content }}</pre>
+    {% else %}
+    <p class="text-muted">Binary content ({{ size }} bytes) - download to view</p>
+    {% endif %}
+</div>
+{% endblock %}

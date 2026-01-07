@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devqubit.dev/schemas/devqubit.run.0.1.schema.json",
+  "title": "devqubit.run/0.1",
+  "description": "Schema for quantum experiment run records in devqubit.",
+  "type": "object",
+  "required": ["schema", "run_id", "created_at", "project", "adapter", "data", "artifacts"],
+
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "required": ["info"],
+        "properties": {
+          "info": {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": { "enum": ["FINISHED", "FAILED", "KILLED"] }
+            }
+          }
+        }
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "info": {
+            "type": "object",
+            "required": ["ended_at"]
+          }
+        }
+      }
+    }
+  ],
+
+  "properties": {
+    "schema": {
+      "const": "devqubit.run/0.1",
+      "description": "Schema version identifier."
+    },
+
+    "run_id": {
+      "type": "string",
+      "minLength": 10,
+      "description": "Unique run identifier (typically ULID)."
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the run was created."
+    },
+
+    "project": {
+      "type": "object",
+      "description": "Project information.",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Project name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional project description."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "adapter": {
+      "type": "string",
+      "minLength": 1,
+      "description": "SDK adapter name (e.g., 'qiskit', 'pennylane', 'cirq', 'manual')."
+    },
+
+    "info": {
+      "type": "object",
+      "description": "Run status and metadata.",
+      "properties": {
+        "run_name": {
+          "type": "string",
+          "description": "Human-readable run name."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["RUNNING", "FINISHED", "FAILED", "KILLED"],
+          "description": "Current run status."
+        },
+        "ended_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the run ended."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "data": {
+      "type": "object",
+      "description": "User-logged parameters, metrics, and tags.",
+      "required": ["params", "metrics", "tags"],
+      "properties": {
+        "params": {
+          "$ref": "#/$defs/kv_params",
+          "description": "Experiment parameters (logged via log_param)."
+        },
+        "metrics": {
+          "$ref": "#/$defs/kv_metrics",
+          "description": "Numeric metrics (logged via log_metric)."
+        },
+        "tags": {
+          "$ref": "#/$defs/kv_tags",
+          "description": "String tags (logged via set_tag)."
+        },
+        "metric_series": {
+          "$ref": "#/$defs/metric_series",
+          "description": "Time series metric data."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "environment": {
+      "type": "object",
+      "description": "Captured environment information (Python version, packages, etc.).",
+      "additionalProperties": true
+    },
+
+    "provenance": {
+      "type": "object",
+      "description": "Source provenance information.",
+      "properties": {
+        "git": {
+          "type": "object",
+          "description": "Git repository state at run time.",
+          "properties": {
+            "commit": { "type": "string", "description": "Full commit SHA." },
+            "branch": { "type": "string", "description": "Current branch name." },
+            "dirty": { "type": "boolean", "description": "Whether working directory had uncommitted changes." },
+            "describe": { "type": "string", "description": "Output of git describe --tags --always." },
+            "remote": { "type": "string", "description": "Remote origin URL." }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "fingerprints": {
+      "type": "object",
+      "description": "Stable fingerprints for reproducibility tracking.",
+      "properties": {
+        "program": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Fingerprint based on all program artifacts."
+        },
+        "canonical_program": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Canonical OpenQASM 3 program fingerprint (cross-SDK)."
+        },
+        "device": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Fingerprint based on backend identity and device snapshots."
+        },
+        "intent": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Fingerprint based on compile/execute configuration."
+        },
+        "run": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Combined fingerprint of program + device + intent."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "program": {
+      "type": "object",
+      "description": "Anchors to program artifacts for easy lookup.",
+      "properties": {
+        "openqasm3": {
+          "description": "OpenQASM3 anchors, one entry per circuit/program in this run.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/openqasm3_anchor" },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "backend": {
+      "type": "object",
+      "description": "Backend/device information.",
+      "properties": {
+        "name": { "type": "string", "description": "Backend name." },
+        "type": { "type": "string", "description": "Backend class name." },
+        "provider": { "type": "string", "description": "Provider/SDK name." }
+      },
+      "additionalProperties": true
+    },
+
+    "compile": {
+      "type": "object",
+      "description": "Compilation/transpilation configuration.",
+      "additionalProperties": true
+    },
+
+    "execute": {
+      "type": "object",
+      "description": "Execution configuration (shots, resilience, etc.).",
+      "additionalProperties": true
+    },
+
+    "device_snapshot": {
+      "type": "object",
+      "description": "Summary of captured device state.",
+      "additionalProperties": true
+    },
+
+    "results": {
+      "type": "object",
+      "description": "Summary of execution results.",
+      "additionalProperties": true
+    },
+
+    "errors": {
+      "type": "array",
+      "description": "Errors encountered during the run.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string" },
+          "message": { "type": "string" },
+          "traceback": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+
+    "artifacts": {
+      "type": "array",
+      "description": "References to stored artifact blobs.",
+      "items": { "$ref": "#/$defs/artifact_ref" }
+    }
+  },
+
+  "$defs": {
+    "artifact_ref": {
+      "type": "object",
+      "description": "Reference to a content-addressed artifact.",
+      "required": ["kind", "digest", "media_type", "role"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Artifact type identifier (e.g., 'qiskit.qpy.circuits')."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest for retrieval from object store."
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 3,
+          "description": "MIME type of the artifact content."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical role (e.g., 'program', 'results', 'device_snapshot')."
+        },
+        "meta": {
+          "type": "object",
+          "description": "Additional artifact metadata.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "digest_ptr": {
+      "type": "object",
+      "description": "Pointer to an artifact by (kind, digest).",
+      "required": ["kind", "digest"],
+      "properties": {
+        "kind": { "type": "string" },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+
+    "openqasm3_anchor": {
+      "type": "object",
+      "description": "Anchor to OpenQASM3 raw/canonical artifacts for a single circuit/program.",
+      "required": ["index"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "index": { "type": "integer", "minimum": 0 },
+
+        "raw": { "$ref": "#/$defs/digest_ptr" },
+        "canonical": { "$ref": "#/$defs/digest_ptr" },
+
+        "canonicalization": {
+          "type": "object",
+          "description": "Metadata about canonicalization steps/warnings.",
+          "additionalProperties": true
+        }
+      },
+
+      "allOf": [
+        { "anyOf": [ { "required": ["raw"] }, { "required": ["canonical"] } ] }
+      ],
+
+      "additionalProperties": true
+    },
+
+    "param_value": {
+      "description": "Parameter values support JSON scalars, arrays, and objects.",
+      "oneOf": [
+        { "type": ["string", "number", "boolean", "null"] },
+        { "type": "array" },
+        { "type": "object" }
+      ]
+    },
+
+    "kv_params": {
+      "type": "object",
+      "description": "Key-value parameter store.",
+      "additionalProperties": { "$ref": "#/$defs/param_value" },
+      "default": {}
+    },
+
+    "kv_metrics": {
+      "type": "object",
+      "description": "Key-value numeric metric store.",
+      "additionalProperties": { "type": "number" },
+      "default": {}
+    },
+
+    "kv_tags": {
+      "type": "object",
+      "description": "Key-value string tag store.",
+      "additionalProperties": { "type": "string" },
+      "default": {}
+    },
+
+    "metric_point": {
+      "type": "object",
+      "description": "Single point in a metric time series.",
+      "required": ["value"],
+      "properties": {
+        "value": { "type": "number", "description": "Metric value." },
+        "step": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0,
+          "description": "Step/iteration number."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "metric_series": {
+      "description": "Time series data: metric name -> list of points.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/metric_point" }
+      }
+    }
+  },
+
+  "additionalProperties": true
+}

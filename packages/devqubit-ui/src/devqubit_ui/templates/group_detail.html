@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+
+{% block title %}Group {{ group_id | short_id }} - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">Group <span class="font-mono">{{ group_id | short_id }}</span></h1>
+        <p class="text-muted text-sm">{{ group_id }}</p>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Runs in Group ({{ runs | length }})</h3>
+    </div>
+    {% if runs %}
+    <table>
+        <thead>
+            <tr>
+                <th>Run ID</th>
+                <th>Project</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for run in runs %}
+            <tr>
+                <td>
+                    <a href="/runs/{{ run.run_id }}" class="font-mono">
+                        {{ run.run_id | short_id }}
+                    </a>
+                </td>
+                <td>{{ run.project }}</td>
+                <td>
+                    {% if run.status == 'FINISHED' %}
+                    <span class="badge badge-success">{{ run.status }}</span>
+                    {% elif run.status == 'FAILED' %}
+                    <span class="badge badge-danger">{{ run.status }}</span>
+                    {% else %}
+                    <span class="badge badge-gray">{{ run.status }}</span>
+                    {% endif %}
+                </td>
+                <td class="text-muted">{{ run.created_at | ago }}</td>
+                <td>
+                    <a href="/runs/{{ run.run_id }}" class="btn btn-sm btn-secondary">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <p>No runs in this group</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

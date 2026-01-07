@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}Compare Runs - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Compare Runs</h1>
+</div>
+
+<div class="card">
+    <form method="get" action="/diff">
+        <div class="grid grid-2 mb-2">
+            <div class="form-group">
+                <label for="a">Run A (Baseline)</label>
+                <select name="a" id="a" required>
+                    <option value="">Select run...</option>
+                    {% for run in runs %}
+                    <option value="{{ run.run_id }}">{{ run.run_id | short_id }} - {{ run.project }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="b">Run B (Candidate)</label>
+                <select name="b" id="b" required>
+                    <option value="">Select run...</option>
+                    {% for run in runs %}
+                    <option value="{{ run.run_id }}">{{ run.run_id | short_id }} - {{ run.project }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <button type="submit" class="btn btn-primary">Compare</button>
+    </form>
+</div>
+
+<div class="card mt-2">
+    <h3 class="card-title mb-1">Tips</h3>
+    <ul class="text-muted text-sm" style="padding-left: 1.5rem;">
+        <li>Select two runs to compare their parameters, metrics, and artifacts</li>
+        <li>The diff will show which parameters changed and compute TVD for result distributions</li>
+        <li>You can also compare from the run detail page against the project baseline</li>
+    </ul>
+</div>
+{% endblock %}

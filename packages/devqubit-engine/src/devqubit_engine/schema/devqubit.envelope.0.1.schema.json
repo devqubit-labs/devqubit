@@ -1,0 +1,604 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devqubit.dev/schemas/devqubit.envelope.0.1.schema.json",
+  "title": "devqubit.envelope/0.1",
+  "description": "Schema for quantum execution envelope in devqubit - the unified container for device, program, execution, and result snapshots.",
+  "type": "object",
+
+  "properties": {
+    "schema": {
+      "const": "devqubit.envelope/0.1",
+      "description": "Schema version identifier."
+    },
+
+    "envelope_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique envelope identifier for linking."
+    },
+
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the envelope was created."
+    },
+
+    "adapter": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Adapter name that produced this envelope (e.g., 'qiskit', 'braket')."
+    },
+
+    "device": {
+      "$ref": "#/$defs/device_snapshot",
+      "description": "Device/backend state at execution time."
+    },
+
+    "program": {
+      "$ref": "#/$defs/program_snapshot",
+      "description": "Program artifacts (logical and physical)."
+    },
+
+    "execution": {
+      "$ref": "#/$defs/execution_snapshot",
+      "description": "Submission and job tracking metadata."
+    },
+
+    "result": {
+      "$ref": "#/$defs/result_snapshot",
+      "description": "Execution results and normalized summaries."
+    }
+  },
+
+  "required": ["schema"],
+
+  "$defs": {
+    "artifact_ref": {
+      "type": "object",
+      "description": "Reference to a content-addressed artifact in the object store.",
+      "required": ["kind", "digest", "media_type", "role"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Artifact type identifier (e.g., 'qiskit.qpy.circuits')."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest for retrieval from object store."
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 3,
+          "description": "MIME type of the artifact content."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Logical role (e.g., 'program', 'results', 'device_snapshot')."
+        },
+        "meta": {
+          "type": "object",
+          "description": "Additional artifact metadata.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "frontend_config": {
+      "type": "object",
+      "description": "Frontend/primitive configuration for multi-layer SDK stacks.",
+      "required": ["name", "sdk"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Frontend identifier (e.g., 'SamplerV2', 'braket.aws.qubit')."
+        },
+        "sdk": {
+          "type": "string",
+          "description": "SDK/framework name (e.g., 'qiskit_runtime', 'pennylane')."
+        },
+        "sdk_version": {
+          "type": "string",
+          "description": "SDK version string."
+        },
+        "config": {
+          "type": "object",
+          "description": "Frontend-specific configuration options.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "qubit_calibration": {
+      "type": "object",
+      "description": "Per-qubit calibration record.",
+      "required": ["qubit"],
+      "properties": {
+        "qubit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Qubit index (0-based)."
+        },
+        "t1_us": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Energy relaxation time (T1) in microseconds."
+        },
+        "t2_us": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Dephasing time (T2) in microseconds."
+        },
+        "readout_error": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Assignment/readout error probability."
+        },
+        "gate_error_1q": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Representative single-qubit gate error probability."
+        },
+        "frequency_ghz": {
+          "type": "number",
+          "description": "Qubit frequency in GHz."
+        },
+        "anharmonicity_ghz": {
+          "type": "number",
+          "description": "Qubit anharmonicity in GHz."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "gate_calibration": {
+      "type": "object",
+      "description": "Per-gate calibration record.",
+      "required": ["gate", "qubits"],
+      "properties": {
+        "gate": {
+          "type": "string",
+          "description": "Gate name (e.g., 'cx', 'cz', 'rx')."
+        },
+        "qubits": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0 },
+          "description": "Qubit indices the gate acts on."
+        },
+        "error": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Gate error probability."
+        },
+        "duration_ns": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Gate duration in nanoseconds."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "device_calibration": {
+      "type": "object",
+      "description": "Device-level calibration bundle.",
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Calibration schema version."
+        },
+        "calibration_time": {
+          "type": "string",
+          "description": "Provider calibration timestamp."
+        },
+        "qubits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/qubit_calibration" },
+          "description": "Per-qubit calibration records."
+        },
+        "gates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gate_calibration" },
+          "description": "Per-gate calibration records."
+        },
+        "median_t1_us": {
+          "type": "number",
+          "description": "Median T1 across all qubits."
+        },
+        "median_t2_us": {
+          "type": "number",
+          "description": "Median T2 across all qubits."
+        },
+        "median_readout_error": {
+          "type": "number",
+          "description": "Median readout error across all qubits."
+        },
+        "median_2q_error": {
+          "type": "number",
+          "description": "Median two-qubit gate error."
+        },
+        "source": {
+          "type": "string",
+          "enum": ["provider", "derived", "manual"],
+          "description": "Data source indicator."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "device_snapshot": {
+      "type": "object",
+      "description": "Point-in-time snapshot of a quantum backend.",
+      "required": ["captured_at", "backend_name", "backend_type", "provider"],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Snapshot schema version."
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when snapshot was captured."
+        },
+        "backend_name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Backend identifier/name."
+        },
+        "backend_type": {
+          "type": "string",
+          "enum": ["simulator", "hardware", "emulator", "sim", "hw", "qpu"],
+          "description": "Backend type category."
+        },
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Physical provider identifier."
+        },
+        "backend_id": {
+          "type": "string",
+          "description": "Stable unique identifier (ARN, resource name)."
+        },
+        "num_qubits": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of qubits on the backend."
+        },
+        "connectivity": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "description": "Edge list of connected qubit pairs."
+        },
+        "native_gates": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of native gate names."
+        },
+        "calibration": {
+          "$ref": "#/$defs/device_calibration",
+          "description": "Calibration data bundle."
+        },
+        "frontend": {
+          "$ref": "#/$defs/frontend_config",
+          "description": "Frontend configuration for multi-layer stacks."
+        },
+        "sdk_versions": {
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "description": "SDK version strings for all involved layers."
+        },
+        "raw_properties_ref": {
+          "$ref": "#/$defs/artifact_ref",
+          "description": "Reference to raw backend properties artifact."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "program_artifact": {
+      "type": "object",
+      "description": "Program artifact with role and format information.",
+      "required": ["ref", "role", "format"],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/artifact_ref",
+          "description": "Reference to the artifact in object store."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["logical", "physical", "transpiled"],
+          "description": "Role in the execution pipeline."
+        },
+        "format": {
+          "type": "string",
+          "description": "Format identifier (e.g., 'qpy', 'openqasm3')."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for the circuit."
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index in a batch of circuits."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "program_snapshot": {
+      "type": "object",
+      "description": "Program artifacts with logical/physical distinction.",
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Program snapshot schema version."
+        },
+        "logical": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/program_artifact" },
+          "description": "User-provided circuits before transpilation."
+        },
+        "physical": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/program_artifact" },
+          "description": "Transpiled circuits conforming to backend ISA."
+        },
+        "program_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Hash of the logical program(s)."
+        },
+        "executed_hash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Hash of the physical/executed program(s)."
+        },
+        "num_circuits": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of circuits in this program."
+        },
+        "openqasm3_anchors": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "OpenQASM 3 anchor references."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "transpilation_info": {
+      "type": "object",
+      "description": "Transpilation/compilation details.",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "manual", "managed"],
+          "description": "Transpilation handling mode."
+        },
+        "transpiled_by": {
+          "type": "string",
+          "enum": ["devqubit", "user", "provider"],
+          "description": "Who performed transpilation."
+        },
+        "pass_manager_config": {
+          "type": "object",
+          "description": "Pass manager configuration used.",
+          "additionalProperties": true
+        },
+        "optimization_level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3,
+          "description": "Optimization level used."
+        },
+        "layout": {
+          "type": "object",
+          "description": "Qubit layout mapping (virtual → physical).",
+          "additionalProperties": { "type": "integer" }
+        },
+        "layout_method": {
+          "type": "string",
+          "description": "Layout method used."
+        },
+        "routing_method": {
+          "type": "string",
+          "description": "Routing method used."
+        },
+        "seed": {
+          "type": "integer",
+          "description": "Random seed for reproducibility."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "execution_snapshot": {
+      "type": "object",
+      "description": "Execution submission and job tracking metadata.",
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Execution snapshot schema version."
+        },
+        "submitted_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when job was submitted."
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when job completed."
+        },
+        "shots": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of shots/repetitions."
+        },
+        "job_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Provider job identifiers."
+        },
+        "task_ids": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Provider task identifiers."
+        },
+        "execution_count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of circuit executions."
+        },
+        "transpilation": {
+          "$ref": "#/$defs/transpilation_info",
+          "description": "Transpilation/compilation details."
+        },
+        "queue_info": {
+          "type": "object",
+          "description": "Queue position and timing information.",
+          "additionalProperties": true
+        },
+        "options": {
+          "type": "object",
+          "description": "Additional execution options.",
+          "additionalProperties": true
+        },
+        "sdk": {
+          "type": "string",
+          "description": "SDK used for submission."
+        }
+      },
+      "additionalProperties": true
+    },
+
+    "normalized_counts": {
+      "type": "object",
+      "description": "Normalized measurement counts from a single circuit.",
+      "required": ["circuit_index", "counts"],
+      "properties": {
+        "circuit_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the circuit in a batch."
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 0 },
+          "description": "Bitstring → count mapping."
+        },
+        "shots": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Total number of shots."
+        },
+        "name": {
+          "type": "string",
+          "description": "Circuit name if available."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "normalized_expectation": {
+      "type": "object",
+      "description": "Normalized expectation value result.",
+      "required": ["circuit_index", "observable_index", "value"],
+      "properties": {
+        "circuit_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the circuit in a batch."
+        },
+        "observable_index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Index of the observable."
+        },
+        "value": {
+          "type": "number",
+          "description": "Expectation value."
+        },
+        "variance": {
+          "type": "number",
+          "description": "Variance of the expectation value."
+        },
+        "std_error": {
+          "type": "number",
+          "description": "Standard error of the expectation value."
+        },
+        "observable": {
+          "type": "string",
+          "description": "String representation of the observable."
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "result_snapshot": {
+      "type": "object",
+      "description": "Execution results with raw payload reference and normalized summaries.",
+      "required": ["result_type"],
+      "properties": {
+        "schema": {
+          "type": "string",
+          "description": "Result snapshot schema version."
+        },
+        "result_type": {
+          "type": "string",
+          "enum": ["counts", "quasi_dist", "expectation", "samples", "statevector", "density_matrix"],
+          "description": "Type of quantum execution result."
+        },
+        "raw_result_ref": {
+          "$ref": "#/$defs/artifact_ref",
+          "description": "Reference to raw result payload artifact."
+        },
+        "counts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/normalized_counts" },
+          "description": "Normalized measurement counts per circuit."
+        },
+        "expectations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/normalized_expectation" },
+          "description": "Normalized expectation values."
+        },
+        "num_experiments": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Number of experiments/circuits in the result."
+        },
+        "success": {
+          "type": "boolean",
+          "description": "Whether execution completed successfully."
+        },
+        "error_message": {
+          "type": "string",
+          "description": "Error message if execution failed."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Additional result metadata.",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+
+  "additionalProperties": true
+}

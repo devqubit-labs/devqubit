@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-cirq"
+version = "0.1.0"
+description = "devqubit adapter for Cirq"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "cirq", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "cirq>=1.6,<2",
+    "devqubit-engine>=0.1.0,<0.2.0",
+    "ply>=3.11",
+]
+
+[project.entry-points."devqubit.adapters"]
+cirq = "devqubit_cirq.adapter:CirqAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+cirq = "devqubit_cirq.serialization:CirqCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+cirq = "devqubit_cirq.serialization:CirqCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+cirq = "devqubit_cirq.serialization:summarize_cirq_circuit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_cirq"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

@@ -1,0 +1,49 @@
+default_language_version:
+  python: python3.12
+
+repos:
+  - repo: local
+    hooks:
+      - id: add-spdx-headers
+        name: add minimal SPDX headers
+        entry: python tools/add_spdx_headers.py
+        language: python
+        types: [python]
+        files: ^(src|packages|examples)/.*\.py$
+
+  - repo: https://github.com/twisted/towncrier
+    rev: 25.8.0
+    hooks:
+      - id: towncrier-check
+        name: towncrier (validate news fragments)
+        pass_filenames: false
+        files: ^changelog\.d/
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.10
+    hooks:
+      - id: ruff-check
+        args: ["--fix", "--config=pyproject.toml"]
+        types_or: [python, pyi]
+
+  - repo: https://github.com/PyCQA/isort
+    rev: 7.0.0
+    hooks:
+      - id: isort
+        name: isort
+        args: ["--settings-path=pyproject.toml"]
+
+  - repo: https://github.com/psf/black-pre-commit-mirror
+    rev: "25.12.0"
+    hooks:
+      - id: black
+        name: black
+        args: ["--config=pyproject.toml"]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml

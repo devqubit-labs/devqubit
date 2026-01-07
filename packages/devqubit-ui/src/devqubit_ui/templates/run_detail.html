@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+
+{% block title %}Run {{ run.run_id | short_id }} - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">
+            Run <span class="font-mono">{{ run.run_id | short_id }}</span>
+            {% if is_baseline %}
+            <span class="badge badge-info">Baseline</span>
+            {% endif %}
+        </h1>
+        <p class="text-muted text-sm">{{ run.run_id }}</p>
+    </div>
+    <div class="flex gap-1">
+        {% if not is_baseline %}
+        <button hx-post="/api/projects/{{ run.project }}/baseline/{{ run.run_id }}?redirect=false"
+                hx-swap="outerHTML"
+                hx-confirm="Set this run as baseline for {{ run.project }}?"
+                class="btn btn-secondary btn-sm"
+                id="baseline-btn">
+            Set as Baseline
+        </button>
+        {% endif %}
+        {% if baseline and baseline.run_id != run.run_id %}
+        <a href="/diff?a={{ baseline.run_id }}&b={{ run.run_id }}" class="btn btn-primary btn-sm">
+            Compare to Baseline
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+{% set backend = record.get('backend', {}) %}
+{% set fingerprints = run.fingerprints or {} %}
+
+<div class="grid grid-2 mb-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Overview</h3>
+        </div>
+        <dl class="kv">
+            <dt>Project</dt>
+            <dd><a href="/runs?project={{ run.project }}">{{ run.project }}</a></dd>
+            <dt>Adapter</dt>
+            <dd>{{ run.adapter or 'N/A' }}</dd>
+            <dt>Status</dt>
+            <dd>
+                {% if run.status == 'FINISHED' %}
+                <span class="badge badge-success">{{ run.status }}</span>
+                {% elif run.status == 'FAILED' %}
+                <span class="badge badge-danger">{{ run.status }}</span>
+                {% else %}
+                <span class="badge badge-gray">{{ run.status }}</span>
+                {% endif %}
+            </dd>
+            <dt>Created</dt>
+            <dd>{{ run.created_at }} ({{ run.created_at | ago }})</dd>
+            <dt>Backend</dt>
+            <dd>{{ backend.get('name', 'N/A') }}</dd>
+            {% if record.get('group_id') %}
+            <dt>Group</dt>
+            <dd><a href="/groups/{{ record.group_id }}">{{ record.get('group_name') or record.group_id | short_id }}</a></dd>
+            {% endif %}
+        </dl>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Fingerprints</h3>
+        </div>
+        <dl class="kv">
+            <dt>Run</dt>
+            <dd class="font-mono text-sm truncate">{{ fingerprints.get('run', 'N/A') }}</dd>
+            <dt>Program</dt>
+            <dd class="font-mono text-sm truncate">{{ fingerprints.get('program', 'N/A') }}</dd>
+        </dl>
+    </div>
+</div>
+
+{% set params = record.get('data', {}).get('params', {}) %}
+{% set metrics = record.get('data', {}).get('metrics', {}) %}
+{% set tags = record.get('data', {}).get('tags', {}) %}
+
+<div class="grid grid-3 mb-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Parameters</h3>
+        </div>
+        {% if params %}
+        <table>
+            <tbody>
+            {% for key, value in params.items() %}
+            <tr>
+                <td class="text-muted">{{ key }}</td>
+                <td class="font-mono">{{ value }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No parameters</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Metrics</h3>
+        </div>
+        {% if metrics %}
+        <table>
+            <tbody>
+            {% for key, value in metrics.items() %}
+            <tr>
+                <td class="text-muted">{{ key }}</td>
+                <td class="font-mono">{{ "%.6g" | format(value) if value is number else value }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p class="text-muted">No metrics</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Tags</h3>
+        </div>
+        {% if tags %}
+        <div>
+            {% for key, value in tags.items() %}
+            <span class="badge badge-gray mb-1" style="margin-right: 0.25rem;">{{ key }}: {{ value }}</span>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted">No tags</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Artifacts ({{ artifacts | length }})</h3>
+    </div>
+    {% if artifacts %}
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Kind</th>
+                <th>Role</th>
+                <th>Media Type</th>
+                <th>Digest</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for artifact in artifacts %}
+            <tr>
+                <td>{{ loop.index0 }}</td>
+                <td class="font-mono">{{ artifact.kind }}</td>
+                <td><span class="badge badge-gray">{{ artifact.role }}</span></td>
+                <td class="text-muted text-sm">{{ artifact.media_type }}</td>
+                <td class="font-mono text-sm truncate" style="max-width: 200px;">{{ artifact.digest | short_digest }}</td>
+                <td>
+                    <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}" class="btn btn-sm btn-secondary">View</a>
+                    <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}/raw" class="btn btn-sm btn-secondary">Download</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted">No artifacts</p>
+    {% endif %}
+</div>
+
+{% set errors = record.get('errors', []) %}
+{% if errors %}
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title" style="color: var(--danger);">Errors</h3>
+    </div>
+    {% for error in errors %}
+    <div style="margin-bottom: 1rem;">
+        <strong>{{ error.type }}</strong>: {{ error.message }}
+        {% if error.traceback %}
+        <pre style="margin-top: 0.5rem; font-size: 0.75rem;">{{ error.traceback }}</pre>
+        {% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

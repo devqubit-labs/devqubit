@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    name: Build + test + package (all)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install uv (Python 3.12)
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Sync (workspace + dev + all extras)
+        run: uv sync --all-packages --all-extras --dev --locked
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Install build backend
+        run: uv run python -m pip install --upgrade build
+
+      - name: Verify tag matches all package versions
+        run: |
+          uv run python - << 'PY'
+          import os, sys, pathlib, tomllib
+
+          tag = os.environ["GITHUB_REF_NAME"]  # v0.1.0
+          ver = tag[1:] if tag.startswith("v") else tag
+
+          pyprojects = [pathlib.Path("pyproject.toml")]
+          pyprojects += sorted(pathlib.Path("packages").glob("*/pyproject.toml"))
+
+          mismatches = []
+          for p in pyprojects:
+            data = tomllib.loads(p.read_text(encoding="utf-8"))
+            v = data.get("project", {}).get("version")
+            if v != ver:
+              mismatches.append((str(p), v))
+
+          if mismatches:
+            for p, v in mismatches:
+              print(f"Version mismatch: {p}: {v!r} != {ver!r}")
+            sys.exit(1)
+
+          print("OK: all versions match", ver)
+          PY
+
+      - name: Build root dist (devqubit)
+        run: uv run python -m build --outdir dist .
+
+      - name: Build workspace member dists
+        run: |
+          set -euo pipefail
+          for pkg in packages/*; do
+            if [ -f "$pkg/pyproject.toml" ]; then
+              echo "Building $pkg"
+              uv run python -m build --outdir dist "$pkg"
+            fi
+          done
+
+      - name: Upload dists artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  publish:
+    name: Publish to PyPI (Trusted Publishing)
+    needs: [build]
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    environment:
+      name: pypi
+      url: https://pypi.org/
+
+    steps:
+      - name: Download dists
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

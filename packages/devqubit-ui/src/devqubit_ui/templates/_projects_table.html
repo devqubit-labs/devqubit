@@ -1,0 +1,38 @@
+{# Projects table fragment - can be loaded independently via HTMX #}
+{% if projects %}
+<table>
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>Runs</th>
+            <th>Baseline</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for project in projects %}
+        <tr>
+            <td><strong>{{ project.name }}</strong></td>
+            <td>{{ project.run_count }}</td>
+            <td>
+                {% if project.baseline %}
+                <a href="/runs/{{ project.baseline.run_id }}" class="font-mono text-sm">
+                    {{ project.baseline.run_id | short_id }}
+                </a>
+                {% else %}
+                <span class="text-muted">Not set</span>
+                {% endif %}
+            </td>
+            <td>
+                <a href="/runs?project={{ project.name }}" class="btn btn-sm btn-secondary">View Runs</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No projects yet</p>
+    <p class="text-sm mt-2">Create your first run to see it here</p>
+</div>
+{% endif %}

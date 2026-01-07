@@ -1,0 +1,462 @@
+{% extends "base.html" %}
+
+{% block title %}Diff - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-title">
+            Compare Runs
+            {% if report.identical %}
+            <span class="badge badge-success">Identical</span>
+            {% else %}
+            <span class="badge badge-warning">Different</span>
+            {% endif %}
+        </h1>
+        <p class="text-muted text-sm">
+            <a href="/diff">← Select different runs</a>
+        </p>
+    </div>
+</div>
+
+<div class="card mb-2">
+    <div class="grid grid-2">
+        <div>
+            <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run A (Baseline)</h3>
+            <p class="font-mono"><a href="/runs/{{ run_a.run_id }}">{{ run_a.run_id | short_id }}</a></p>
+            <p class="text-muted text-sm">{{ run_a.project }} / {{ run_a.created_at | ago }}</p>
+        </div>
+        <div>
+            <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run B (Candidate)</h3>
+            <p class="font-mono"><a href="/runs/{{ run_b.run_id }}">{{ run_b.run_id | short_id }}</a></p>
+            <p class="text-muted text-sm">{{ run_b.project }} / {{ run_b.created_at | ago }}</p>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2 mb-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Metadata</h3>
+        </div>
+        <table>
+            <tbody>
+                <tr>
+                    <td>Project</td>
+                    <td class="{% if report.metadata.project_match %}diff-match{% else %}diff-mismatch{% endif %}">
+                        {% if report.metadata.project_match %}✓ Match{% else %}✗ Different{% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Backend</td>
+                    <td class="{% if report.metadata.backend_match %}diff-match{% else %}diff-mismatch{% endif %}">
+                        {% if report.metadata.backend_match %}✓ Match{% else %}✗ Different{% endif %}
+                    </td>
+                </tr>
+                {% if not report.metadata.project_match %}
+                <tr>
+                    <td class="text-muted text-sm">Project A</td>
+                    <td class="font-mono text-sm">{{ report.metadata.project_a or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td class="text-muted text-sm">Project B</td>
+                    <td class="font-mono text-sm">{{ report.metadata.project_b or 'N/A' }}</td>
+                </tr>
+                {% endif %}
+                {% if not report.metadata.backend_match %}
+                <tr>
+                    <td class="text-muted text-sm">Backend A</td>
+                    <td class="font-mono text-sm">{{ report.metadata.backend_a or 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td class="text-muted text-sm">Backend B</td>
+                    <td class="font-mono text-sm">{{ report.metadata.backend_b or 'N/A' }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">Fingerprints</h3>
+        </div>
+        <table>
+            <tbody>
+                <tr>
+                    <td>Run A</td>
+                    <td class="font-mono text-sm truncate">{{ report.fingerprints.a | short_digest }}</td>
+                </tr>
+                <tr>
+                    <td>Run B</td>
+                    <td class="font-mono text-sm truncate">{{ report.fingerprints.b | short_digest }}</td>
+                </tr>
+                <tr>
+                    <td>Match</td>
+                    <td class="{% if report.fingerprints.a == report.fingerprints.b %}diff-match{% else %}diff-mismatch{% endif %}">
+                        {% if report.fingerprints.a == report.fingerprints.b %}✓ Yes{% else %}✗ No{% endif %}
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div class="grid grid-2 mb-2">
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                Program
+                {% if report.program.exact_match %}
+                <span class="badge badge-success">Exact Match</span>
+                {% elif report.program.structural_match %}
+                <span class="badge badge-info">Structural Match</span>
+                {% else %}
+                <span class="badge badge-warning">Different</span>
+                {% endif %}
+            </h3>
+        </div>
+        <table>
+            <tbody>
+                <tr>
+                    <td>Exact Match</td>
+                    <td class="{% if report.program.exact_match %}diff-match{% else %}diff-mismatch{% endif %}">
+                        {% if report.program.exact_match %}✓ Yes{% else %}✗ No{% endif %}
+                    </td>
+                </tr>
+                <tr>
+                    <td>Structural Match</td>
+                    <td class="{% if report.program.structural_match %}diff-match{% else %}diff-mismatch{% endif %}">
+                        {% if report.program.structural_match %}✓ Yes{% else %}✗ No{% endif %}
+                    </td>
+                </tr>
+                {% if report.program.circuit_hash_a or report.program.circuit_hash_b %}
+                <tr>
+                    <td>Circuit Hash A</td>
+                    <td class="font-mono text-sm">{{ report.program.circuit_hash_a | short_digest if report.program.circuit_hash_a else 'N/A' }}</td>
+                </tr>
+                <tr>
+                    <td>Circuit Hash B</td>
+                    <td class="font-mono text-sm">{{ report.program.circuit_hash_b | short_digest if report.program.circuit_hash_b else 'N/A' }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+        {% if report.program.structural_only_match %}
+        <p class="text-sm text-muted mt-1">
+            ℹ Same circuit structure with different parameter values (typical for VQE/QAOA).
+        </p>
+        {% elif not report.program.exact_match and not report.program.structural_match %}
+        <p class="text-sm mt-1" style="color: var(--warning);">
+            ⚠ Program artifacts differ between runs.
+        </p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <div class="card-header">
+            <h3 class="card-title">
+                Device Calibration
+                {% if report.device_drift and report.device_drift.significant_drift %}
+                <span class="badge badge-warning">Drifted</span>
+                {% elif report.device_drift and report.device_drift.has_calibration_data %}
+                <span class="badge badge-success">Stable</span>
+                {% else %}
+                <span class="badge badge-gray">N/A</span>
+                {% endif %}
+            </h3>
+        </div>
+        {% if report.device_drift and report.device_drift.significant_drift %}
+        <p class="text-sm" style="color: var(--warning);">⚠ Significant calibration drift detected. Results may not be directly comparable.</p>
+        {% elif report.device_drift and not report.device_drift.has_calibration_data %}
+        <p class="text-muted">No calibration data available</p>
+        {% elif report.device_drift and report.device_drift.has_calibration_data %}
+        <p class="text-muted">Calibration within acceptable thresholds</p>
+        {% else %}
+        <p class="text-muted">No calibration data available</p>
+        {% endif %}
+
+        {% if report.device_drift and report.device_drift.top_drifts %}
+        <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Top Drifting Metrics</h4>
+        <table>
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Change</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in report.device_drift.top_drifts[:5] %}
+                <tr>
+                    <td>{{ d.metric }}</td>
+                    <td class="font-mono">{{ "%.1f" | format(d.percent_change) if d.percent_change is not none else 'N/A' }}%</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card mb-2">
+    <div class="card-header">
+        <h3 class="card-title">
+            Parameters
+            {% if report.params.match %}
+            <span class="badge badge-success">Match</span>
+            {% else %}
+            <span class="badge badge-warning">Different</span>
+            {% endif %}
+        </h3>
+    </div>
+
+    {% if report.params.changed %}
+    <h4 class="text-sm text-muted mb-1">Changed</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Run A</th>
+                <th>Run B</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, values in report.params.changed.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ values.a }}</td>
+                <td class="font-mono">{{ values.b }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.params.removed %}
+    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run A (removed)</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in report.params.removed.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.params.added %}
+    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run B (added)</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Parameter</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in report.params.added.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.params.match %}
+    <p class="text-muted">All parameters match</p>
+    {% endif %}
+</div>
+
+<div class="card mb-2">
+    <div class="card-header">
+        <h3 class="card-title">
+            Metrics
+            {% if report.metrics.match %}
+            <span class="badge badge-success">Match</span>
+            {% else %}
+            <span class="badge badge-warning">Different</span>
+            {% endif %}
+        </h3>
+    </div>
+
+    {% if report.metrics.changed %}
+    <h4 class="text-sm text-muted mb-1">Changed</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Run A</th>
+                <th>Run B</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, values in report.metrics.changed.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ values.a }}</td>
+                <td class="font-mono">{{ values.b }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.metrics.removed %}
+    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run A</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in report.metrics.removed.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.metrics.added %}
+    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run B</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Metric</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, value in report.metrics.added.items() %}
+            <tr>
+                <td>{{ key }}</td>
+                <td class="font-mono">{{ value }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.metrics.match %}
+    <p class="text-muted">All metrics match</p>
+    {% endif %}
+</div>
+
+{% if report.circuit_diff %}
+<div class="card mb-2">
+    <div class="card-header">
+        <h3 class="card-title">
+            Circuit
+            {% if report.circuit_diff.match %}
+            <span class="badge badge-success">Match</span>
+            {% else %}
+            <span class="badge badge-warning">Different</span>
+            {% endif %}
+        </h3>
+    </div>
+
+    {% if report.circuit_diff.changes %}
+    <h4 class="text-sm text-muted mb-1">Changes</h4>
+    <ul style="margin: 0; padding-left: 1.5rem;">
+        {% for change in report.circuit_diff.changes[:10] %}
+        <li class="text-sm font-mono" style="margin: 0.25rem 0;">{{ change }}</li>
+        {% endfor %}
+        {% if report.circuit_diff.changes | length > 10 %}
+        <li class="text-sm text-muted">... and {{ report.circuit_diff.changes | length - 10 }} more</li>
+        {% endif %}
+    </ul>
+    {% endif %}
+
+    {% if report.circuit_diff.match %}
+    <p class="text-muted">Circuit structure matches</p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if report.tvd is defined and report.tvd is not none %}
+<div class="card mb-2">
+    <div class="card-header">
+        <h3 class="card-title">Results</h3>
+    </div>
+    <table>
+        <tbody>
+            <tr>
+                <td>Total Variation Distance (TVD)</td>
+                <td class="font-mono">{{ "%.6f" | format(report.tvd) }}</td>
+            </tr>
+            {% if report.shots %}
+            <tr>
+                <td>Total Shots (A / B)</td>
+                <td class="font-mono">{{ report.shots.a }} / {{ report.shots.b }}</td>
+            </tr>
+            {% endif %}
+            {% if report.noise_context %}
+            <tr>
+                <td>Noise Threshold (p95)</td>
+                <td class="font-mono">
+                    {{ "%.6f" | format(report.noise_context.noise_p95) if report.noise_context.noise_p95 else "%.6f" | format(report.noise_context.expected_noise * 2) }}
+                </td>
+            </tr>
+            {% if report.noise_context.p_value is defined and report.noise_context.p_value is not none %}
+            <tr>
+                <td>p-value</td>
+                <td class="font-mono">{{ "%.3f" | format(report.noise_context.p_value) }}</td>
+            </tr>
+            {% endif %}
+            {% endif %}
+        </tbody>
+    </table>
+
+    {% if report.tvd > 0 and report.noise_context %}
+    <p class="text-sm mt-2">
+        {# Bootstrap path: use p_value #}
+        {% if report.noise_context.p_value is defined and report.noise_context.p_value is not none %}
+            {% if report.noise_context.p_value >= 0.10 %}
+            <span style="color: var(--success);">✓</span> Consistent with sampling noise — difference is not statistically significant.
+            {% elif report.noise_context.p_value >= 0.05 %}
+            <span style="color: var(--warning);">⚠</span> Borderline (p={{ "%.2f" | format(report.noise_context.p_value) }}). Consider increasing shots for a clearer signal.
+            {% else %}
+            <span style="color: var(--danger);">✗</span> Statistically significant difference (p={{ "%.2f" | format(report.noise_context.p_value) }}) — results show meaningful divergence.
+            {% endif %}
+        {# Fallback: use noise_ratio heuristic #}
+        {% else %}
+            {% if report.noise_context.noise_ratio < 1.5 %}
+            <span style="color: var(--success);">✓</span> TVD is within expected shot noise range.
+            {% elif report.noise_context.noise_ratio < 3.0 %}
+            <span style="color: var(--warning);">⚠</span> Ambiguous ({{ "%.1f" | format(report.noise_context.noise_ratio) }}× expected noise). Consider increasing shots.
+            {% else %}
+            <span style="color: var(--danger);">✗</span> TVD exceeds expected noise ({{ "%.1f" | format(report.noise_context.noise_ratio) }}×) — results show meaningful differences.
+            {% endif %}
+        {% endif %}
+    </p>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if report.warnings %}
+<div class="card">
+    <div class="card-header">
+        <h3 class="card-title">Warnings</h3>
+    </div>
+    <ul style="margin: 0; padding-left: 1.5rem;">
+        {% for warning in report.warnings %}
+        <li class="text-sm" style="margin: 0.25rem 0; color: var(--warning);">{{ warning }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
+{% endblock %}

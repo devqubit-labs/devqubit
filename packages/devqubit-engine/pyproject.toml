@@ -1,0 +1,39 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-engine"
+version = "0.1.0"
+description = "Internal core runtime for devqubit"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "click>=8.2,<9",
+    "jsonschema>=4.25.1,<5",
+    "numpy>=2.2,<3",
+    "py-ulid>=1.0.3",
+]
+
+[project.optional-dependencies]
+s3 = ["boto3>=1.42.10"]
+gcs = ["google-cloud-storage>=3.7.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_engine"]

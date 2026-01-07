@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-qiskit"
+version = "0.1.0"
+description = "devqubit adapter for Qiskit"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "qiskit", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "devqubit-engine>=0.1.0,<0.2.0",
+    "qiskit>=2.2,<3",
+    "qiskit-aer>=0.17,<0.18",
+    "qiskit-qasm3-import>=0.6,<0.7",
+]
+
+[project.entry-points."devqubit.adapters"]
+qiskit = "devqubit_qiskit.adapter:QiskitAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+qiskit = "devqubit_qiskit.serialization:QiskitCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+qiskit = "devqubit_qiskit.serialization:QiskitCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+qiskit = "devqubit_qiskit.serialization:summarize_qiskit_circuit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_qiskit"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

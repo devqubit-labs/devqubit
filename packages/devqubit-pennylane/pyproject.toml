@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-pennylane"
+version = "0.1.0"
+description = "devqubit adapter for Pennylane"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "pennylane", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "devqubit-engine>=0.1.0,<0.2.0",
+    "pennylane>=0.43,<0.44",
+]
+
+[project.entry-points."devqubit.adapters"]
+pennylane = "devqubit_pennylane.adapter:PennyLaneAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+pennylane = "devqubit_pennylane.serialization:PennyLaneCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+pennylane = "devqubit_pennylane.serialization:PennyLaneCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+pennylane = "devqubit_pennylane.serialization:summarize_pennylane_tape"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_pennylane"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

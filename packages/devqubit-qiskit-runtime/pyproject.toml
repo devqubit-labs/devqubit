@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-qiskit-runtime"
+version = "0.1.0"
+description = "devqubit adapter for Qiskit Runtime"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "devqubit-engine>=0.1.0,<0.2.0",
+    "devqubit-qiskit>=0.1.0,<0.2.0",
+    "qiskit-ibm-runtime>=0.44,<0.45",
+]
+
+[project.entry-points."devqubit.adapters"]
+qiskit-runtime = "devqubit_qiskit_runtime.adapter:QiskitRuntimeAdapter"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_qiskit_runtime"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

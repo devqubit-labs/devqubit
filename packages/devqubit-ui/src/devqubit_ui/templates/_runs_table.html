@@ -1,0 +1,48 @@
+{# Runs table fragment - can be loaded independently via HTMX #}
+{% if runs %}
+<table>
+    <thead>
+        <tr>
+            <th>Run ID</th>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for run in runs %}
+        <tr>
+            <td>
+                <a href="/runs/{{ run.run_id }}" class="font-mono">
+                    {{ run.run_id | short_id }}
+                </a>
+            </td>
+            <td>{{ run.project }}</td>
+            <td>
+                {% if run.status == 'FINISHED' %}
+                <span class="badge badge-success">{{ run.status }}</span>
+                {% elif run.status == 'FAILED' %}
+                <span class="badge badge-danger">{{ run.status }}</span>
+                {% elif run.status == 'RUNNING' %}
+                <span class="badge badge-warning">{{ run.status }}</span>
+                {% else %}
+                <span class="badge badge-gray">{{ run.status }}</span>
+                {% endif %}
+            </td>
+            <td class="text-muted">{{ run.created_at | ago }}</td>
+            <td>
+                <a href="/runs/{{ run.run_id }}" class="btn btn-sm btn-secondary">View</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No runs found</p>
+    {% if filters and (filters.q or filters.project or filters.status) %}
+    <p class="text-sm mt-2">Try adjusting your filters</p>
+    {% endif %}
+</div>
+{% endif %}

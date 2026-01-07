@@ -1,0 +1,146 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit"
+version = "0.1.0"
+description = "Quantum experiment tracking library"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE*"]
+requires-python = ">=3.11,<3.14"
+
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "devqubit-engine>=0.1.0,<0.2.0",
+]
+
+[project.urls]
+Homepage = "https://devqubit.com"
+Repository = "https://github.com/devqubit-labs/devqubit"
+Issues = "https://github.com/devqubit-labs/devqubit/issues"
+Documentation = "https://<YOUR-DOCS>"
+
+[project.optional-dependencies]
+# Remote storage dependencies
+s3 = ["devqubit-engine[s3]>=0.1.0"]
+gcs = ["devqubit-engine[gcs]>=0.1.0"]
+
+# SDKs/providers dependencies
+qiskit = ["devqubit-qiskit>=0.1.0"]
+qiskit-runtime = ["devqubit-qiskit-runtime>=0.1.0"]
+pennylane = ["devqubit-pennylane>=0.1.0"]
+cirq = ["devqubit-cirq>=0.1.0"]
+braket = ["devqubit-braket>=0.1.0"]
+all = [
+  "devqubit-qiskit>=0.1.0",
+  "devqubit-qiskit-runtime>=0.1.0",
+  "devqubit-pennylane>=0.1.0",
+  "devqubit-cirq>=0.1.0",
+  "devqubit-braket>=0.1.0",
+]
+
+# Local UI
+ui = ["devqubit-ui>=0.1.0"]
+
+[project.scripts]
+devqubit = "devqubit.cli:main"
+
+[dependency-groups]
+dev = [
+    "black[jupyter]>=25.12.0",
+    "ipykernel>=7.1.0",
+    "isort>=7.0.0",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "ruff>=0.14.9",
+    "towncrier>=25.8.0",
+]
+docs = [
+    "myst-parser>=4.0.1",
+    "sphinx>=8.2.3",
+    "sphinx-rtd-theme>=3.0.2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit"]
+
+[tool.uv.workspace]
+members = [
+    "packages/devqubit-engine",
+    "packages/devqubit-qiskit",
+    "packages/devqubit-qiskit-runtime",
+    "packages/devqubit-pennylane",
+    "packages/devqubit-cirq",
+    "packages/devqubit-braket",
+    "packages/devqubit-ui",
+]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }
+devqubit-qiskit = { workspace = true }
+devqubit-qiskit-runtime = { workspace = true }
+devqubit-pennylane = { workspace = true }
+devqubit-cirq = { workspace = true }
+devqubit-braket = { workspace = true }
+devqubit-ui = { workspace = true }
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple/"
+publish-url = "https://upload.pypi.org/legacy/"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages/*/tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = ["--import-mode=importlib"]
+
+filterwarnings = [
+  # Silence Braket docstring escape warnings (3rd-party)
+  "ignore:invalid escape sequence.*:SyntaxWarning:braket\\..*",
+
+  # Silence the IBMFractionalTranslationPlugin deprecation warning (3rd-party)
+  "ignore:.*IBMFractionalTranslationPlugin.*:DeprecationWarning:stevedore\\..*",
+]
+
+[tool.isort]
+src_paths = [
+    "src/",
+    "packages/",
+    "examples/",
+    "tools/",
+]
+profile = "black"
+line_length = 88
+lines_after_imports = 2
+
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-ui"
+version = "0.1.0"
+description = "Web interface for devqubit experiment tracking"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE*"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["devqubit", "experiment-tracking", "web-ui", "fastapi"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "devqubit-engine>=0.1.0,<0.2.0",
+    "fastapi>=0.128.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "uvicorn[standard]>=0.40.0",
+]
+
+[project.entry-points."devqubit.components"]
+ui = "devqubit_ui._plugin:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_ui"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block title %}Runs - devqubit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Runs</h1>
+</div>
+
+<div class="card mb-2">
+    <form hx-get="/runs"
+          hx-target="#runs-table"
+          hx-swap="innerHTML"
+          hx-indicator="#loading-indicator">
+        <div class="form-row">
+            <div class="form-group">
+                <label for="project">Project</label>
+                <select name="project" id="project" hx-trigger="change" hx-get="/runs" hx-target="#runs-table">
+                    <option value="">All projects</option>
+                    {% for p in projects %}
+                    <option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="status">Status</label>
+                <select name="status" id="status" hx-trigger="change" hx-get="/runs" hx-target="#runs-table">
+                    <option value="">All</option>
+                    <option value="FINISHED" {% if filters.status == 'FINISHED' %}selected{% endif %}>Finished</option>
+                    <option value="FAILED" {% if filters.status == 'FAILED' %}selected{% endif %}>Failed</option>
+                    <option value="RUNNING" {% if filters.status == 'RUNNING' %}selected{% endif %}>Running</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="q">Query</label>
+                <input type="text"
+                       name="q"
+                       id="q"
+                       value="{{ filters.q }}"
+                       placeholder="metric.fidelity > 0.9"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-get="/runs"
+                       hx-target="#runs-table"
+                       hx-include="[name='project'], [name='status'], [name='limit']">
+            </div>
+            <div class="form-group">
+                <label for="limit">Limit</label>
+                <select name="limit" id="limit">
+                    <option value="25" {% if filters.limit == 25 %}selected{% endif %}>25</option>
+                    <option value="50" {% if filters.limit == 50 %}selected{% endif %}>50</option>
+                    <option value="100" {% if filters.limit == 100 %}selected{% endif %}>100</option>
+                </select>
+            </div>
+            <div class="form-group" style="display: flex; align-items: flex-end; gap: 0.5rem;">
+                <button type="submit" class="btn btn-primary">
+                    Filter
+                </button>
+                <span id="loading-indicator" class="htmx-indicator">
+                    <span class="spinner"></span>
+                </span>
+            </div>
+        </div>
+    </form>
+</div>
+
+<div class="card">
+    <div id="runs-table">
+        {% include "_runs_table.html" %}
+    </div>
+</div>
+{% endblock %}

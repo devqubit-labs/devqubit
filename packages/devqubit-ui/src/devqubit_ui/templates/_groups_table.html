@@ -1,0 +1,32 @@
+{# Groups table fragment - can be loaded independently via HTMX #}
+{% if groups %}
+<table>
+    <thead>
+        <tr>
+            <th>Group ID</th>
+            <th>Name</th>
+            <th>Project</th>
+            <th>Runs</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for group in groups %}
+        <tr>
+            <td class="font-mono">{{ group.group_id | short_id }}</td>
+            <td>{{ group.group_name or '—' }}</td>
+            <td>{{ group.project }}</td>
+            <td>{{ group.run_count }}</td>
+            <td>
+                <a href="/groups/{{ group.group_id }}" class="btn btn-sm btn-secondary">View Runs</a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No groups found</p>
+    <p class="text-sm mt-2">Groups are created when runs have a group_id set</p>
+</div>
+{% endif %}

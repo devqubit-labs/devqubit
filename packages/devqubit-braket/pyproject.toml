@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-braket"
+version = "0.1.0"
+description = "devqubit adapter for Braket"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "braket", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "amazon-braket-sdk>=1.107,<2",
+    "devqubit-engine>=0.1.0,<0.2.0",
+]
+
+[project.entry-points."devqubit.adapters"]
+braket = "devqubit_braket.adapter:BraketAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+braket = "devqubit_braket.serialization:BraketCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+braket = "devqubit_braket.serialization:BraketCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+braket = "devqubit_braket.serialization:summarize_braket_circuit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_braket"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

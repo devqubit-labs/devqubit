@@ -1,0 +1,48 @@
+[tool.towncrier]
+package = ""
+version = "0.0.0"
+
+directory = "changelog.d"
+filename = "CHANGELOG.md"
+start_string = "<!-- towncrier release notes start -->\n"
+
+# Markdown template doesn't use underlines, but towncrier expects the key to exist.
+underlines = ["", "", ""]
+
+title_format = "## [{version}](https://github.com/devqubit-labs/devqubit/releases/tag/v{version}) - {project_date}"
+
+# Enforce numeric issue/PR IDs for normal fragments.
+# For changes without an ID, use an orphan fragment prefixed with '+', e.g.:
+#   changelog.d/changed/+bundle-format.md
+issue_pattern = "\\d+"
+issue_format = "[#{issue}](https://github.com/devqubit-labs/devqubit/pull/{issue})"
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecated"
+name = "Deprecated"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
