@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit"
-version = "0.1.0"
+version = "0.1.1"
 description = "Quantum experiment tracking library"
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,7 +28,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "devqubit-engine>=0.1.0,<0.2.0",
+    "devqubit-engine>=0.1.1,<0.2.0",
 ]
 
 [project.urls]
@@ -39,25 +39,25 @@ Documentation = "https://devqubit.readthedocs.io"
 
 [project.optional-dependencies]
 # Remote storage dependencies
-s3 = ["devqubit-engine[s3]>=0.1.0,<0.2.0"]
-gcs = ["devqubit-engine[gcs]>=0.1.0,<0.2.0"]
+s3 = ["devqubit-engine[s3]>=0.1.1,<0.2.0"]
+gcs = ["devqubit-engine[gcs]>=0.1.1,<0.2.0"]
 
 # SDKs/providers dependencies
-qiskit = ["devqubit-qiskit>=0.1.0,<0.2.0"]
-qiskit-runtime = ["devqubit-qiskit-runtime>=0.1.0,<0.2.0"]
-pennylane = ["devqubit-pennylane>=0.1.0,<0.2.0"]
-cirq = ["devqubit-cirq>=0.1.0,<0.2.0"]
-braket = ["devqubit-braket>=0.1.0,<0.2.0"]
+qiskit = ["devqubit-qiskit>=0.1.1,<0.2.0"]
+qiskit-runtime = ["devqubit-qiskit-runtime>=0.1.1,<0.2.0"]
+pennylane = ["devqubit-pennylane>=0.1.1,<0.2.0"]
+cirq = ["devqubit-cirq>=0.1.1,<0.2.0"]
+braket = ["devqubit-braket>=0.1.1,<0.2.0"]
 all = [
-  "devqubit-qiskit>=0.1.0,<0.2.0",
-  "devqubit-qiskit-runtime>=0.1.0,<0.2.0",
-  "devqubit-pennylane>=0.1.0,<0.2.0",
-  "devqubit-cirq>=0.1.0,<0.2.0",
-  "devqubit-braket>=0.1.0,<0.2.0",
+  "devqubit-qiskit>=0.1.1,<0.2.0",
+  "devqubit-qiskit-runtime>=0.1.1,<0.2.0",
+  "devqubit-pennylane>=0.1.1,<0.2.0",
+  "devqubit-cirq>=0.1.1,<0.2.0",
+  "devqubit-braket>=0.1.1,<0.2.0",
 ]
 
 # Local UI
-ui = ["devqubit-ui>=0.1.0,<0.2.0"]
+ui = ["devqubit-ui>=0.1.1,<0.2.0"]
 
 [project.scripts]
 devqubit = "devqubit.cli:main"
