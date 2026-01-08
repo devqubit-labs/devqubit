@@ -59,6 +59,14 @@
 
         .logo { font-weight: 700; font-size: 1.25rem; color: var(--primary); }
         .logo:hover { text-decoration: none; color: var(--primary-light); }
+        .logo .teams-badge {
+            font-size: 0.625rem;
+            color: var(--gray-500);
+            margin-left: 0.25rem;
+            vertical-align: super;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
 
         nav { display: flex; gap: 1.5rem; flex: 1; }
         nav a { color: var(--gray-300); transition: color 0.15s; }
@@ -263,7 +271,7 @@
         /* Fade transition for HTMX swaps */
         .htmx-swapping { opacity: 0; transition: opacity 0.1s ease-out; }
 
-        /* User menu (Teams) */
+        /* User menu (for Teams integration) */
         .user-menu {
             position: relative;
         }
@@ -276,6 +284,8 @@
             border-radius: 6px;
             cursor: pointer;
             color: var(--gray-300);
+            background: none;
+            border: none;
             transition: background-color 0.15s;
         }
 
@@ -297,6 +307,14 @@
             color: white;
         }
 
+        .user-name {
+            font-size: 0.875rem;
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .user-menu-dropdown {
             position: absolute;
             top: 100%;
@@ -308,23 +326,55 @@
             min-width: 200px;
             z-index: 1000;
             display: none;
+            overflow: hidden;
         }
 
         .user-menu-dropdown.open { display: block; }
 
-        .user-menu-dropdown a {
-            display: block;
+        .user-menu-dropdown .user-info {
             padding: 0.75rem 1rem;
-            color: var(--gray-700);
-            border-bottom: 1px solid var(--gray-100);
+            border-bottom: 1px solid var(--gray-200);
         }
 
-        .user-menu-dropdown a:hover {
+        .user-menu-dropdown .user-info-name {
+            font-weight: 500;
+            color: var(--gray-900);
+        }
+
+        .user-menu-dropdown .user-info-email {
+            font-size: 0.8125rem;
+            color: var(--gray-500);
+        }
+
+        .user-menu-dropdown a,
+        .user-menu-dropdown button.menu-item {
+            display: block;
+            width: 100%;
+            padding: 0.625rem 1rem;
+            color: var(--gray-700);
+            background: none;
+            border: none;
+            text-align: left;
+            font-size: 0.875rem;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        .user-menu-dropdown a:hover,
+        .user-menu-dropdown button.menu-item:hover {
             background: var(--gray-50);
             text-decoration: none;
         }
 
-        .user-menu-dropdown a:last-child { border-bottom: none; }
+        .user-menu-dropdown .menu-divider {
+            height: 1px;
+            background: var(--gray-200);
+            margin: 0;
+        }
+
+        .user-menu-dropdown .danger {
+            color: var(--danger);
+        }
 
         /* Alert messages */
         .alert {
@@ -345,14 +395,14 @@
     <header>
         <div class="container">
             {% block logo %}
-            <a href="/" class="logo">⚛ devqubit</a>
+            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">teams</span>{% endif %}</a>
             {% endblock %}
 
             <nav>
                 {% block nav_start %}{% endblock %}
-                <a href="/runs" class="{% if request.url.path == '/runs' %}active{% endif %}">Runs</a>
-                <a href="/projects" class="{% if request.url.path == '/projects' %}active{% endif %}">Projects</a>
-                <a href="/groups" class="{% if request.url.path == '/groups' %}active{% endif %}">Groups</a>
+                <a href="/runs" class="{% if request.url.path == '/runs' or request.url.path.startswith('/runs/') %}active{% endif %}">Runs</a>
+                <a href="/projects" class="{% if request.url.path == '/projects' or request.url.path.startswith('/projects/') %}active{% endif %}">Projects</a>
+                <a href="/groups" class="{% if request.url.path == '/groups' or request.url.path.startswith('/groups/') %}active{% endif %}">Groups</a>
                 <a href="/diff" class="{% if request.url.path == '/diff' %}active{% endif %}">Compare</a>
                 <a href="/search" class="{% if request.url.path == '/search' %}active{% endif %}">Search</a>
                 {% block nav_items %}{% endblock %}
@@ -360,7 +410,30 @@
 
             <div class="nav-right">
                 {% block nav_right %}
-                {# Teams overrides this block to show user menu #}
+                {# Teams user menu - shown when current_user is available #}
+                {% if current_user %}
+                <div class="user-menu" id="userMenu">
+                    <button class="user-menu-toggle" onclick="document.getElementById('userMenuDropdown').classList.toggle('open')">
+                        <div class="user-avatar">{{ (current_user.name or current_user.email)[:2] | upper }}</div>
+                        <span class="user-name">{{ current_user.name or current_user.email.split('@')[0] }}</span>
+                    </button>
+                    <div class="user-menu-dropdown" id="userMenuDropdown">
+                        <div class="user-info">
+                            <div class="user-info-name">{{ current_user.name or 'User' }}</div>
+                            <div class="user-info-email">{{ current_user.email }}</div>
+                        </div>
+                        <a href="/settings/tokens">API Tokens</a>
+                        <a href="/settings/profile">Profile</a>
+                        {% if current_user.is_admin %}
+                        <a href="/admin">Admin</a>
+                        {% endif %}
+                        <div class="menu-divider"></div>
+                        <form action="/auth/logout" method="post" style="margin: 0;">
+                            <button type="submit" class="menu-item danger">Sign Out</button>
+                        </form>
+                    </div>
+                </div>
+                {% endif %}
                 {% endblock %}
             </div>
         </div>
@@ -378,6 +451,17 @@
 
     {% block footer %}{% endblock %}
 
-    {% block scripts %}{% endblock %}
+    {% block scripts %}
+    <script>
+    // Close user menu when clicking outside
+    document.addEventListener('click', function(e) {
+        var menu = document.getElementById('userMenu');
+        var dropdown = document.getElementById('userMenuDropdown');
+        if (menu && dropdown && !menu.contains(e.target)) {
+            dropdown.classList.remove('open');
+        }
+    });
+    </script>
+    {% endblock %}
 </body>
 </html>

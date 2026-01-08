@@ -36,11 +36,11 @@ with track(project="my-experiment") as run:
 Circuit capture requires SDK-specific adapters (separate packages):
 
 ```bash
-pip install devqubit-qiskit         # Qiskit + Aer
-pip install devqubit-qiskit-runtime # IBM Quantum Runtime
-pip install devqubit-braket         # Amazon Braket
-pip install devqubit-cirq           # Google Cirq
-pip install devqubit-pennylane      # PennyLane
+pip install devqubit[qiskit]         # Qiskit + Aer
+pip install devqubit[qiskit-runtime] # IBM Quantum Runtime
+pip install devqubit[braket]         # Amazon Braket
+pip install devqubit[cirq]           # Google Cirq
+pip install devqubit[pennylane]      # PennyLane
 ```
 
 ## Configuration
