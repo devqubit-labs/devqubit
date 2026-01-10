@@ -49,8 +49,8 @@ pip install "devqubit[ui]"
 This repo is a **uv workspace** (monorepo). For a complete local dev environment:
 
 ```bash
-git clone <REPO_URL>
-cd <REPO_DIR>
+git clone https://github.com/devqubit-labs/devqubit.git
+cd devqubit
 
 # Core dev (fast)
 uv sync --all-packages
