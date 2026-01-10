@@ -8,6 +8,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.3](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.3) - 2026-01-10
+
+#### Fixed
+- Workspace context preserved across navigation links in Teams mode.
+
 ## [0.1.2](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.2) - 2026-01-10
 
 #### Added
