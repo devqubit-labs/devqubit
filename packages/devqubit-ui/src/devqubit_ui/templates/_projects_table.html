@@ -1,38 +1,46 @@
-{# Projects table fragment - can be loaded independently via HTMX #}
-{% if projects %}
 <table>
     <thead>
         <tr>
             <th>Project</th>
             <th>Runs</th>
             <th>Baseline</th>
-            <th>Actions</th>
+            <th></th>
         </tr>
     </thead>
     <tbody>
         {% for project in projects %}
         <tr>
-            <td><strong>{{ project.name }}</strong></td>
-            <td>{{ project.run_count }}</td>
+            <td>
+                <span class="font-medium">{{ project.name }}</span>
+                {% if project.description %}
+                <p class="text-muted text-sm">{{ project.description | truncate(60) }}</p>
+                {% endif %}
+            </td>
+            <td><span class="badge badge-gray">{{ project.run_count or 0 }}</span></td>
             <td>
                 {% if project.baseline %}
                 <a href="/runs/{{ project.baseline.run_id }}" class="font-mono text-sm">
                     {{ project.baseline.run_id | short_id }}
                 </a>
                 {% else %}
-                <span class="text-muted">Not set</span>
+                <span class="text-muted">—</span>
                 {% endif %}
             </td>
-            <td>
+            <td style="text-align: right;">
+                {% if current_workspace %}
+                <a href="/runs?project={{ project.name }}&workspace={{ current_workspace.id }}" class="btn btn-sm btn-secondary">View Runs</a>
+                {% else %}
                 <a href="/runs?project={{ project.name }}" class="btn btn-sm btn-secondary">View Runs</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}
+        <tr>
+            <td colspan="4" class="empty-state">
+                <p>No projects yet</p>
+                <p class="text-sm text-muted mt-1">Projects are created automatically when you log runs</p>
             </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
-{% else %}
-<div class="empty-state">
-    <p>No projects yet</p>
-    <p class="text-sm mt-2">Create your first run to see it here</p>
-</div>
-{% endif %}

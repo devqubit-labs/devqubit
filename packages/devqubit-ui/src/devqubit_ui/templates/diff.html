@@ -14,7 +14,7 @@
             {% endif %}
         </h1>
         <p class="text-muted text-sm">
-            <a href="/diff">← Select different runs</a>
+            {% if current_workspace %}<a href="/diff?workspace={{ current_workspace.id }}">← Select different runs</a>{% else %}<a href="/diff">← Select different runs</a>{% endif %}
         </p>
     </div>
 </div>

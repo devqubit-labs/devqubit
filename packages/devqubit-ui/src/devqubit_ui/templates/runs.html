@@ -12,10 +12,14 @@
           hx-target="#runs-table"
           hx-swap="innerHTML"
           hx-indicator="#loading-indicator">
+        <!-- Preserve workspace on HTMX requests -->
+        {% if current_workspace %}
+        <input type="hidden" name="workspace" value="{{ current_workspace.id }}">
+        {% endif %}
         <div class="form-row">
             <div class="form-group">
                 <label for="project">Project</label>
-                <select name="project" id="project" hx-trigger="change" hx-get="/runs" hx-target="#runs-table">
+                <select name="project" id="project" hx-trigger="change" hx-get="/runs" hx-target="#runs-table" hx-include="[name='workspace'], [name='status'], [name='limit'], [name='q']">
                     <option value="">All projects</option>
                     {% for p in projects %}
                     <option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>
@@ -24,7 +28,7 @@
             </div>
             <div class="form-group">
                 <label for="status">Status</label>
-                <select name="status" id="status" hx-trigger="change" hx-get="/runs" hx-target="#runs-table">
+                <select name="status" id="status" hx-trigger="change" hx-get="/runs" hx-target="#runs-table" hx-include="[name='workspace'], [name='project'], [name='limit'], [name='q']">
                     <option value="">All</option>
                     <option value="FINISHED" {% if filters.status == 'FINISHED' %}selected{% endif %}>Finished</option>
                     <option value="FAILED" {% if filters.status == 'FAILED' %}selected{% endif %}>Failed</option>
@@ -41,11 +45,11 @@
                        hx-trigger="keyup changed delay:300ms"
                        hx-get="/runs"
                        hx-target="#runs-table"
-                       hx-include="[name='project'], [name='status'], [name='limit']">
+                       hx-include="[name='workspace'], [name='project'], [name='status'], [name='limit']">
             </div>
             <div class="form-group">
                 <label for="limit">Limit</label>
-                <select name="limit" id="limit">
+                <select name="limit" id="limit" hx-include="[name='workspace']">
                     <option value="25" {% if filters.limit == 25 %}selected{% endif %}>25</option>
                     <option value="50" {% if filters.limit == 50 %}selected{% endif %}>50</option>
                     <option value="100" {% if filters.limit == 100 %}selected{% endif %}>100</option>
