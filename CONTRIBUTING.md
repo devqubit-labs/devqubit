@@ -114,20 +114,12 @@ Do **not** add a fragment for internal refactors, tests, CI, formatting-only cha
 
 ### Where to put it
 
-Pick a category directory:
+Fragments go in `changelog.d/` with the type in the filename:
 
-- `changelog.d/added/`
-- `changelog.d/changed/`
-- `changelog.d/fixed/`
-- `changelog.d/deprecated/`
-- `changelog.d/removed/`
-- `changelog.d/security/`
+- `changelog.d/<PR_NUMBER>.<type>.md` (e.g. `changelog.d/123.fixed.md`)
+- For orphan fragments: `changelog.d/+<description>.<type>.md` (e.g. `changelog.d/+workspace-selector.added.md`)
 
-Filename rules:
-
-- Prefer: `<PR_NUMBER>.md` (e.g. `changelog.d/fixed/123.md`)
-- If not tied to a PR/issue: use an **orphan fragment** that starts with `+`
-  (e.g. `changelog.d/changed/+bundle-format.md`)
+Available types: `added`, `changed`, `fixed`, `deprecated`, `removed`, `security`
 
 Keep fragments short (1–3 lines) and user-facing (what changed for the user, not how it was implemented).
 
