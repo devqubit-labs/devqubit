@@ -3,7 +3,7 @@
 Local-first experiment tracking for quantum computing. Capture **code + circuits + backend/device context + configuration**
 so runs are reproducible, comparable, and easy to share.
 
-> **Status:** Alpha. APIs and bundle formats may evolve in `0.x` releases.
+> **Status:** Alpha. APIs and bundle formats may evolve in `0.x.x` releases.
 
 ## Documentation
 
