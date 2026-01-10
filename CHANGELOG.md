@@ -12,3 +12,10 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 #### Added
 - Initial public release of devqubit (core + engine + adapters + optional local UI).
+
+## [0.1.1](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.1) - 2026-01-07
+
+### Added
+
+- User menu component in base template for Teams integration
+- Support for `current_user` context variable in templates
