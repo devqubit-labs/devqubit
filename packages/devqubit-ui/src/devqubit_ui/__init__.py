@@ -47,4 +47,4 @@ between versions. For programmatic access, prefer the core ``devqubit``
 API or the JSON endpoints at ``/api/*``.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

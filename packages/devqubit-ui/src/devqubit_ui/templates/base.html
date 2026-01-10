@@ -271,6 +271,109 @@
         /* Fade transition for HTMX swaps */
         .htmx-swapping { opacity: 0; transition: opacity 0.1s ease-out; }
 
+        /* Workspace Selector (for Teams integration) */
+        .workspace-selector {
+            position: relative;
+            margin-right: 1rem;
+        }
+
+        .workspace-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background: rgba(255,255,255,0.1);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 6px;
+            cursor: pointer;
+            color: var(--gray-200);
+            font-size: 0.875rem;
+            transition: all 0.15s;
+        }
+
+        .workspace-toggle:hover {
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.3);
+        }
+
+        .workspace-toggle .ws-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            background: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: white;
+        }
+
+        .workspace-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 0.5rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            min-width: 220px;
+            z-index: 1000;
+            display: none;
+            overflow: hidden;
+        }
+
+        .workspace-dropdown.open {
+            display: block;
+        }
+
+        .workspace-dropdown-header {
+            padding: 0.75rem 1rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--gray-500);
+            border-bottom: 1px solid var(--gray-200);
+        }
+
+        .workspace-dropdown a {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 1rem;
+            color: var(--gray-700);
+            text-decoration: none;
+        }
+
+        .workspace-dropdown a:hover {
+            background: var(--gray-50);
+            text-decoration: none;
+        }
+
+        .workspace-dropdown a.active {
+            background: var(--primary-bg);
+            color: var(--primary-dark);
+        }
+
+        .workspace-dropdown a .ws-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 4px;
+            background: var(--gray-200);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--gray-700);
+        }
+
+        .workspace-dropdown a.active .ws-icon {
+            background: var(--primary);
+            color: white;
+        }
+
         /* User menu (for Teams integration) */
         .user-menu {
             position: relative;
@@ -395,7 +498,7 @@
     <header>
         <div class="container">
             {% block logo %}
-            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">teams</span>{% endif %}</a>
+            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">hub</span>{% endif %}</a>
             {% endblock %}
 
             <nav>
@@ -410,10 +513,39 @@
 
             <div class="nav-right">
                 {% block nav_right %}
-                {# Teams user menu - shown when current_user is available #}
+                {# Workspace selector - shown when workspaces available (Hub) #}
+                {% if current_workspace %}
+                    {% if workspaces and workspaces|length > 1 %}
+                    <div class="workspace-selector" id="workspaceSelector">
+                        <button class="workspace-toggle" onclick="toggleWorkspaceMenu()">
+                            <span class="ws-icon">{{ (current_workspace.name or 'W')[:1] | upper }}</span>
+                            <span>{{ current_workspace.name | truncate(20) }}</span>
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                                <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                            </svg>
+                        </button>
+                        <div class="workspace-dropdown" id="workspaceDropdown">
+                            <div class="workspace-dropdown-header">Switch Workspace</div>
+                            {% for ws in workspaces %}
+                            <a href="?workspace={{ ws.id }}" class="{% if ws.id == current_workspace.id %}active{% endif %}">
+                                <span class="ws-icon">{{ (ws.name or 'W')[:1] | upper }}</span>
+                                <span>{{ ws.name }}</span>
+                            </a>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% else %}
+                    <div class="workspace-toggle" style="cursor: default;">
+                        <span class="ws-icon">{{ (current_workspace.name or 'W')[:1] | upper }}</span>
+                        <span>{{ current_workspace.name | truncate(20) }}</span>
+                    </div>
+                    {% endif %}
+                {% endif %}
+
+                {# Hub user menu - shown when current_user is available #}
                 {% if current_user %}
                 <div class="user-menu" id="userMenu">
-                    <button class="user-menu-toggle" onclick="document.getElementById('userMenuDropdown').classList.toggle('open')">
+                    <button class="user-menu-toggle" onclick="toggleUserMenu()">
                         <div class="user-avatar">{{ (current_user.name or current_user.email)[:2] | upper }}</div>
                         <span class="user-name">{{ current_user.name or current_user.email.split('@')[0] }}</span>
                     </button>
@@ -453,12 +585,44 @@
 
     {% block scripts %}
     <script>
-    // Close user menu when clicking outside
-    document.addEventListener('click', function(e) {
-        var menu = document.getElementById('userMenu');
+    // Toggle workspace menu
+    function toggleWorkspaceMenu() {
+        var dropdown = document.getElementById('workspaceDropdown');
+        if (dropdown) {
+            dropdown.classList.toggle('open');
+        }
+        // Close user menu if open
+        var userDropdown = document.getElementById('userMenuDropdown');
+        if (userDropdown) {
+            userDropdown.classList.remove('open');
+        }
+    }
+
+    // Toggle user menu
+    function toggleUserMenu() {
         var dropdown = document.getElementById('userMenuDropdown');
-        if (menu && dropdown && !menu.contains(e.target)) {
-            dropdown.classList.remove('open');
+        if (dropdown) {
+            dropdown.classList.toggle('open');
+        }
+        // Close workspace menu if open
+        var wsDropdown = document.getElementById('workspaceDropdown');
+        if (wsDropdown) {
+            wsDropdown.classList.remove('open');
+        }
+    }
+
+    // Close menus when clicking outside
+    document.addEventListener('click', function(e) {
+        var userMenu = document.getElementById('userMenu');
+        var userDropdown = document.getElementById('userMenuDropdown');
+        if (userMenu && userDropdown && !userMenu.contains(e.target)) {
+            userDropdown.classList.remove('open');
+        }
+
+        var wsSelector = document.getElementById('workspaceSelector');
+        var wsDropdown = document.getElementById('workspaceDropdown');
+        if (wsSelector && wsDropdown && !wsSelector.contains(e.target)) {
+            wsDropdown.classList.remove('open');
         }
     });
     </script>
