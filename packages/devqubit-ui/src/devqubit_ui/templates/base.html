@@ -498,7 +498,7 @@
     <header>
         <div class="container">
             {% block logo %}
-            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">teams</span>{% endif %}</a>
+            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">hub</span>{% endif %}</a>
             {% endblock %}
 
             <nav>
@@ -513,7 +513,7 @@
 
             <div class="nav-right">
                 {% block nav_right %}
-                {# Workspace selector - shown when workspaces available (Teams) #}
+                {# Workspace selector - shown when workspaces available (Hub) #}
                 {% if current_workspace %}
                     {% if workspaces and workspaces|length > 1 %}
                     <div class="workspace-selector" id="workspaceSelector">
@@ -542,7 +542,7 @@
                     {% endif %}
                 {% endif %}
 
-                {# Teams user menu - shown when current_user is available #}
+                {# Hub user menu - shown when current_user is available #}
                 {% if current_user %}
                 <div class="user-menu" id="userMenu">
                     <button class="user-menu-toggle" onclick="toggleUserMenu()">
