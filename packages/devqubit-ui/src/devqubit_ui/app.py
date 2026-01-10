@@ -131,7 +131,7 @@ def create_app(
     app = FastAPI(
         title="devqubit UI",
         description="Web interface for devqubit experiment tracking",
-        version="0.1.1",
+        version="0.1.2",
         lifespan=lifespan,
     )
 

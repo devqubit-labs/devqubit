@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-braket"
-version = "0.1.1"
+version = "0.1.2"
 description = "devqubit adapter for Braket"
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,7 +26,7 @@ classifiers = [
 
 dependencies = [
     "amazon-braket-sdk>=1.107,<2",
-    "devqubit-engine>=0.1.1,<0.2.0",
+    "devqubit-engine>=0.1.2,<0.2.0",
 ]
 
 [project.entry-points."devqubit.adapters"]
