@@ -6,9 +6,13 @@
     <title>{% block title %}devqubit{% endblock %}</title>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <style>
+        /* =================================================================
+           devqubit Design System
+           ================================================================= */
         :root {
             --primary: #39B376;
             --primary-dark: #2D9A64;
+            --primary-light: #4FD194;
             --primary-bg: #EDFAF3;
             --danger: #ef4444;
             --danger-bg: #fee2e2;
@@ -18,47 +22,51 @@
             --info-bg: #dbeafe;
             --success: #10b981;
             --success-bg: #d1fae5;
-            --gray-50: #f8fafb;
-            --gray-100: #f1f5f4;
-            --gray-200: #e2e8e6;
-            --gray-300: #cdd5d2;
-            --gray-400: #9ca8a3;
-            --gray-500: #64756f;
-            --gray-600: #4a5954;
-            --gray-700: #374843;
-            --gray-800: #243330;
-            --gray-900: #1a2421;
+            --gray-50: #f9fafb;
+            --gray-100: #f3f4f6;
+            --gray-200: #e5e7eb;
+            --gray-300: #d1d5db;
+            --gray-400: #9ca3af;
+            --gray-500: #6b7280;
+            --gray-600: #4b5563;
+            --gray-700: #374151;
+            --gray-800: #1f2937;
+            --gray-900: #111827;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
             background: var(--gray-50);
             color: var(--gray-900);
-            line-height: 1.5;
             min-height: 100vh;
         }
 
         a { color: var(--primary); text-decoration: none; }
-        a:hover { text-decoration: underline; }
+        a:hover { color: var(--primary-dark); }
 
-        /* Header */
+        /* =================================================================
+           Header
+           ================================================================= */
         .header {
             background: var(--gray-900);
-            color: white;
-            padding: 0 1.5rem;
             height: 56px;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
             position: sticky;
             top: 0;
             z-index: 100;
+        }
+
+        .header-inner {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 0 1.5rem;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
 
         .header-left {
@@ -68,26 +76,15 @@
         }
 
         .logo {
-            font-weight: 700;
             font-size: 1.125rem;
-            color: var(--primary) !important;
-            text-decoration: none !important;
+            font-weight: 700;
+            color: var(--primary);
+            text-decoration: none;
             display: flex;
             align-items: center;
-            gap: 0.25rem;
+            gap: 0.375rem;
         }
-
-        .teams-badge {
-            font-size: 0.625rem;
-            background: var(--primary);
-            color: white;
-            padding: 0.125rem 0.375rem;
-            border-radius: 4px;
-            margin-left: 0.25rem;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-        }
+        .logo:hover { color: var(--primary-light); text-decoration: none; }
 
         .nav {
             display: flex;
@@ -96,19 +93,17 @@
 
         .nav a {
             color: var(--gray-400);
-            padding: 0.5rem 0.875rem;
+            padding: 0.5rem 0.75rem;
             border-radius: 6px;
             font-size: 0.875rem;
             font-weight: 500;
             transition: all 0.15s;
         }
-
         .nav a:hover {
             color: white;
             background: rgba(255,255,255,0.1);
             text-decoration: none;
         }
-
         .nav a.active {
             color: white;
             background: rgba(57, 179, 118, 0.2);
@@ -120,183 +115,9 @@
             gap: 1rem;
         }
 
-        /* Workspace selector */
-        .workspace-selector {
-            position: relative;
-        }
-
-        .workspace-toggle {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.375rem 0.75rem;
-            background: rgba(255,255,255,0.1);
-            border: 1px solid rgba(255,255,255,0.2);
-            border-radius: 6px;
-            color: white;
-            font-size: 0.875rem;
-            cursor: pointer;
-            transition: all 0.15s;
-        }
-
-        .workspace-toggle:hover {
-            background: rgba(255,255,255,0.15);
-            border-color: rgba(255,255,255,0.3);
-        }
-
-        .ws-icon {
-            width: 24px;
-            height: 24px;
-            background: var(--primary);
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .workspace-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            margin-top: 0.5rem;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            min-width: 220px;
-            display: none;
-            z-index: 1000;
-        }
-
-        .workspace-selector.open .workspace-dropdown {
-            display: block;
-        }
-
-        .workspace-dropdown-header {
-            padding: 0.75rem 1rem;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--gray-500);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .workspace-dropdown a {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.625rem 1rem;
-            color: var(--gray-700);
-            font-size: 0.875rem;
-            transition: background 0.1s;
-        }
-
-        .workspace-dropdown a:hover {
-            background: var(--gray-50);
-            text-decoration: none;
-        }
-
-        .workspace-dropdown a.active {
-            background: var(--primary-bg);
-            color: var(--primary-dark);
-        }
-
-        .workspace-dropdown a .ws-icon {
-            background: var(--gray-200);
-            color: var(--gray-600);
-        }
-
-        .workspace-dropdown a.active .ws-icon {
-            background: var(--primary);
-            color: white;
-        }
-
-        /* User menu */
-        .user-menu {
-            position: relative;
-        }
-
-        .user-avatar {
-            width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            background: var(--primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: white;
-            cursor: pointer;
-            transition: transform 0.1s;
-        }
-
-        .user-avatar:hover {
-            transform: scale(1.05);
-        }
-
-        .user-dropdown {
-            position: absolute;
-            top: 100%;
-            right: 0;
-            margin-top: 0.5rem;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            min-width: 200px;
-            display: none;
-            z-index: 1000;
-        }
-
-        .user-menu.open .user-dropdown {
-            display: block;
-        }
-
-        .user-dropdown-header {
-            padding: 0.75rem 1rem;
-            border-bottom: 1px solid var(--gray-200);
-        }
-
-        .user-dropdown-header strong {
-            display: block;
-            color: var(--gray-900);
-            font-size: 0.875rem;
-        }
-
-        .user-dropdown-header span {
-            font-size: 0.75rem;
-            color: var(--gray-500);
-        }
-
-        .user-dropdown a,
-        .user-dropdown form button {
-            display: block;
-            width: 100%;
-            padding: 0.625rem 1rem;
-            color: var(--gray-700);
-            font-size: 0.875rem;
-            text-align: left;
-            background: none;
-            border: none;
-            cursor: pointer;
-            font-family: inherit;
-        }
-
-        .user-dropdown a:hover,
-        .user-dropdown form button:hover {
-            background: var(--gray-50);
-            text-decoration: none;
-        }
-
-        .user-dropdown .divider {
-            height: 1px;
-            background: var(--gray-200);
-            margin: 0.25rem 0;
-        }
-
-        /* Main content */
+        /* =================================================================
+           Main Content
+           ================================================================= */
         .main {
             max-width: 1400px;
             margin: 0 auto;
@@ -305,100 +126,53 @@
 
         .page-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             margin-bottom: 1.5rem;
+            gap: 1rem;
         }
 
         .page-title {
             font-size: 1.5rem;
-            font-weight: 700;
+            font-weight: 600;
             color: var(--gray-900);
         }
 
-        /* Cards */
+        /* =================================================================
+           Cards
+           ================================================================= */
         .card {
             background: white;
-            border-radius: 10px;
             border: 1px solid var(--gray-200);
+            border-radius: 8px;
             padding: 1.25rem;
         }
 
         .card-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            justify-content: space-between;
             margin-bottom: 1rem;
             padding-bottom: 0.75rem;
-            border-bottom: 1px solid var(--gray-200);
+            border-bottom: 1px solid var(--gray-100);
         }
 
         .card-title {
             font-size: 1rem;
             font-weight: 600;
+            color: var(--gray-900);
         }
 
-        /* Buttons */
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            padding: 0.5rem 1rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-            border-radius: 6px;
-            border: 1px solid transparent;
-            cursor: pointer;
-            transition: all 0.15s;
-            text-decoration: none;
-            font-family: inherit;
-        }
-
-        .btn:hover { text-decoration: none; }
-
-        .btn-primary {
-            background: var(--primary);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: var(--primary-dark);
-        }
-
-        .btn-secondary {
-            background: white;
-            border-color: var(--gray-300);
-            color: var(--gray-700);
-        }
-
-        .btn-secondary:hover {
-            background: var(--gray-50);
-            border-color: var(--gray-400);
-        }
-
-        .btn-danger {
-            background: var(--danger);
-            color: white;
-        }
-
-        .btn-danger:hover {
-            background: #dc2626;
-        }
-
-        .btn-sm {
-            padding: 0.25rem 0.625rem;
-            font-size: 0.8125rem;
-        }
-
-        /* Tables */
+        /* =================================================================
+           Tables
+           ================================================================= */
         table {
             width: 100%;
             border-collapse: collapse;
         }
 
         th, td {
-            padding: 0.75rem;
+            padding: 0.75rem 1rem;
             text-align: left;
             border-bottom: 1px solid var(--gray-100);
         }
@@ -412,30 +186,81 @@
             background: var(--gray-50);
         }
 
-        tr:hover td {
-            background: var(--gray-50);
-        }
+        tr:hover td { background: var(--gray-50); }
+        tr:last-child td { border-bottom: none; }
 
-        /* Forms */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-group label {
-            display: block;
-            font-size: 0.8125rem;
+        /* =================================================================
+           Buttons
+           ================================================================= */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
             font-weight: 500;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-decoration: none;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+            border-color: var(--primary);
+        }
+        .btn-primary:hover {
+            background: var(--primary-dark);
+            border-color: var(--primary-dark);
+            color: white;
+            text-decoration: none;
+        }
+
+        .btn-secondary {
+            background: white;
             color: var(--gray-700);
+            border-color: var(--gray-300);
+        }
+        .btn-secondary:hover {
+            background: var(--gray-50);
+            border-color: var(--gray-400);
+            text-decoration: none;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+            border-color: var(--danger);
+        }
+        .btn-danger:hover {
+            background: #dc2626;
+            border-color: #dc2626;
+        }
+
+        .btn-sm { padding: 0.375rem 0.75rem; font-size: 0.8125rem; }
+
+        /* =================================================================
+           Forms
+           ================================================================= */
+        .form-group { margin-bottom: 1rem; }
+
+        label {
+            display: block;
+            font-weight: 500;
             margin-bottom: 0.375rem;
+            font-size: 0.875rem;
+            color: var(--gray-700);
         }
 
         input, select, textarea {
             width: 100%;
             padding: 0.5rem 0.75rem;
-            font-size: 0.875rem;
             border: 1px solid var(--gray-300);
             border-radius: 6px;
-            font-family: inherit;
+            font-size: 0.875rem;
             transition: border-color 0.15s, box-shadow 0.15s;
         }
 
@@ -447,8 +272,8 @@
 
         .form-row {
             display: flex;
-            gap: 1rem;
             flex-wrap: wrap;
+            gap: 1rem;
             align-items: flex-end;
         }
 
@@ -458,7 +283,9 @@
             margin-bottom: 0;
         }
 
-        /* Badges */
+        /* =================================================================
+           Badges
+           ================================================================= */
         .badge {
             display: inline-flex;
             align-items: center;
@@ -473,8 +300,11 @@
         .badge-warning { background: var(--warning-bg); color: #92400e; }
         .badge-info { background: var(--info-bg); color: #1e40af; }
         .badge-gray { background: var(--gray-100); color: var(--gray-600); }
+        .badge-neutral { background: var(--gray-200); color: var(--gray-700); }
 
-        /* Alerts */
+        /* =================================================================
+           Alerts
+           ================================================================= */
         .alert {
             padding: 0.75rem 1rem;
             border-radius: 6px;
@@ -487,17 +317,21 @@
         .alert-warning { background: var(--warning-bg); color: #92400e; border: 1px solid #fde68a; }
         .alert-info { background: var(--info-bg); color: #1e40af; border: 1px solid #bfdbfe; }
 
-        /* Grid */
+        /* =================================================================
+           Grid
+           ================================================================= */
         .grid { display: grid; gap: 1rem; }
         .grid-2 { grid-template-columns: repeat(2, 1fr); }
         .grid-3 { grid-template-columns: repeat(3, 1fr); }
         .grid-4 { grid-template-columns: repeat(4, 1fr); }
 
-        @media (max-width: 900px) {
+        @media (max-width: 768px) {
             .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
         }
 
-        /* Utilities */
+        /* =================================================================
+           Utilities
+           ================================================================= */
         .text-muted { color: var(--gray-500); }
         .text-sm { font-size: 0.875rem; }
         .text-xs { font-size: 0.75rem; }
@@ -505,43 +339,14 @@
         .font-medium { font-weight: 500; }
         .font-bold { font-weight: 700; }
 
-        .flex { display: flex; }
-        .items-center { align-items: center; }
-        .justify-between { justify-content: space-between; }
-        .gap-1 { gap: 0.5rem; }
-        .gap-2 { gap: 1rem; }
-
-        .mb-1 { margin-bottom: 0.5rem; }
-        .mb-2 { margin-bottom: 1rem; }
         .mt-1 { margin-top: 0.5rem; }
         .mt-2 { margin-top: 1rem; }
+        .mb-1 { margin-bottom: 0.5rem; }
+        .mb-2 { margin-bottom: 1rem; }
 
-        /* HTMX */
-        .htmx-indicator { display: none; }
-        .htmx-request .htmx-indicator { display: inline-flex; }
-        .htmx-request.htmx-indicator { display: inline-flex; }
-
-        .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--gray-200);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Empty state */
-        .empty-state {
-            text-align: center;
-            padding: 3rem 1rem;
-            color: var(--gray-500);
-        }
-
-        /* Code */
+        /* =================================================================
+           Code
+           ================================================================= */
         code {
             font-family: 'SF Mono', Monaco, 'Courier New', monospace;
             font-size: 0.875em;
@@ -558,94 +363,66 @@
             overflow-x: auto;
             font-size: 0.8125rem;
         }
+        pre code { background: none; padding: 0; }
 
-        pre code {
-            background: none;
-            padding: 0;
+        /* =================================================================
+           Empty State
+           ================================================================= */
+        .empty-state {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: var(--gray-500);
         }
 
-        /* Scrollbar */
+        /* =================================================================
+           HTMX
+           ================================================================= */
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-flex; }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--gray-200);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* =================================================================
+           Scrollbar
+           ================================================================= */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--gray-100); }
         ::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+
+        {% block extra_styles %}{% endblock %}
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
     <header class="header">
-        <div class="header-left">
-            <a href="/" class="logo">⚛ devqubit{% if current_user %}<span class="teams-badge">hub</span>{% endif %}</a>
-            <nav class="nav">
-                {% if current_workspace %}
-                <a href="/runs?workspace={{ current_workspace.id }}" class="{% if request.url.path == '/runs' or request.url.path.startswith('/runs/') %}active{% endif %}">Runs</a>
-                <a href="/projects?workspace={{ current_workspace.id }}" class="{% if request.url.path == '/projects' or request.url.path.startswith('/projects/') %}active{% endif %}">Projects</a>
-                <a href="/groups?workspace={{ current_workspace.id }}" class="{% if request.url.path == '/groups' or request.url.path.startswith('/groups/') %}active{% endif %}">Groups</a>
-                <a href="/diff?workspace={{ current_workspace.id }}" class="{% if request.url.path == '/diff' %}active{% endif %}">Compare</a>
-                <a href="/search?workspace={{ current_workspace.id }}" class="{% if request.url.path == '/search' %}active{% endif %}">Search</a>
-                {% else %}
-                <a href="/runs" class="{% if request.url.path == '/runs' or request.url.path.startswith('/runs/') %}active{% endif %}">Runs</a>
-                <a href="/projects" class="{% if request.url.path == '/projects' or request.url.path.startswith('/projects/') %}active{% endif %}">Projects</a>
-                <a href="/groups" class="{% if request.url.path == '/groups' or request.url.path.startswith('/groups/') %}active{% endif %}">Groups</a>
-                <a href="/diff" class="{% if request.url.path == '/diff' %}active{% endif %}">Compare</a>
-                <a href="/search" class="{% if request.url.path == '/search' %}active{% endif %}">Search</a>
-                {% endif %}
-            </nav>
-        </div>
-
-        <div class="header-right">
-            {% if current_user and workspaces is defined and workspaces and workspaces|length > 0 %}
-            <!-- Workspace selector for Teams -->
-            <div class="workspace-selector" id="workspaceSelector">
-                {% if workspaces|length > 1 %}
-                <button class="workspace-toggle" onclick="toggleWorkspaceDropdown(event)">
-                    <span class="ws-icon">{{ (current_workspace.name or 'W')[:1] | upper }}</span>
-                    <span>{{ current_workspace.name | truncate(20) if current_workspace else 'Select' }}</span>
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-                        <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" fill="none"/>
-                    </svg>
-                </button>
-                <div class="workspace-dropdown" id="workspaceDropdown">
-                    <div class="workspace-dropdown-header">Switch Workspace</div>
-                    {% for ws in workspaces %}
-                    <a href="?workspace={{ ws.id }}" class="{% if current_workspace and ws.id == current_workspace.id %}active{% endif %}">
-                        <span class="ws-icon">{{ (ws.name or 'W')[:1] | upper }}</span>
-                        <span>{{ ws.name }}</span>
-                    </a>
-                    {% endfor %}
-                </div>
-                {% else %}
-                <div class="workspace-toggle" style="cursor: default;">
-                    <span class="ws-icon">{{ (current_workspace.name or 'W')[:1] | upper }}</span>
-                    <span>{{ current_workspace.name | truncate(20) if current_workspace else 'Workspace' }}</span>
-                </div>
-                {% endif %}
+        <div class="header-inner">
+            <div class="header-left">
+                <a href="/" class="logo">⚛ devqubit</a>
+                <nav class="nav">
+                    {% block nav_links %}
+                    <a href="/runs" class="{% if request.url.path == '/runs' or request.url.path.startswith('/runs/') %}active{% endif %}">Runs</a>
+                    <a href="/projects" class="{% if request.url.path == '/projects' or request.url.path.startswith('/projects/') %}active{% endif %}">Projects</a>
+                    <a href="/groups" class="{% if request.url.path == '/groups' or request.url.path.startswith('/groups/') %}active{% endif %}">Groups</a>
+                    <a href="/diff" class="{% if request.url.path == '/diff' %}active{% endif %}">Compare</a>
+                    <a href="/search" class="{% if request.url.path == '/search' %}active{% endif %}">Search</a>
+                    {% endblock %}
+                </nav>
             </div>
-            {% endif %}
 
-            {% if current_user %}
-            <!-- User menu for Teams -->
-            <div class="user-menu" id="userMenu">
-                <div class="user-avatar" onclick="toggleUserMenu(event)">
-                    {{ (current_user.name or current_user.email)[:2] | upper }}
-                </div>
-                <div class="user-dropdown" id="userDropdown">
-                    <div class="user-dropdown-header">
-                        <strong>{{ current_user.name or current_user.email.split('@')[0] }}</strong>
-                        <span>{{ current_user.email }}</span>
-                    </div>
-                    <a href="/settings/tokens">API Tokens</a>
-                    <a href="/settings/profile">Profile</a>
-                    {% if current_user.is_admin %}
-                    <a href="/admin">Admin</a>
-                    {% endif %}
-                    <div class="divider"></div>
-                    <form action="/auth/logout" method="post" style="margin: 0;">
-                        <button type="submit">Sign Out</button>
-                    </form>
-                </div>
+            <div class="header-right">
+                {% block header_right %}
+                {# Extension point for devqubit-hub: workspace selector, user menu, edition badge #}
+                {% endblock %}
             </div>
-            {% endif %}
         </div>
     </header>
 
@@ -653,28 +430,6 @@
         {% block content %}{% endblock %}
     </main>
 
-    <script>
-    function toggleWorkspaceDropdown(event) {
-        event.stopPropagation();
-        document.getElementById('workspaceSelector').classList.toggle('open');
-        document.getElementById('userMenu')?.classList.remove('open');
-    }
-
-    function toggleUserMenu(event) {
-        event.stopPropagation();
-        document.getElementById('userMenu').classList.toggle('open');
-        document.getElementById('workspaceSelector')?.classList.remove('open');
-    }
-
-    document.addEventListener('click', function(event) {
-        if (!event.target.closest('.workspace-selector')) {
-            document.getElementById('workspaceSelector')?.classList.remove('open');
-        }
-        if (!event.target.closest('.user-menu')) {
-            document.getElementById('userMenu')?.classList.remove('open');
-        }
-    });
-    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>
