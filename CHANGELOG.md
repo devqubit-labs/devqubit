@@ -8,6 +8,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.4](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.4) - 2026-01-11
+
+#### Fixed
+- Fix top-level imports from devqubit_ui by exposing run_server and create_app. ([#9](https://github.com/devqubit-labs/devqubit/pull/9))
+
 ## [0.1.3](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.3) - 2026-01-10
 
 #### Fixed
