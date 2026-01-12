@@ -28,6 +28,8 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as get_version
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -128,10 +130,15 @@ def create_app(
     - ``app.state.store`` - Object store
     - ``app.state.workspace`` - Workspace path string
     """
+    try:
+        _version = get_version("devqubit-ui")
+    except PackageNotFoundError:
+        _version = "0.0.0"
+
     app = FastAPI(
         title="devqubit UI",
         description="Web interface for devqubit experiment tracking",
-        version="0.1.4",
+        version=_version,
         lifespan=lifespan,
     )
 

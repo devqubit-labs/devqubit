@@ -133,6 +133,51 @@ def capture_environment(include_pip: bool | None = None) -> dict[str, Any]:
     return env
 
 
+def _sanitize_git_url(url: str | None) -> str | None:
+    """
+    Sanitize a git remote URL by removing embedded credentials.
+
+    Removes userinfo (user:password@) from URLs to prevent accidental
+    token/credential leakage in run records.
+
+    Parameters
+    ----------
+    url : str or None
+        Git remote URL, possibly containing credentials.
+
+    Returns
+    -------
+    str or None
+        URL with credentials removed, or None if input was None.
+
+    Examples
+    --------
+    >>> _sanitize_git_url("https://token@github.com/org/repo.git")
+    'https://github.com/org/repo.git'
+    >>> _sanitize_git_url("https://user:pass@github.com/org/repo.git")
+    'https://github.com/org/repo.git'
+    >>> _sanitize_git_url("git@github.com:org/repo.git")
+    'git@github.com:org/repo.git'
+    """
+    if not url:
+        return url
+
+    # Handle HTTPS URLs with credentials: https://user:pass@host/...
+    # Pattern matches: scheme://[userinfo@]host...
+    import re
+
+    # Match URLs with credentials in userinfo section
+    pattern = r"^(https?://)([^@]+@)(.+)$"
+    match = re.match(pattern, url)
+    if match:
+        scheme, _, rest = match.groups()
+        sanitized = f"{scheme}{rest}"
+        logger.debug("Sanitized credentials from git remote URL")
+        return sanitized
+
+    return url
+
+
 def capture_git_provenance(cwd: str | None = None) -> dict[str, Any] | None:
     """
     Capture git repository provenance information.
@@ -190,7 +235,8 @@ def capture_git_provenance(cwd: str | None = None) -> dict[str, Any] | None:
     branch = _run_git(["rev-parse", "--abbrev-ref", "HEAD"])
     status_output = _run_git(["status", "--porcelain"])
     dirty = bool(status_output)
-    remote = _run_git(["config", "--get", "remote.origin.url"])
+    remote_raw = _run_git(["config", "--get", "remote.origin.url"])
+    remote = _sanitize_git_url(remote_raw)
     describe = _run_git(["describe", "--tags", "--always", "--dirty"])
 
     result = {
