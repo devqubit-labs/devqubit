@@ -24,15 +24,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
+from devqubit_engine.core.config import Config
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
 from devqubit_ui.app import templates
 from fastapi import Depends, Request
 from fastapi.templating import Jinja2Templates
 
-from devqubit import Config
 
-
-def get_config(request: Request) -> "Config":
+def get_config(request: Request) -> Config:
     """
     Get the Config instance from application state.
 
@@ -49,7 +48,7 @@ def get_config(request: Request) -> "Config":
     return request.app.state.config
 
 
-def get_registry(request: Request) -> "RegistryProtocol":
+def get_registry(request: Request) -> RegistryProtocol:
     """
     Get the registry instance from application state.
 
@@ -66,7 +65,7 @@ def get_registry(request: Request) -> "RegistryProtocol":
     return request.app.state.registry
 
 
-def get_store(request: Request) -> "ObjectStoreProtocol":
+def get_store(request: Request) -> ObjectStoreProtocol:
     """
     Get the object store instance from application state.
 
@@ -83,7 +82,7 @@ def get_store(request: Request) -> "ObjectStoreProtocol":
     return request.app.state.store
 
 
-def get_templates() -> "Jinja2Templates":
+def get_templates() -> Jinja2Templates:
     """
     Get the Jinja2 templates instance.
 
