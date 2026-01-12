@@ -562,7 +562,7 @@ class DiffService:
             raise KeyError(f"Run B not found: {run_id_b}") from e
 
         # Use devqubit's diff_runs function
-        from devqubit import diff_runs
+        from devqubit_engine.compare.diff import diff_runs
 
         logger.debug("Comparing runs: %s vs %s", run_id_a, run_id_b)
         result = diff_runs(
