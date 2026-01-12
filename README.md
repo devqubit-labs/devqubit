@@ -12,7 +12,7 @@
 
 ## Why devqubit?
 
-General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But 1uantum workloads often need *extra structure* that isn’t first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
+General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads often need *extra structure* that isn’t first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
 
 | Challenge | MLflow / W&B / DVC | devqubit |
 |-----------|-------------------|----------|
