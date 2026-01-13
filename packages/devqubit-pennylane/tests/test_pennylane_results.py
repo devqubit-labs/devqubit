@@ -5,7 +5,7 @@
 
 import numpy as np
 import pennylane as qml
-from devqubit_engine.core.snapshot import ResultType
+from devqubit_engine.uec.types import ResultType
 from devqubit_pennylane.results import (
     _extract_probabilities,
     _extract_sample_counts,
