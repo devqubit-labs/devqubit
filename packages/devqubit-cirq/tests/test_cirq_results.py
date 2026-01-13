@@ -147,6 +147,11 @@ class TestNormalizeCountsPayload:
         assert exp["measurement_keys"] == ["m"]
         assert exp["num_bits"] == 1
 
+        # P1 FIX: Verify format metadata is present
+        assert "format" in payload
+        assert payload["format"]["source_sdk"] == "cirq"
+        assert payload["format"]["bit_order"] == "cbit0_left"
+
     def test_list_of_results(self):
         """Normalizes list of results (run_sweep output)."""
 
@@ -161,6 +166,9 @@ class TestNormalizeCountsPayload:
         assert payload["experiments"][0]["counts"] == {"0": 1}
         assert payload["experiments"][1]["counts"] == {"1": 1}
         assert payload["experiments"][2]["counts"] == {"0": 1}
+
+        # P1 FIX: Format should be present
+        assert payload["format"]["source_sdk"] == "cirq"
 
     def test_nested_results(self):
         """Normalizes nested results (run_batch output)."""
@@ -182,10 +190,19 @@ class TestNormalizeCountsPayload:
         assert payload["experiments"][1]["sweep_index"] == 1
         assert payload["experiments"][2]["batch_index"] == 1
 
+        # P1 FIX: Format should be present
+        assert payload["format"]["source_sdk"] == "cirq"
+        assert payload["format"]["bit_order"] == "cbit0_left"
+
     def test_empty_or_invalid(self):
         """Returns empty experiments for empty/invalid input."""
-        assert normalize_counts_payload([]) == {"experiments": []}
-        assert normalize_counts_payload("not a result") == {"experiments": []}
+        empty_payload = normalize_counts_payload([])
+        assert empty_payload["experiments"] == []
+        assert "format" in empty_payload  # Format still present
+
+        invalid_payload = normalize_counts_payload("not a result")
+        assert invalid_payload["experiments"] == []
+        assert "format" in invalid_payload
 
     def test_extracts_params_from_result(self):
         """Extracts params attribute from result objects."""

@@ -71,17 +71,22 @@ class TestBellRunEndToEnd:
 
         loaded = registry.load(run.run_id)
         assert loaded.status == "FINISHED"
-        assert loaded.record["backend"]["provider"] == "cirq"
+        # P1 FIX: provider should be physical ("local"), sdk should be "cirq"
+        assert loaded.record["backend"]["provider"] == "local"
+        assert loaded.record["backend"]["sdk"] == "cirq"
         assert loaded.record["execute"]["repetitions"] == repetitions
 
-        # Envelope internally consistent
+        # Envelope internally consistent (UEC 1.0)
         env = _load_single_envelope(store, loaded)
-        assert env["adapter"] == "cirq"
+        assert env["producer"]["adapter"] == "devqubit-cirq"
+        assert env["producer"]["sdk"] == "cirq"
         assert env["program"]["num_circuits"] == 1
         assert env["execution"]["shots"] == repetitions
 
-        # Bell state should only produce 00 and 11
-        counts = env["result"]["counts"][0]["counts"]
+        # Bell state should only produce 00 and 11 (UEC 1.0: items instead of counts)
+        result_items = env["result"]["items"]
+        assert len(result_items) == 1
+        counts = result_items[0]["counts"]["counts"]
         assert sum(counts.values()) == repetitions
         assert set(counts).issubset({"00", "11"})
 
@@ -108,7 +113,8 @@ class TestRunSweep:
         env = _load_single_envelope(store, loaded)
 
         assert env["execution"]["options"]["sweep"] is True
-        assert env["result"]["num_experiments"] == len(params)
+        # UEC 1.0: count items instead of num_experiments field
+        assert len(env["result"]["items"]) == len(params)
 
     def test_logs_params_per_experiment(
         self, parameterized_circuit, simulator, store, registry
@@ -310,6 +316,81 @@ class TestLoggingPolicy:
         loaded = registry.load(run.run_id)
         env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
         assert len(env_arts) == 3
+
+
+class TestFailurePathEnvelope:
+    """P0: Tests for failure-path envelope logging."""
+
+    def test_run_failure_logs_envelope_and_reraises(self, store, registry):
+        """When simulator.run() raises, envelope is logged and exception re-raised."""
+
+        class FailingSimulator:
+            """Simulator that always fails."""
+
+            def run(self, *args, **kwargs):
+                raise RuntimeError("Simulated hardware failure")
+
+            def run_sweep(self, *args, **kwargs):
+                raise RuntimeError("Simulated hardware failure")
+
+            def run_batch(self, *args, **kwargs):
+                raise RuntimeError("Simulated hardware failure")
+
+        q0 = cirq.LineQubit(0)
+        circuit = cirq.Circuit(cirq.H(q0), cirq.measure(q0, key="m"))
+
+        with track(project="test", store=store, registry=registry) as run:
+            # Import adapter directly to use wrap_executor
+            from devqubit_cirq.adapter import CirqAdapter
+
+            adapter = CirqAdapter()
+            tracked = adapter.wrap_executor(FailingSimulator(), run)
+
+            # Should raise the original exception
+            with pytest.raises(RuntimeError, match="Simulated hardware failure"):
+                tracked.run(circuit, repetitions=10)
+
+        # Envelope should still be logged with failure info
+        loaded = registry.load(run.run_id)
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+
+        # Should have logged an envelope even though execution failed
+        assert len(env_arts) == 1
+
+        env = _load_json(store, env_arts[0].digest)
+        assert env["result"]["success"] is False
+        assert env["result"]["status"] == "failed"
+        # UEC 1.0: error is a top-level field, not in metadata
+        assert env["result"]["error"]["type"] == "RuntimeError"
+
+    def test_run_sweep_failure_logs_envelope(self, store, registry):
+        """When simulator.run_sweep() raises, envelope is logged."""
+
+        class FailingSweepSimulator:
+            def run_sweep(self, *args, **kwargs):
+                raise ValueError("Invalid sweep parameters")
+
+        q0 = cirq.LineQubit(0)
+        theta = sympy.Symbol("theta")
+        circuit = cirq.Circuit(cirq.rz(theta).on(q0), cirq.measure(q0, key="m"))
+        params = [cirq.ParamResolver({theta: v}) for v in [0.0, 0.5]]
+
+        with track(project="test", store=store, registry=registry) as run:
+            from devqubit_cirq.adapter import CirqAdapter
+
+            adapter = CirqAdapter()
+            tracked = adapter.wrap_executor(FailingSweepSimulator(), run)
+
+            with pytest.raises(ValueError, match="Invalid sweep parameters"):
+                tracked.run_sweep(circuit, params, repetitions=10)
+
+        loaded = registry.load(run.run_id)
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(env_arts) == 1
+
+        env = _load_json(store, env_arts[0].digest)
+        assert env["result"]["success"] is False
+        assert env["result"]["status"] == "failed"
 
 
 class TestMaterializeCircuits:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,16 +46,23 @@ from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.producer import ProducerInfo
 from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.uec.result import NormalizedCounts, ResultSnapshot
+
+# UEC 1.0 imports
+from devqubit_engine.uec.result import (
+    CountsFormat,
+    ResultError,
+    ResultItem,
+    ResultSnapshot,
+)
 from devqubit_engine.uec.types import (
     ArtifactRef,
     ProgramRole,
-    ResultType,
     TranspilationMode,
 )
 from devqubit_engine.utils.serialization import to_jsonable
@@ -62,6 +70,17 @@ from devqubit_engine.utils.time_utils import utc_now_iso
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-cirq")
+    except Exception:
+        return "unknown"
+
 
 # Module-level serializer instance
 _serializer = CirqCircuitSerializer()
@@ -297,63 +316,104 @@ def _create_result_snapshot(
     raw_result_ref: ArtifactRef | None,
     repetitions: int | None,
     is_sweep: bool = False,
+    error_info: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
-    Create a ResultSnapshot from Cirq result(s).
+    Create a ResultSnapshot from Cirq result(s) using UEC 1.0 API.
 
     Parameters
     ----------
     result : Any
-        Cirq result object or list of results.
+        Cirq result object or list of results (None if execution failed).
     raw_result_ref : ArtifactRef or None
         Reference to raw result artifact.
     repetitions : int or None
         Number of repetitions used.
     is_sweep : bool
         Whether this is from a parameter sweep.
+    error_info : dict, optional
+        Error information if execution failed.
+        Contains "type" and "message" keys.
 
     Returns
     -------
     ResultSnapshot
-        Result snapshot with normalized counts.
+        Result snapshot with normalized counts (UEC 1.0 format).
     """
-    if result is None:
+    # Handle failure case (error_info provided)
+    if error_info is not None:
+        error = ResultError(
+            type=error_info.get("type", "UnknownError"),
+            message=error_info.get("message", "Unknown error"),
+        )
+        metadata: dict[str, Any] = {"sweep": is_sweep} if is_sweep else {}
         return ResultSnapshot(
-            result_type=ResultType.COUNTS,
-            raw_result_ref=raw_result_ref,
-            counts=[],
-            num_experiments=0,
             success=False,
-            metadata=(
-                {"sweep": is_sweep, "error": "Result is None"}
-                if is_sweep
-                else {"error": "Result is None"}
-            ),
+            status="failed",
+            items=[],
+            error=error,
+            raw_result_ref=raw_result_ref,
+            metadata=metadata,
         )
 
+    # Handle None result (without explicit error)
+    if result is None:
+        return ResultSnapshot(
+            success=False,
+            status="failed",
+            items=[],
+            error=ResultError(type="NullResult", message="Result is None"),
+            raw_result_ref=raw_result_ref,
+            metadata={"sweep": is_sweep} if is_sweep else {},
+        )
+
+    # Process successful result
     try:
         counts_payload = normalize_counts_payload(result)
     except Exception as e:
         logger.debug("Failed to normalize counts payload: %s", e)
-        counts_payload = {"experiments": []}
+        counts_payload = {"experiments": [], "format": {}}
 
-    normalized_counts: list[NormalizedCounts] = [
-        NormalizedCounts(
-            circuit_index=exp.get("index", 0),
-            counts=exp.get("counts", {}),
-            shots=repetitions,
-            name=exp.get("name"),
+    # Build UEC 1.0 items list
+    items: list[ResultItem] = []
+
+    # Get format from payload (added by P1 fix)
+    format_dict = counts_payload.get("format", {})
+    counts_format = CountsFormat(
+        source_sdk=format_dict.get("source_sdk", "cirq"),
+        source_key_format=format_dict.get(
+            "source_key_format", "measurement_key_concatenated"
+        ),
+        bit_order=format_dict.get("bit_order", "cbit0_left"),
+        transformed=format_dict.get("transformed", False),
+    )
+
+    for exp in counts_payload.get("experiments", []):
+        circuit_index = exp.get("index", 0)
+        counts = exp.get("counts", {})
+
+        items.append(
+            ResultItem(
+                item_index=circuit_index,
+                success=True,
+                counts={
+                    "counts": counts,
+                    "shots": repetitions,
+                    "format": counts_format.to_dict(),
+                },
+            )
         )
-        for exp in counts_payload.get("experiments", [])
-    ]
+
+    metadata = {"sweep": is_sweep} if is_sweep else {}
+    metadata["num_experiments"] = len(items)
 
     return ResultSnapshot(
-        result_type=ResultType.COUNTS,
+        success=len(items) > 0,
+        status="completed" if len(items) > 0 else "failed",
+        items=items,
+        error=None,
         raw_result_ref=raw_result_ref,
-        counts=normalized_counts,
-        num_experiments=len(normalized_counts),
-        success=len(normalized_counts) > 0,
-        metadata={"sweep": is_sweep} if is_sweep else {},
+        metadata=metadata,
     )
 
 
@@ -416,10 +476,10 @@ def _create_and_log_envelope(
 
     # Update tracker record with device snapshot
     tracker.record["device_snapshot"] = {
-        "sdk": "cirq",
+        "sdk": "cirq",  # SDK frontend (always cirq for this adapter)
         "backend_name": simulator_name,
         "backend_type": device_snapshot.backend_type,
-        "provider": device_snapshot.provider,
+        "provider": device_snapshot.provider,  # Physical provider from snapshot
         "captured_at": device_snapshot.captured_at,
         "num_qubits": device_snapshot.num_qubits,
     }
@@ -427,16 +487,35 @@ def _create_and_log_envelope(
     # Serialize and log circuits
     artifact_refs = _serialize_and_log_circuits(tracker, circuits, simulator_name)
 
+    # UEC 1.0: Create ProducerInfo
+    sdk_version = cirq_version()
+    producer = ProducerInfo.create(
+        adapter="devqubit-cirq",
+        adapter_version=_get_adapter_version(),
+        sdk="cirq",
+        sdk_version=sdk_version,
+        frontends=["cirq"],
+    )
+
+    # Create pending result (will be updated when execution completes)
+    # UEC 1.0 requires status to be one of: completed, failed, cancelled, partial
+    pending_result = ResultSnapshot(
+        success=False,
+        status="failed",  # Valid status - will be updated by _finalize_envelope_with_result
+        items=[],
+        metadata={"state": "pending"},
+    )
+
     return ExecutionEnvelope(
-        schema_version="devqubit.envelope/0.1",
-        adapter="cirq",
+        envelope_id=uuid.uuid4().hex[:26],
         created_at=utc_now_iso(),
+        producer=producer,
+        result=pending_result,  # Must be valid ResultSnapshot, not None
         device=device_snapshot,
         program=_create_program_snapshot(circuits, artifact_refs, circuit_hash),
         execution=_create_execution_snapshot(
             repetitions, submitted_at, is_sweep, params, options
         ),
-        result=None,  # Will be filled when execution completes
     )
 
 
@@ -447,6 +526,7 @@ def _finalize_envelope_with_result(
     simulator_name: str,
     repetitions: int | None,
     is_sweep: bool = False,
+    error_info: dict[str, Any] | None = None,
 ) -> ExecutionEnvelope:
     """
     Finalize envelope with result and log it.
@@ -461,13 +541,16 @@ def _finalize_envelope_with_result(
     envelope : ExecutionEnvelope
         Envelope to finalize.
     result : Any
-        Cirq result object or list of results.
+        Cirq result object or list of results (None if execution failed).
     simulator_name : str
         Simulator name.
     repetitions : int or None
         Number of repetitions.
     is_sweep : bool
         Whether this is from a parameter sweep.
+    error_info : dict, optional
+        Error information if execution failed.
+        Contains "type" and "message" keys.
 
     Returns
     -------
@@ -482,29 +565,31 @@ def _finalize_envelope_with_result(
     if envelope is None:
         raise ValueError("Cannot finalize None envelope")
 
-    # Log raw result
+    # Log raw result (if we have one)
     raw_result_ref = None
-    try:
+    if result is not None:
         try:
-            result_payload = to_jsonable(result)
-        except Exception:
-            result_payload = {"repr": repr(result)[:2000]}
+            try:
+                result_payload = to_jsonable(result)
+            except Exception:
+                result_payload = {"repr": repr(result)[:2000]}
 
-        raw_result_ref = tracker.log_json(
-            name="cirq.result",
-            obj=result_payload,
-            role="results",
-            kind="result.cirq.raw.json",
-        )
-    except Exception as e:
-        logger.warning("Failed to log raw result: %s", e)
+            raw_result_ref = tracker.log_json(
+                name="cirq.result",
+                obj=result_payload,
+                role="results",
+                kind="result.cirq.raw.json",
+            )
+        except Exception as e:
+            logger.warning("Failed to log raw result: %s", e)
 
-    # Update envelope
+    # Update envelope with result snapshot (handles both success and failure)
     envelope.result = _create_result_snapshot(
         result=result,
         raw_result_ref=raw_result_ref,
         repetitions=repetitions,
         is_sweep=is_sweep,
+        error_info=error_info,
     )
 
     if envelope.execution:
@@ -621,6 +706,7 @@ class TrackedSimulator:
         is_batch: bool = False,
         params: Any = None,
         extra_options: dict[str, Any] | None = None,
+        error_info: dict[str, Any] | None = None,
     ) -> None:
         """
         Common execution tracking logic for run, run_sweep, and run_batch.
@@ -630,7 +716,7 @@ class TrackedSimulator:
         circuit_list : list
             List of executed circuits.
         result : Any
-            Execution result.
+            Execution result (None if execution failed).
         repetitions : int
             Number of repetitions.
         submitted_at : str
@@ -643,6 +729,9 @@ class TrackedSimulator:
             Parameter sweep or resolver.
         extra_options : dict, optional
             Additional options to include.
+        error_info : dict, optional
+            Error information if execution failed.
+            Contains "type" and "message" keys.
         """
         simulator_name = get_backend_name(self.simulator)
 
@@ -686,6 +775,7 @@ class TrackedSimulator:
                 simulator_name=simulator_name,
                 repetitions=repetitions,
                 is_sweep=is_sweep,
+                error_info=error_info,
             )
         except Exception as e:
             logger.warning(
@@ -705,10 +795,20 @@ class TrackedSimulator:
             self._logged_circuit_hashes.add(circuit_hash)
         self._logged_execution_count += 1
 
+        # Get physical provider from device snapshot (if available)
+        # The device snapshot is created inside the envelope
+        physical_provider = "local"  # Default for Cirq simulators
+        try:
+            device_snapshot = self.tracker.record.get("device_snapshot", {})
+            physical_provider = device_snapshot.get("provider", "local")
+        except Exception:
+            pass
+
         # Set tracker tags and params
         self.tracker.set_tag("backend_name", simulator_name)
-        self.tracker.set_tag("provider", "cirq")
-        self.tracker.set_tag("adapter", "cirq")
+        self.tracker.set_tag("provider", physical_provider)  # Physical provider
+        self.tracker.set_tag("sdk", "cirq")  # SDK frontend
+        self.tracker.set_tag("adapter", "devqubit-cirq")
         self.tracker.log_param("repetitions", repetitions)
         self.tracker.log_param("num_circuits", len(circuit_list))
 
@@ -721,7 +821,8 @@ class TrackedSimulator:
         self.tracker.record["backend"] = {
             "name": simulator_name,
             "type": self.simulator.__class__.__name__,
-            "provider": "cirq",
+            "provider": physical_provider,  # Physical provider
+            "sdk": "cirq",  # SDK frontend
         }
 
         self.tracker.record["execute"] = {
@@ -771,11 +872,15 @@ class TrackedSimulator:
         -------
         cirq.Result
             Cirq Result object containing measurement outcomes.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception from the simulator after logging
+            a failure envelope.
         """
         circuit_list, _ = _materialize_circuits(program)
         submitted_at = utc_now_iso()
-
-        result = self.simulator.run(program, *args, repetitions=repetitions, **kwargs)
 
         extra_options: dict[str, Any] = {}
         if args:
@@ -783,13 +888,43 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        self._track_execution(
-            circuit_list,
-            result,
-            repetitions,
-            submitted_at,
-            extra_options=extra_options if extra_options else None,
-        )
+        # P0 FIX: Capture exception and log failure envelope before re-raising
+        result: Any = None
+        original_exception: BaseException | None = None
+        execution_succeeded = False
+
+        try:
+            result = self.simulator.run(
+                program, *args, repetitions=repetitions, **kwargs
+            )
+            execution_succeeded = True
+        except Exception as e:
+            original_exception = e
+            # Log failure envelope
+            self._track_execution(
+                circuit_list,
+                None,  # No result
+                repetitions,
+                submitted_at,
+                extra_options=extra_options if extra_options else None,
+                error_info={
+                    "type": type(e).__name__,
+                    "message": str(e),
+                },
+            )
+
+        if execution_succeeded:
+            self._track_execution(
+                circuit_list,
+                result,
+                repetitions,
+                submitted_at,
+                extra_options=extra_options if extra_options else None,
+            )
+
+        # Re-raise original exception preserving type and traceback
+        if original_exception is not None:
+            raise original_exception
 
         return result
 
@@ -821,13 +956,15 @@ class TrackedSimulator:
         -------
         list of cirq.Result
             List of Result objects, one per parameter set.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception from the simulator after logging
+            a failure envelope.
         """
         circuit_list, _ = _materialize_circuits(program)
         submitted_at = utc_now_iso()
-
-        results = self.simulator.run_sweep(
-            program, params, *args, repetitions=repetitions, **kwargs
-        )
 
         extra_options: dict[str, Any] = {}
         if args:
@@ -835,15 +972,47 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        self._track_execution(
-            circuit_list,
-            results,
-            repetitions,
-            submitted_at,
-            is_sweep=True,
-            params=params,
-            extra_options=extra_options if extra_options else None,
-        )
+        # P0 FIX: Capture exception and log failure envelope before re-raising
+        results: Any = None
+        original_exception: BaseException | None = None
+        execution_succeeded = False
+
+        try:
+            results = self.simulator.run_sweep(
+                program, params, *args, repetitions=repetitions, **kwargs
+            )
+            execution_succeeded = True
+        except Exception as e:
+            original_exception = e
+            # Log failure envelope
+            self._track_execution(
+                circuit_list,
+                None,  # No result
+                repetitions,
+                submitted_at,
+                is_sweep=True,
+                params=params,
+                extra_options=extra_options if extra_options else None,
+                error_info={
+                    "type": type(e).__name__,
+                    "message": str(e),
+                },
+            )
+
+        if execution_succeeded:
+            self._track_execution(
+                circuit_list,
+                results,
+                repetitions,
+                submitted_at,
+                is_sweep=True,
+                params=params,
+                extra_options=extra_options if extra_options else None,
+            )
+
+        # Re-raise original exception preserving type and traceback
+        if original_exception is not None:
+            raise original_exception
 
         return results
 
@@ -881,13 +1050,15 @@ class TrackedSimulator:
         list of list of cirq.Result
             Nested list where results[i][j] is the result for circuit i
             with parameter set j.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception from the simulator after logging
+            a failure envelope.
         """
         circuit_list, _ = _materialize_circuits(programs)
         submitted_at = utc_now_iso()
-
-        results = self.simulator.run_batch(
-            programs, params_list, *args, repetitions=repetitions, **kwargs
-        )
 
         # Determine effective repetitions for logging
         if isinstance(repetitions, (list, tuple)):
@@ -905,16 +1076,49 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        self._track_execution(
-            circuit_list,
-            results,
-            total_reps,
-            submitted_at,
-            is_sweep=True,
-            is_batch=True,
-            params=params_list,
-            extra_options=extra_options if extra_options else None,
-        )
+        # P0 FIX: Capture exception and log failure envelope before re-raising
+        results: Any = None
+        original_exception: BaseException | None = None
+        execution_succeeded = False
+
+        try:
+            results = self.simulator.run_batch(
+                programs, params_list, *args, repetitions=repetitions, **kwargs
+            )
+            execution_succeeded = True
+        except Exception as e:
+            original_exception = e
+            # Log failure envelope
+            self._track_execution(
+                circuit_list,
+                None,  # No result
+                total_reps,
+                submitted_at,
+                is_sweep=True,
+                is_batch=True,
+                params=params_list,
+                extra_options=extra_options if extra_options else None,
+                error_info={
+                    "type": type(e).__name__,
+                    "message": str(e),
+                },
+            )
+
+        if execution_succeeded:
+            self._track_execution(
+                circuit_list,
+                results,
+                total_reps,
+                submitted_at,
+                is_sweep=True,
+                is_batch=True,
+                params=params_list,
+                extra_options=extra_options if extra_options else None,
+            )
+
+        # Re-raise original exception preserving type and traceback
+        if original_exception is not None:
+            raise original_exception
 
         return results
 
@@ -998,12 +1202,21 @@ class CirqAdapter:
         Returns
         -------
         dict
-            Simulator description with name, type, and provider.
+            Simulator description with name, type, provider, and SDK.
         """
+        # Import provider detection from snapshot module
+        from devqubit_cirq.snapshot import _detect_execution_provider
+
+        try:
+            physical_provider = _detect_execution_provider(simulator)
+        except Exception:
+            physical_provider = "local"
+
         return {
             "name": get_backend_name(simulator),
             "type": simulator.__class__.__name__,
-            "provider": "cirq",
+            "provider": physical_provider,  # Physical provider
+            "sdk": "cirq",  # SDK frontend
         }
 
     def wrap_executor(

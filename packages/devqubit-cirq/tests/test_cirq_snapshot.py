@@ -13,7 +13,8 @@ class TestCreateDeviceSnapshot:
         """Creates valid snapshot from Simulator."""
         snapshot = create_device_snapshot(simulator)
 
-        assert snapshot.provider == "cirq"
+        # P1 FIX: provider should be physical ("local"), not "cirq"
+        assert snapshot.provider == "local"
         assert snapshot.backend_name == "Simulator"
         assert snapshot.backend_type == "simulator"
         assert snapshot.captured_at is not None
@@ -25,7 +26,7 @@ class TestCreateDeviceSnapshot:
         """Creates snapshot from DensityMatrixSimulator."""
         snapshot = create_device_snapshot(density_matrix_simulator)
 
-        assert snapshot.provider == "cirq"
+        assert snapshot.provider == "local"  # Local simulator
         assert snapshot.backend_name == "DensityMatrixSimulator"
         assert snapshot.backend_type == "simulator"
 
@@ -34,8 +35,8 @@ class TestCreateDeviceSnapshot:
         snapshot = create_device_snapshot(simulator)
         d = snapshot.to_dict()
 
-        assert d["schema"] == "devqubit.device_snapshot/0.1"
-        assert d["provider"] == "cirq"
+        assert d["schema"] == "devqubit.device_snapshot/1.0"  # UEC 1.0
+        assert d["provider"] == "local"  # P1 FIX: physical provider
         assert d["backend_name"] == "Simulator"
         assert d["backend_type"] == "simulator"
         assert "captured_at" in d
@@ -77,6 +78,7 @@ class TestHardwareBackendType:
 
         snapshot = create_device_snapshot(MockEngineSampler())
         assert snapshot.backend_type == "hardware"
+        assert snapshot.provider == "google_quantum"  # P1 FIX: physical provider
 
     def test_processor_detected_as_hardware(self):
         """Processor samplers are detected as hardware."""
@@ -86,6 +88,7 @@ class TestHardwareBackendType:
 
         snapshot = create_device_snapshot(MockProcessorSampler())
         assert snapshot.backend_type == "hardware"
+        assert snapshot.provider == "google_quantum"  # P1 FIX: physical provider
 
     def test_ionq_detected_as_hardware(self):
         """IonQ samplers are detected as hardware."""
@@ -95,6 +98,7 @@ class TestHardwareBackendType:
 
         snapshot = create_device_snapshot(MockIonQSampler())
         assert snapshot.backend_type == "hardware"
+        assert snapshot.provider == "ionq"  # P1 FIX: physical provider
 
 
 class TestSdkVersions:
@@ -186,7 +190,7 @@ class TestConnectivityExtraction:
 
         # Connectivity may or may not be extracted depending on implementation
         # The key test is that it doesn't crash
-        assert snapshot.provider == "cirq"
+        assert snapshot.provider == "local"  # P1 FIX: physical provider for cirq.sim
 
     def test_resilient_to_broken_metadata(self):
         """Handles broken device metadata gracefully."""
