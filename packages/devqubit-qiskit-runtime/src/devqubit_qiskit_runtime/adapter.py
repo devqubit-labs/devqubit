@@ -57,10 +57,9 @@ Example
 
 from __future__ import annotations
 
-import hashlib
 import logging
+import uuid
 import warnings
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -69,6 +68,7 @@ from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.producer import ProducerInfo
 from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
@@ -82,6 +82,14 @@ from devqubit_engine.uec.types import (
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.serialization import QiskitCircuitSerializer
+from devqubit_qiskit_runtime.circuits import (
+    circuits_to_text,
+    compute_circuit_hash,
+)
+from devqubit_qiskit_runtime.envelope import (
+    create_failure_result_snapshot,
+    finalize_envelope_with_result,
+)
 from devqubit_qiskit_runtime.pubs import (
     extract_circuits_from_pubs,
     extract_pubs_structure,
@@ -106,6 +114,10 @@ from devqubit_qiskit_runtime.utils import (
 )
 
 
+# Adapter version for ProducerInfo
+_ADAPTER_VERSION = "1.0.0"
+
+
 logger = logging.getLogger(__name__)
 
 # Module-level serializer instance
@@ -120,131 +132,6 @@ def _map_transpilation_mode(mode: str) -> TranspilationMode:
         "manual": TranspilationMode.MANUAL,
     }
     return mode_map.get(mode.lower(), TranspilationMode.AUTO)
-
-
-def _compute_circuit_hash(circuits: list[Any]) -> str | None:
-    """
-    Compute a structure-only hash for Qiskit QuantumCircuit objects.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Qiskit QuantumCircuit objects.
-
-    Returns
-    -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if empty.
-    """
-    if not circuits:
-        return None
-
-    circuit_signatures: list[str] = []
-
-    for circuit in circuits:
-        try:
-            qubit_index = {
-                q: i for i, q in enumerate(getattr(circuit, "qubits", ()) or ())
-            }
-            clbit_index = {
-                c: i for i, c in enumerate(getattr(circuit, "clbits", ()) or ())
-            }
-
-            op_sigs: list[str] = []
-            for instr in getattr(circuit, "data", []) or []:
-                op = getattr(instr, "operation", None)
-                name = getattr(op, "name", None)
-                op_name = name if isinstance(name, str) and name else type(op).__name__
-
-                qs: list[int] = []
-                for q in getattr(instr, "qubits", ()) or ():
-                    if q in qubit_index:
-                        qs.append(qubit_index[q])
-                    else:
-                        qs.append(getattr(circuit.find_bit(q), "index", -1))
-                cs: list[int] = []
-                for c in getattr(instr, "clbits", ()) or ():
-                    if c in clbit_index:
-                        cs.append(clbit_index[c])
-                    else:
-                        cs.append(getattr(circuit.find_bit(c), "index", -1))
-
-                params = getattr(op, "params", None)
-                parity = len(params) if isinstance(params, (list, tuple)) else 0
-                cond = getattr(op, "condition", None)
-                has_cond = 1 if cond is not None else 0
-
-                op_sigs.append(
-                    f"{op_name}|p{parity}|q{tuple(qs)}|c{tuple(cs)}|if{has_cond}"
-                )
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _circuits_to_text(circuits: list[Any]) -> str:
-    """Convert circuits to human-readable text diagrams."""
-    parts: list[str] = []
-
-    for i, circuit in enumerate(circuits):
-        if i > 0:
-            parts.append("")
-
-        name = getattr(circuit, "name", None) or f"circuit_{i}"
-        parts.append(f"[{i}] {name}")
-
-        try:
-            diagram = circuit.draw(output="text", fold=80)
-            if hasattr(diagram, "single_string"):
-                parts.append(diagram.single_string())
-            else:
-                parts.append(str(diagram))
-        except Exception:
-            parts.append(str(circuit))
-
-    return "\n".join(parts)
-
-
-def _finalize_envelope_with_result(
-    tracker: Run,
-    envelope: ExecutionEnvelope,
-    result_snapshot: ResultSnapshot,
-) -> None:
-    """
-    Finalize envelope with result and log as artifact.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-    envelope : ExecutionEnvelope
-        Envelope to finalize.
-    result_snapshot : ResultSnapshot
-        Result to add to envelope.
-
-    Raises
-    ------
-    ValueError
-        If envelope is None.
-    """
-    if envelope is None:
-        raise ValueError("Cannot finalize None envelope")
-
-    if result_snapshot is None:
-        logger.warning("Finalizing envelope with None result_snapshot")
-
-    envelope.result = result_snapshot
-
-    if envelope.execution is not None:
-        envelope.execution.completed_at = utc_now_iso()
-
-    # Validate and log envelope using tracker's canonical method
-    tracker.log_envelope(envelope=envelope)
 
 
 @dataclass
@@ -298,15 +185,30 @@ class TrackedRuntimeJob:
         This method is idempotent - calling it multiple times returns the same
         cached result and does not re-log artifacts.
 
+        P0 Compliance: If job.result() raises an exception, an envelope with
+        error details is still created and logged before re-raising.
+
         Returns
         -------
         Any
             PrimitiveResult object.
+
+        Raises
+        ------
+        Exception
+            Re-raises any exception from the underlying job.result().
         """
         if self._cached_result is not None:
             return self._cached_result
 
-        result = self.job.result(*args, **kwargs)
+        # P0: Wrap job.result() to ensure envelope is created even on failure
+        try:
+            result = self.job.result(*args, **kwargs)
+        except Exception as exc:
+            # P0: Log failure envelope before re-raising
+            self._log_failure(exc)
+            raise
+
         self._cached_result = result
 
         if not self.should_log_results or self._finalized:
@@ -342,7 +244,7 @@ class TrackedRuntimeJob:
 
             # Finalize envelope with result
             if self.envelope is not None and self.result_snapshot is not None:
-                _finalize_envelope_with_result(
+                finalize_envelope_with_result(
                     self.tracker,
                     self.envelope,
                     self.result_snapshot,
@@ -367,6 +269,50 @@ class TrackedRuntimeJob:
 
         return result
 
+    def _log_failure(self, exc: Exception) -> None:
+        """
+        Log failure envelope when job.result() raises an exception.
+
+        P0 Compliance: Ensures envelope is always created even on failures.
+
+        Parameters
+        ----------
+        exc : Exception
+            The exception that caused the failure.
+        """
+        if self._finalized or not self.should_log_results:
+            return
+
+        self._finalized = True
+
+        try:
+            # Create failure result snapshot
+            self.result_snapshot = create_failure_result_snapshot(
+                exception=exc,
+                backend_name=self.executor_name,
+                primitive_type=self.primitive_type,
+            )
+
+            # Finalize envelope with failure result
+            if self.envelope is not None:
+                finalize_envelope_with_result(
+                    self.tracker,
+                    self.envelope,
+                    self.result_snapshot,
+                )
+
+            logger.debug(
+                "Logged failure envelope for %s: %s",
+                self.executor_name,
+                type(exc).__name__,
+            )
+        except Exception as log_exc:
+            logger.warning(
+                "Failed to log failure envelope for %s: %s",
+                self.executor_name,
+                log_exc,
+            )
+
     def _log_sampler_results(
         self,
         result: Any,
@@ -379,15 +325,16 @@ class TrackedRuntimeJob:
             raw_result_ref=raw_result_ref,
         )
 
-        if snapshot.counts:
+        if snapshot.items:
             counts_payload = {
                 "experiments": [
                     {
-                        "index": nc.circuit_index,
-                        "counts": nc.counts,
-                        "shots": nc.shots,
+                        "index": item.item_index,
+                        "counts": item.counts.get("counts", {}) if item.counts else {},
+                        "shots": item.counts.get("shots") if item.counts else None,
                     }
-                    for nc in snapshot.counts
+                    for item in snapshot.items
+                    if item.counts
                 ]
             }
             self.tracker.log_json(
@@ -397,16 +344,17 @@ class TrackedRuntimeJob:
                 kind="result.counts.json",
             )
 
+            num_experiments = len(snapshot.items)
             self.tracker.record["results"] = {
                 "completed_at": utc_now_iso(),
                 "backend_name": self.executor_name,
-                "num_experiments": snapshot.num_experiments,
+                "num_experiments": num_experiments,
                 "primitive_type": self.primitive_type,
                 "result_type": "counts",
             }
             logger.debug(
                 "Logged sampler counts for %d experiments on %s",
-                snapshot.num_experiments,
+                num_experiments,
                 self.executor_name,
             )
 
@@ -424,42 +372,50 @@ class TrackedRuntimeJob:
             raw_result_ref=raw_result_ref,
         )
 
-        if snapshot.expectations:
-            # Group by circuit_index for the payload
-            by_circuit: dict[int, dict[str, list[float]]] = defaultdict(
-                lambda: {"expectation_values": [], "standard_deviations": []}
-            )
-            for exp in snapshot.expectations:
-                by_circuit[exp.circuit_index]["expectation_values"].append(exp.value)
-                if exp.std_error is not None:
-                    by_circuit[exp.circuit_index]["standard_deviations"].append(
-                        exp.std_error
-                    )
+        # Get experiments from snapshot metadata (estimator stores there)
+        experiments_data = snapshot.metadata.get("experiments", [])
+        if experiments_data:
+            # Build payload for artifact
+            experiments = []
+            for exp_data in experiments_data:
+                expectations = exp_data.get("expectations", [])
+                if expectations:
+                    evs = [e.get("value", 0.0) for e in expectations]
+                    stds = [
+                        e.get("std_error")
+                        for e in expectations
+                        if e.get("std_error") is not None
+                    ]
+                    exp_entry = {
+                        "index": exp_data.get("index", 0),
+                        "expectation_values": evs,
+                    }
+                    if stds:
+                        exp_entry["standard_deviations"] = stds
+                    experiments.append(exp_entry)
 
-            est_payload = {
-                "experiments": [
-                    {"index": idx, **data} for idx, data in sorted(by_circuit.items())
-                ]
-            }
-            self.tracker.log_json(
-                name="estimator_values",
-                obj=est_payload,
-                role="results",
-                kind="result.qiskit_runtime.estimator.json",
-            )
+            if experiments:
+                est_payload = {"experiments": experiments}
+                self.tracker.log_json(
+                    name="estimator_values",
+                    obj=est_payload,
+                    role="results",
+                    kind="result.qiskit_runtime.estimator.json",
+                )
 
-            self.tracker.record["results"] = {
-                "completed_at": utc_now_iso(),
-                "backend_name": self.executor_name,
-                "num_experiments": snapshot.num_experiments,
-                "primitive_type": self.primitive_type,
-                "result_type": "expectation",
-            }
-            logger.debug(
-                "Logged estimator values for %d experiments on %s",
-                snapshot.num_experiments,
-                self.executor_name,
-            )
+                num_experiments = len(experiments)
+                self.tracker.record["results"] = {
+                    "completed_at": utc_now_iso(),
+                    "backend_name": self.executor_name,
+                    "num_experiments": num_experiments,
+                    "primitive_type": self.primitive_type,
+                    "result_type": "expectation",
+                }
+                logger.debug(
+                    "Logged estimator values for %d experiments on %s",
+                    num_experiments,
+                    self.executor_name,
+                )
 
         return snapshot
 
@@ -641,7 +597,7 @@ class TrackedRuntimePrimitive:
 
         # Log circuit diagrams
         try:
-            diagram_text = _circuits_to_text(circuits)
+            diagram_text = circuits_to_text(circuits)
             ref = self.tracker.log_bytes(
                 kind="qiskit_runtime.circuits.diagram",
                 data=diagram_text.encode("utf-8"),
@@ -749,7 +705,7 @@ class TrackedRuntimePrimitive:
         exec_count = self._execution_count
 
         # Compute circuit hash
-        circuit_hash = _compute_circuit_hash(circuits)
+        circuit_hash = compute_circuit_hash(circuits)
         is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
         if circuit_hash:
             self._seen_circuit_hashes.add(circuit_hash)
@@ -838,7 +794,7 @@ class TrackedRuntimePrimitive:
 
             # If devqubit transpiled, log transpiled circuits as physical
             if transpiled_circuits:
-                transpiled_hash = _compute_circuit_hash(transpiled_circuits)
+                transpiled_hash = compute_circuit_hash(transpiled_circuits)
                 try:
                     qpy_data = _serializer.serialize(
                         (
@@ -885,7 +841,7 @@ class TrackedRuntimePrimitive:
 
         # Build ProgramSnapshot
         executed_hash = (
-            _compute_circuit_hash(transpiled_circuits) if transpiled_circuits else None
+            compute_circuit_hash(transpiled_circuits) if transpiled_circuits else None
         )
 
         self.program_snapshot = ProgramSnapshot(
@@ -905,11 +861,6 @@ class TrackedRuntimePrimitive:
         transpilation_info = TranspilationInfo(
             mode=transpilation_mode,
             transpiled_by=transpiled_by,
-            optimization_level=options.optimization_level,
-            layout_method=options.layout_method,
-            routing_method=options.routing_method,
-            seed=options.seed_transpiler,
-            pass_manager_config=options.to_metadata_dict(),
         )
 
         # Build ExecutionSnapshot
@@ -925,6 +876,11 @@ class TrackedRuntimePrimitive:
                 "transpilation_needed": tmeta.get("transpilation_needed"),
                 "transpilation_reason": tmeta.get("transpilation_reason"),
                 "observables_layout_mapped": tmeta.get("observables_layout_mapped"),
+                # Store transpilation details here instead
+                "optimization_level": options.optimization_level,
+                "layout_method": options.layout_method,
+                "routing_method": options.routing_method,
+                "seed_transpiler": options.seed_transpiler,
             },
             sdk="qiskit-ibm-runtime",
         )
@@ -1010,14 +966,33 @@ class TrackedRuntimePrimitive:
         # Create envelope (will be finalized when result() is called)
         envelope: ExecutionEnvelope | None = None
         if should_log_results and device_snapshot is not None:
+            sdk_versions = collect_sdk_versions()
+
+            # Create ProducerInfo for SDK stack tracking
+            producer = ProducerInfo.create(
+                adapter="devqubit-qiskit-runtime",
+                adapter_version=_ADAPTER_VERSION,
+                sdk="qiskit-ibm-runtime",
+                sdk_version=sdk_versions.get("qiskit_ibm_runtime", "unknown"),
+                frontends=["qiskit-ibm-runtime"],
+            )
+
+            # Create pending result (will be updated when result() completes)
+            pending_result = ResultSnapshot(
+                success=False,
+                status="failed",  # Will be updated when result() completes
+                items=[],
+                metadata={"state": "pending"},
+            )
+
             envelope = ExecutionEnvelope(
-                schema_version="devqubit.envelope/0.1",
-                adapter="qiskit-runtime",
+                envelope_id=uuid.uuid4().hex[:26],
                 created_at=utc_now_iso(),
+                producer=producer,
+                result=pending_result,
                 device=device_snapshot,
                 program=self.program_snapshot,
                 execution=self.execution_snapshot,
-                result=None,  # Will be filled when result() is called
             )
 
         # Update stats

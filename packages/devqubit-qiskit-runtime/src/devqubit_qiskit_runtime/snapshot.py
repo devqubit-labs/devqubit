@@ -41,6 +41,48 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _detect_physical_provider(primitive: Any) -> str:
+    """
+    Detect physical provider from Runtime primitive (not SDK).
+
+    UEC requires provider to be the physical backend provider,
+    not the SDK name. SDK goes in producer.frontends[].
+
+    Parameters
+    ----------
+    primitive : Any
+        Runtime primitive instance.
+
+    Returns
+    -------
+    str
+        Physical provider: "ibm_quantum", "fake", or "local".
+    """
+    backend = get_backend_obj(primitive)
+    if backend is None:
+        # No backend resolved - check primitive module
+        module_name = getattr(primitive, "__module__", "").lower()
+        if "ibm" in module_name:
+            return "ibm_quantum"
+        return "local"
+
+    module_name = type(backend).__module__.lower()
+    backend_name = get_backend_name(primitive).lower()
+
+    # IBM quantum hardware
+    if "ibm" in module_name or "ibm_" in backend_name:
+        # Check for fake backends
+        if "fake" in module_name or "fake" in backend_name:
+            return "fake"
+        return "ibm_quantum"
+
+    # Aer simulator (local)
+    if "aer" in module_name:
+        return "aer"
+
+    return "local"
+
+
 def _extract_backend_id(primitive: Any) -> str | None:
     """
     Extract a stable backend identifier from a Runtime primitive.
@@ -371,11 +413,14 @@ def create_device_snapshot(
         except Exception as e:
             logger.warning("Failed to log raw_properties artifact: %s", e)
 
+    # Detect physical provider (not SDK)
+    physical_provider = _detect_physical_provider(primitive)
+
     return DeviceSnapshot(
         captured_at=captured_at,
         backend_name=backend_name,
         backend_type=backend_type,
-        provider="qiskit-ibm-runtime",
+        provider=physical_provider,
         backend_id=backend_id,
         num_qubits=base.num_qubits if base else None,
         connectivity=base.connectivity if base else None,
@@ -437,7 +482,7 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
         primitive_type = "unknown"
 
     return {
-        "provider": "qiskit-ibm-runtime",
+        "provider": _detect_physical_provider(executor),
         "backend_name": backend_name,
         "backend_id": backend_id,
         "backend_type": backend_type,

@@ -76,6 +76,7 @@ class TestQiskitRuntimeAdapter:
         """Describes Sampler primitive correctly."""
         desc = QiskitRuntimeAdapter().describe_executor(fake_sampler)
 
+        # describe_executor still returns the SDK name for API compatibility
         assert desc["provider"] == "qiskit-ibm-runtime"
         assert desc["primitive_type"] == "sampler"
 
@@ -143,13 +144,16 @@ class TestSamplerExecution:
         assert len(envelopes) == 1
         envelope = envelopes[0]
 
-        # Schema and adapter
-        assert envelope["schema"] == "devqubit.envelope/0.1"
-        assert envelope["adapter"] == "qiskit-runtime"
+        # UEC 1.0 schema and producer
+        assert envelope["schema"] == "devqubit.envelope/1.0"
+        assert "envelope_id" in envelope
+        assert "producer" in envelope
+        assert envelope["producer"]["adapter"] == "devqubit-qiskit-runtime"
+        assert "qiskit-ibm-runtime" in envelope["producer"]["frontends"]
 
-        # Device section
+        # Device section - provider is physical (fake for fake backends)
         device = envelope["device"]
-        assert device["provider"] == "qiskit-ibm-runtime"
+        assert device["provider"] in ("fake", "ibm_quantum", "aer", "local")
         valid_types = {"simulator", "hardware", "emulator", "sim", "hw", "qpu"}
         assert device["backend_type"] in valid_types
         assert "captured_at" in device
@@ -163,9 +167,13 @@ class TestSamplerExecution:
         assert "execution" in envelope
         assert "transpilation" in envelope["execution"]
 
-        # Result section
-        assert envelope["result"]["result_type"] == "counts"
-        assert envelope["result"]["num_experiments"] >= 1
+        # Result section (UEC 1.0)
+        result = envelope["result"]
+        assert result["success"] is True
+        assert result["status"] == "completed"
+        assert len(result.get("items", [])) >= 1
+        # Primitive type is in metadata
+        assert result["metadata"]["primitive_type"] == "sampler"
 
 
 class TestEstimatorExecution:
@@ -354,7 +362,8 @@ class TestMultiplePubs:
         loaded, envelopes = _load_envelopes(run.run_id, store, registry)
 
         assert loaded.record["execute"]["num_pubs"] == 2
-        assert envelopes[0]["result"]["num_experiments"] == 2
+        # UEC 1.0: check items count instead of num_experiments
+        assert len(envelopes[0]["result"]["items"]) == 2
 
     def test_multi_circuit_qasm3_artifacts(
         self,
