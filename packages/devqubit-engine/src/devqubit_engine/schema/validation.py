@@ -11,7 +11,7 @@ ensure validation is reproducible across environments.
 Supported Schemas
 -----------------
 - ``devqubit.run/0.1``: Quantum experiment run records
-- ``devqubit.envelope/0.1``: Execution envelope snapshots (device, program,
+- ``devqubit.envelope/1.0``: Execution envelope snapshots (device, program,
   execution, result)
 
 Notes
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 # Mapping of schema IDs to bundled schema filenames
 _SCHEMA_MAP: dict[str, str] = {
     "devqubit.run/0.1": "devqubit.run.0.1.schema.json",
-    "devqubit.envelope/0.1": "devqubit.envelope.0.1.schema.json",
+    "devqubit.envelope/1.0": "devqubit.envelope.1.0.schema.json",
 }
 
 
@@ -49,7 +49,7 @@ def _load_schema(schema_id: str) -> dict[str, Any]:
     Parameters
     ----------
     schema_id : str
-        Schema identifier (e.g., "devqubit.run/0.1", "devqubit.envelope/0.1").
+        Schema identifier (e.g., "devqubit.run/0.1", "devqubit.envelope/1.0").
 
     Returns
     -------
@@ -326,7 +326,7 @@ def validate_envelope(
     ----------
     envelope : dict
         Envelope dictionary to validate. Must contain a "schema" field
-        identifying the schema version (e.g., "devqubit.envelope/0.1").
+        identifying the schema version (e.g., "devqubit.envelope/1.0").
     raise_on_error : bool, optional
         If True (default), raise ValueError on validation failure.
         If False, return the list of validation errors.
