@@ -21,6 +21,8 @@ from devqubit_engine.uec.calibration import (
     QubitCalibration,
 )
 from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.producer import ProducerInfo
+from devqubit_engine.uec.result import CountsFormat
 from devqubit_engine.uec.types import ArtifactRef
 
 
@@ -271,6 +273,45 @@ def calibrated_snapshot(snapshot_factory, calibration_factory) -> DeviceSnapshot
     return snapshot_factory(
         backend_name="ibm_test",
         calibration=calibration_factory(num_qubits=5),
+    )
+
+
+# =============================================================================
+# UEC Result Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def qiskit_counts_format() -> CountsFormat:
+    """Standard Qiskit counts format (canonical bit order)."""
+    return CountsFormat(
+        source_sdk="qiskit",
+        source_key_format="qiskit_little_endian",
+        bit_order="cbit0_right",
+        transformed=False,
+    )
+
+
+@pytest.fixture
+def braket_counts_format() -> CountsFormat:
+    """Braket counts format (transformed to canonical)."""
+    return CountsFormat(
+        source_sdk="braket",
+        source_key_format="braket_big_endian",
+        bit_order="cbit0_right",
+        transformed=True,
+    )
+
+
+@pytest.fixture
+def minimal_producer() -> ProducerInfo:
+    """Minimal valid ProducerInfo for testing."""
+    return ProducerInfo.create(
+        adapter="devqubit-test",
+        adapter_version="0.1.0",
+        sdk="test-sdk",
+        sdk_version="1.0.0",
+        frontends=["test-sdk"],
     )
 
 
