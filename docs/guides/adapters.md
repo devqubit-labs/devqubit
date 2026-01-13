@@ -410,7 +410,7 @@ with track(project="custom-sdk") as run:
 For full UEC compliance, create an ExecutionEnvelope:
 
 ```python
-from devqubit.snapshot import (
+from devqubit.uec import (
     DeviceSnapshot,
     ExecutionEnvelope,
     ExecutionSnapshot,

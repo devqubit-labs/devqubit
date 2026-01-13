@@ -30,7 +30,7 @@ Verification
 
 Snapshots
 ---------
->>> from devqubit.snapshot import ExecutionEnvelope, DeviceSnapshot
+>>> from devqubit.uec import ExecutionEnvelope, DeviceSnapshot
 >>> envelope = ExecutionEnvelope(device=device_snapshot, ...)
 
 UI
@@ -44,7 +44,7 @@ Submodules
 - devqubit.ci: CI/CD integration (JUnit, GitHub annotations)
 - devqubit.bundle: Run packaging utilities
 - devqubit.config: Configuration management
-- devqubit.snapshot: UEC snapshot schemas
+- devqubit.uec: UEC snapshot schemas
 """
 
 from __future__ import annotations
