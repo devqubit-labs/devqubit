@@ -367,7 +367,7 @@ def _create_result_snapshot(
     # Build UEC 1.0 items list
     items: list[ResultItem] = []
 
-    # Get format from payload (added by P1 fix)
+    # Get format from payload
     format_dict = counts_payload.get("format", {})
     counts_format = CountsFormat(
         source_sdk=format_dict.get("source_sdk", "cirq"),
@@ -460,7 +460,7 @@ def _create_and_log_envelope(
             captured_at=utc_now_iso(),
             backend_name=simulator_name,
             backend_type="simulator",
-            provider="cirq",
+            provider="local",  # Physical provider, not SDK
             sdk_versions={"cirq": cirq_version()},
         )
 
@@ -878,7 +878,7 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        # P0 FIX: Capture exception and log failure envelope before re-raising
+        # Capture exception and log failure envelope before re-raising
         result: Any = None
         original_exception: BaseException | None = None
         execution_succeeded = False
@@ -962,7 +962,7 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        # P0 FIX: Capture exception and log failure envelope before re-raising
+        # Capture exception and log failure envelope before re-raising
         results: Any = None
         original_exception: BaseException | None = None
         execution_succeeded = False
@@ -1066,7 +1066,7 @@ class TrackedSimulator:
         if kwargs:
             extra_options["kwargs"] = to_jsonable(kwargs)
 
-        # P0 FIX: Capture exception and log failure envelope before re-raising
+        # Capture exception and log failure envelope before re-raising
         results: Any = None
         original_exception: BaseException | None = None
         execution_succeeded = False

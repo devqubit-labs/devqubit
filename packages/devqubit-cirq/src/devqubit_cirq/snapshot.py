@@ -429,7 +429,7 @@ def create_device_snapshot(
         logger.debug("Failed to resolve backend type: %s", e)
         backend_type = "simulator"
 
-    # P1 FIX: Detect physical provider (not SDK frontend)
+    # Detect physical provider (not SDK frontend)
     try:
         physical_provider = _detect_execution_provider(executor)
     except Exception as e:
@@ -480,7 +480,7 @@ def create_device_snapshot(
         captured_at=utc_now_iso(),
         backend_name=backend_name,
         backend_type=backend_type,
-        provider=physical_provider,  # P1 FIX: Physical provider, not "cirq"
+        provider=physical_provider,  # Physical provider, not "cirq"
         num_qubits=num_qubits,
         connectivity=connectivity,
         native_gates=native_gates,
