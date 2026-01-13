@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from devqubit_engine.core.types import ResultType
+from devqubit_engine.uec.types import ResultType
 from devqubit_engine.utils.serialization import to_jsonable
 
 
