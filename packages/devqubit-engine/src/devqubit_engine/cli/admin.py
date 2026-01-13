@@ -69,11 +69,13 @@ def storage_gc(ctx: click.Context, dry_run: bool, yes: bool, fmt: str) -> None:
 
     stats = gc_run(store, registry, dry_run=True)
 
+    objects_total = stats.referenced_objects + stats.unreferenced_objects
+
     if fmt == "json":
         print_json(
             {
-                "objects_total": stats.objects_total,
-                "objects_referenced": stats.objects_referenced,
+                "objects_total": objects_total,
+                "objects_referenced": stats.referenced_objects,
                 "objects_deleted": stats.objects_deleted if not dry_run else 0,
                 "bytes_reclaimable": stats.bytes_reclaimable,
                 "bytes_reclaimed": stats.bytes_reclaimed if not dry_run else 0,
@@ -83,10 +85,10 @@ def storage_gc(ctx: click.Context, dry_run: bool, yes: bool, fmt: str) -> None:
         if dry_run:
             return
 
-    if dry_run or stats.objects_total == stats.objects_referenced:
-        echo(f"Objects total:      {stats.objects_total}")
-        echo(f"Objects referenced: {stats.objects_referenced}")
-        echo(f"Objects orphaned:   {stats.objects_total - stats.objects_referenced}")
+    if dry_run or stats.unreferenced_objects == 0:
+        echo(f"Objects total:      {objects_total}")
+        echo(f"Objects referenced: {stats.referenced_objects}")
+        echo(f"Objects orphaned:   {stats.unreferenced_objects}")
         echo(f"Reclaimable:        {stats.bytes_reclaimable:,} bytes")
         if dry_run:
             echo("\nDry run - no objects deleted.")
@@ -95,9 +97,8 @@ def storage_gc(ctx: click.Context, dry_run: bool, yes: bool, fmt: str) -> None:
         return
 
     if not yes:
-        orphaned = stats.objects_total - stats.objects_referenced
         if not click.confirm(
-            f"Delete {orphaned} orphaned objects ({stats.bytes_reclaimable:,} bytes)?"
+            f"Delete {stats.unreferenced_objects} orphaned objects ({stats.bytes_reclaimable:,} bytes)?"
         ):
             echo("Cancelled.")
             return
@@ -145,16 +146,15 @@ def storage_prune(
         dry_run=True,
     )
 
-    if dry_run or stats["runs_deleted"] == 0:
-        echo(f"Runs matching:  {stats['runs_matched']}")
-        echo(f"Runs to delete: {stats['runs_deleted']}")
-        echo(f"Runs protected: {stats['runs_protected']}")
+    if dry_run or stats.runs_pruned == 0:
+        echo(f"Runs scanned:   {stats.runs_scanned}")
+        echo(f"Runs to prune:  {stats.runs_pruned}")
         if dry_run:
             echo("\nDry run - no runs deleted.")
         return
 
     if not yes:
-        if not click.confirm(f"Delete {stats['runs_deleted']} {status} runs?"):
+        if not click.confirm(f"Delete {stats.runs_pruned} {status} runs?"):
             echo("Cancelled.")
             return
 
@@ -165,7 +165,7 @@ def storage_prune(
         keep_latest=keep_latest,
         dry_run=False,
     )
-    echo(f"Deleted {stats['runs_deleted']} runs")
+    echo(f"Deleted {stats.runs_pruned} runs")
 
 
 @storage_group.command("health")
@@ -222,7 +222,6 @@ def baseline_set(ctx: click.Context, project: str, run_id: str) -> None:
     from devqubit_engine.core.config import Config
     from devqubit_engine.storage.factory import create_registry
     from devqubit_engine.storage.protocols import RunNotFoundError
-    from devqubit_engine.utils.time_utils import utc_now_iso
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -233,7 +232,7 @@ def baseline_set(ctx: click.Context, project: str, run_id: str) -> None:
     except RunNotFoundError as e:
         raise click.ClickException(f"Run not found: {run_id}") from e
 
-    registry.set_baseline(project, run_id, utc_now_iso())
+    registry.set_baseline(project, run_id)
     echo(f"Baseline set: {project} → {run_id}")
 
 

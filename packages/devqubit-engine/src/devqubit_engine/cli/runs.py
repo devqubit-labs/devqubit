@@ -196,8 +196,11 @@ def search_runs(
 
     try:
         results = registry.search_runs(
-            query, sort_by=sort, descending=not asc, limit=limit, project=project
+            query, sort_by=sort, descending=not asc, limit=limit
         )
+        # Filter by project if specified
+        if project:
+            results = [r for r in results if r.project == project]
     except Exception as e:
         raise click.ClickException(f"Search failed: {e}") from e
 
