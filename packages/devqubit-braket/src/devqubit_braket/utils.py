@@ -31,6 +31,16 @@ def braket_version() -> str:
         return "unknown"
 
 
+def get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-braket")
+    except Exception:
+        return "unknown"
+
+
 def get_backend_name(device: Any) -> str:
     """
     Extract device name from a Braket device.

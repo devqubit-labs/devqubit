@@ -77,6 +77,7 @@ from devqubit_pennylane.snapshot import (
 from devqubit_pennylane.utils import (
     collect_sdk_versions,
     extract_shots_info,
+    get_adapter_version,
     get_device_name,
     is_pennylane_device,
 )
@@ -84,7 +85,6 @@ from devqubit_pennylane.utils import (
 
 logger = logging.getLogger(__name__)
 _serializer = PennyLaneCircuitSerializer()
-_ADAPTER_VERSION = "1.0.0"
 
 
 def _is_tape_like(obj: Any) -> bool:
@@ -717,7 +717,7 @@ def patch_device(
                     sdk_versions = collect_sdk_versions()
                     producer = ProducerInfo.create(
                         adapter="devqubit-pennylane",
-                        adapter_version=_ADAPTER_VERSION,
+                        adapter_version=get_adapter_version(),
                         sdk="pennylane",
                         sdk_version=sdk_versions.get("pennylane", "unknown"),
                         frontends=["pennylane"],

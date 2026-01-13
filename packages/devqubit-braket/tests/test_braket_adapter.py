@@ -85,7 +85,7 @@ class TestBraketAdapterUECContract:
         assert loaded.status == "FINISHED"
 
         # Tags/params are part of the adapter contract (only set on logged executions)
-        assert loaded.record["data"]["tags"]["provider"] == "braket"
+        assert loaded.record["data"]["tags"]["provider"] == "aws_braket"
         assert loaded.record["data"]["tags"]["adapter"] == "braket"
         assert loaded.record["data"]["params"]["shots"] == shots
         assert loaded.record["data"]["params"]["num_circuits"] == 1
@@ -98,13 +98,14 @@ class TestBraketAdapterUECContract:
         assert "result.counts.json" in kinds
         assert "devqubit.envelope.json" in kinds
 
-        # Validate envelope structure + key fields (UEC contract)
+        # Validate envelope structure + key fields (UEC 1.0 contract)
         envelope_art = _artifacts_of_kind(loaded, "devqubit.envelope.json")[0]
         envelope = _read_artifact_json(store, envelope_art)
 
-        assert envelope["schema"] == "devqubit.envelope/0.1"
-        assert envelope["adapter"] == "braket"
-        assert envelope["device"]["provider"] == "braket"
+        assert envelope["schema"] == "devqubit.envelope/1.0"
+        assert envelope["producer"]["adapter"] == "devqubit-braket"
+        assert envelope["producer"]["sdk"] == "braket"
+        assert envelope["device"]["provider"] == "aws_braket"
         assert envelope["execution"]["shots"] == shots
         assert envelope["execution"]["sdk"] == "braket"
         assert envelope["execution"]["transpilation"]["mode"] == "managed"
@@ -118,13 +119,13 @@ class TestBraketAdapterUECContract:
         assert logical[0]["role"] == "logical"
         assert logical[0]["ref"]["digest"] in jaqcd_digests
 
-        # Result snapshot should include normalized counts summing to shots
-        assert envelope["result"]["result_type"] == "counts"
+        # Result snapshot should include items with counts summing to shots (UEC 1.0)
+        assert envelope["result"]["status"] == "completed"
         assert envelope["result"]["success"] is True
-        assert envelope["result"]["num_experiments"] == 1
-        c0 = envelope["result"]["counts"][0]
-        assert c0["circuit_index"] == 0
-        assert sum(c0["counts"].values()) == shots
+        assert len(envelope["result"]["items"]) == 1
+        item0 = envelope["result"]["items"][0]
+        assert item0["item_index"] == 0
+        assert sum(item0["counts"]["counts"].values()) == shots
 
         # Counts artifact should be query-friendly and consistent
         counts_art = _artifacts_of_kind(loaded, "result.counts.json")[0]

@@ -108,14 +108,11 @@ from devqubit_qiskit_runtime.transpilation import (
 from devqubit_qiskit_runtime.utils import (
     collect_sdk_versions,
     extract_job_id,
+    get_adapter_version,
     get_backend_name,
     get_primitive_type,
     is_runtime_primitive,
 )
-
-
-# Adapter version for ProducerInfo
-_ADAPTER_VERSION = "1.0.0"
 
 
 logger = logging.getLogger(__name__)
@@ -971,7 +968,7 @@ class TrackedRuntimePrimitive:
             # Create ProducerInfo for SDK stack tracking
             producer = ProducerInfo.create(
                 adapter="devqubit-qiskit-runtime",
-                adapter_version=_ADAPTER_VERSION,
+                adapter_version=get_adapter_version(),
                 sdk="qiskit-ibm-runtime",
                 sdk_version=sdk_versions.get("qiskit_ibm_runtime", "unknown"),
                 frontends=["qiskit-ibm-runtime"],

@@ -70,14 +70,16 @@ from devqubit_qiskit.envelope import (
     finalize_envelope_with_result,
     log_device_snapshot,
 )
-from devqubit_qiskit.utils import extract_job_id, get_backend_name, qiskit_version
+from devqubit_qiskit.utils import (
+    extract_job_id,
+    get_adapter_version,
+    get_backend_name,
+    qiskit_version,
+)
 from qiskit.providers.backend import BackendV2
 
 
 logger = logging.getLogger(__name__)
-
-# Adapter version for ProducerInfo
-_ADAPTER_VERSION = "0.4.0"
 
 
 @dataclass
@@ -538,7 +540,7 @@ class TrackedBackend:
             # Create ProducerInfo for SDK stack tracking
             producer = ProducerInfo.create(
                 adapter="devqubit-qiskit",
-                adapter_version=_ADAPTER_VERSION,
+                adapter_version=get_adapter_version(),
                 sdk="qiskit",
                 sdk_version=qiskit_version(),
                 frontends=["qiskit"],

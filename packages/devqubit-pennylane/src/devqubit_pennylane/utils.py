@@ -212,6 +212,16 @@ def pennylane_version() -> str:
         return "unknown"
 
 
+def get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-pennylane")
+    except Exception:
+        return "unknown"
+
+
 def collect_sdk_versions() -> dict[str, str]:
     """
     Collect version strings for all relevant SDK packages.

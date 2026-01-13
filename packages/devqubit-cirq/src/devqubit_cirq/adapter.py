@@ -40,7 +40,7 @@ from devqubit_cirq.serialization import (
     is_cirq_circuit,
 )
 from devqubit_cirq.snapshot import create_device_snapshot
-from devqubit_cirq.utils import cirq_version, get_backend_name
+from devqubit_cirq.utils import cirq_version, get_adapter_version, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
@@ -70,16 +70,6 @@ from devqubit_engine.utils.time_utils import utc_now_iso
 
 
 logger = logging.getLogger(__name__)
-
-
-def _get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
-    try:
-        from importlib.metadata import version
-
-        return version("devqubit-cirq")
-    except Exception:
-        return "unknown"
 
 
 # Module-level serializer instance
@@ -491,7 +481,7 @@ def _create_and_log_envelope(
     sdk_version = cirq_version()
     producer = ProducerInfo.create(
         adapter="devqubit-cirq",
-        adapter_version=_get_adapter_version(),
+        adapter_version=get_adapter_version(),
         sdk="cirq",
         sdk_version=sdk_version,
         frontends=["cirq"],

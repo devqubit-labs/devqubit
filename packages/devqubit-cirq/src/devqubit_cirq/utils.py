@@ -31,6 +31,16 @@ def cirq_version() -> str:
         return "unknown"
 
 
+def get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-cirq")
+    except Exception:
+        return "unknown"
+
+
 def get_backend_name(executor: Any) -> str:
     """
     Extract backend name from a Cirq sampler or simulator.

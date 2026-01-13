@@ -27,6 +27,16 @@ def qiskit_version() -> str:
     return getattr(qiskit, "__version__", "unknown")
 
 
+def get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-qiskit")
+    except Exception:
+        return "unknown"
+
+
 def get_backend_name(backend: Any) -> str:
     """
     Extract backend name from a Qiskit backend instance.
