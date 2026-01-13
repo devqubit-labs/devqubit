@@ -266,11 +266,11 @@ class TestSubmodules:
 
     def test_snapshot_submodule(self) -> None:
         """devqubit.snapshot provides UEC types."""
-        from devqubit import snapshot
+        from devqubit import uec
 
-        assert hasattr(snapshot, "ExecutionEnvelope")
-        assert hasattr(snapshot, "DeviceSnapshot")
-        assert hasattr(snapshot, "ProgramSnapshot")
+        assert hasattr(uec, "ExecutionEnvelope")
+        assert hasattr(uec, "DeviceSnapshot")
+        assert hasattr(uec, "ProgramSnapshot")
 
     def test_config_submodule(self) -> None:
         """devqubit.config provides configuration."""

@@ -54,7 +54,7 @@ _LAZY_IMPORTS = {
     "DeviceSnapshot": ("devqubit_engine.uec.device", "DeviceSnapshot"),
     "ProgramSnapshot": ("devqubit_engine.uec.program", "ProgramSnapshot"),
     "ExecutionSnapshot": ("devqubit_engine.uec.execution", "ExecutionSnapshot"),
-    "ResultSnapshot": ("devqubit_engine.uecresult", "ResultSnapshot"),
+    "ResultSnapshot": ("devqubit_engine.uec.result", "ResultSnapshot"),
     "ValidationResult": ("devqubit_engine.uec.types", "ValidationResult"),
 }
 
