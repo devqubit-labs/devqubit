@@ -579,7 +579,7 @@ def patch_device(
             # Log structure and build ProgramSnapshot
             program_artifacts: list[ProgramArtifact] = []
             if should_log_structure and tapes and circuit_hash not in logged_hashes:
-                # Get physical provider from device snapshot (P1: provider should be physical)
+                # Get physical provider from device snapshot
                 physical_provider = (
                     self._devqubit_device_snapshot.provider
                     if self._devqubit_device_snapshot
@@ -641,7 +641,7 @@ def patch_device(
             result = None
             execution_error: dict[str, Any] | None = None
             execution_succeeded = True
-            original_exception: BaseException | None = None  # P0: Save for re-raise
+            original_exception: BaseException | None = None  # Save for re-raise
 
             try:
                 result = getattr(self, f"_devqubit_original_{method_name}")(
@@ -649,7 +649,7 @@ def patch_device(
                 )
             except Exception as e:
                 execution_succeeded = False
-                original_exception = e  # P0: Save original exception
+                original_exception = e  # Save original exception
                 execution_error = {
                     "type": type(e).__name__,
                     "message": str(e),
@@ -770,7 +770,7 @@ def patch_device(
                 "last_execution_at": utc_now_iso(),
             }
 
-            # Re-raise execution error after logging (P0: preserve original exception type)
+            # Re-raise execution error after logging (preserve original exception type)
             if not execution_succeeded and original_exception is not None:
                 raise original_exception
 
@@ -835,7 +835,7 @@ class PennyLaneAdapter:
         dict
             Device description with multi-layer stack info.
         """
-        # Detect physical execution provider (P1: provider should be physical)
+        # Detect physical execution provider
         backend_info = resolve_pennylane_backend(device)
         physical_provider = backend_info["provider"] if backend_info else "local"
 
