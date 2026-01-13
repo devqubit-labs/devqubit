@@ -41,6 +41,7 @@ from devqubit_cirq.serialization import (
 from devqubit_cirq.snapshot import create_device_snapshot
 from devqubit_cirq.utils import cirq_version, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
+from devqubit_engine.core.run import Run
 from devqubit_engine.core.snapshot import (
     DeviceSnapshot,
     ExecutionEnvelope,
@@ -51,7 +52,6 @@ from devqubit_engine.core.snapshot import (
     ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
 from devqubit_engine.core.types import (
     ArtifactRef,
     ProgramRole,

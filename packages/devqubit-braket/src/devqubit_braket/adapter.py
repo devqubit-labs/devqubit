@@ -40,6 +40,7 @@ from devqubit_braket.serialization import (
 from devqubit_braket.snapshot import create_device_snapshot
 from devqubit_braket.utils import braket_version, extract_task_id, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
+from devqubit_engine.core.run import Run
 from devqubit_engine.core.snapshot import (
     DeviceSnapshot,
     ExecutionEnvelope,
@@ -50,7 +51,6 @@ from devqubit_engine.core.snapshot import (
     ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
 from devqubit_engine.core.types import (
     ArtifactRef,
     ProgramRole,

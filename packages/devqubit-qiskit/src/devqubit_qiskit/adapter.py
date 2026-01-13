@@ -49,6 +49,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from devqubit_engine.circuit.models import CircuitFormat
+from devqubit_engine.core.run import Run
 from devqubit_engine.core.snapshot import (
     DeviceSnapshot,
     ExecutionEnvelope,
@@ -59,7 +60,6 @@ from devqubit_engine.core.snapshot import (
     ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
 from devqubit_engine.core.types import (
     ProgramRole,
     ResultType,

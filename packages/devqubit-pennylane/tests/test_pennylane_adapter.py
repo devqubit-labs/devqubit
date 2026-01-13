@@ -4,7 +4,7 @@
 """Tests for PennyLane adapter."""
 
 import pennylane as qml
-from devqubit_engine.core.tracker import track
+from devqubit_engine.core.run import track
 from devqubit_pennylane.adapter import (
     PennyLaneAdapter,
     _compute_circuit_hash,

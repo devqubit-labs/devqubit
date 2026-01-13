@@ -924,7 +924,7 @@ def _save_replay_run(
 ) -> str | None:
     """Save replay as a new tracked run."""
     try:
-        from devqubit_engine.core.tracker import track
+        from devqubit_engine.core.run import track
 
         dest_registry = registry or create_registry(f"file://{root}" if root else None)
         dest_store = store or create_store(f"file://{root}/objects" if root else None)

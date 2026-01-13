@@ -50,6 +50,7 @@ import traceback
 import types
 from typing import Any
 
+from devqubit_engine.core.run import Run
 from devqubit_engine.core.snapshot import (
     DeviceSnapshot,
     ExecutionEnvelope,
@@ -59,7 +60,6 @@ from devqubit_engine.core.snapshot import (
     ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
 from devqubit_engine.core.types import ProgramRole, TranspilationMode
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso

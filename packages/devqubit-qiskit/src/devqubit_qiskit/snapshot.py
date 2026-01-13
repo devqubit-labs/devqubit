@@ -21,7 +21,7 @@ from devqubit_qiskit.utils import get_backend_name, qiskit_version
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.tracker import Run
+    from devqubit_engine.core.run import Run
 
 logger = logging.getLogger(__name__)
 

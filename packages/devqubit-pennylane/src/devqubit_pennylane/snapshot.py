@@ -34,7 +34,7 @@ from devqubit_pennylane.utils import (
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.tracker import Run
+    from devqubit_engine.core.run import Run
 
 logger = logging.getLogger(__name__)
 
