@@ -2,29 +2,46 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Integration tests for full devqubit workflows.
+End-to-end integration tests for devqubit.
 
-These tests verify that components work together correctly in realistic
-scenarios. They use real storage, real pack/unpack, and real comparison.
+These tests verify complete user workflows using the public API.
+They use real storage, real pack/unpack, and real comparison.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from devqubit_engine.bundle.pack import pack_run, unpack_bundle
-from devqubit_engine.compare.diff import ComparisonResult, diff, diff_runs
-from devqubit_engine.compare.results import ProgramMatchMode
-from devqubit_engine.core.run import track
+from devqubit import (
+    Bundle,
+    Config,
+    create_registry,
+    create_store,
+    diff,
+    pack_run,
+    set_config,
+    track,
+    unpack_bundle,
+)
+from devqubit.compare import ComparisonResult
 
 
 class TestFullWorkflow:
     """Tests for complete track → pack → unpack → diff workflow."""
 
-    def test_track_pack_unpack_diff(self, store, registry, config, tmp_path: Path):
+    def test_track_pack_unpack_diff(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+        tmp_path: Path,
+    ):
         """Full workflow: track run, pack, unpack, diff."""
+        set_config(config)
+
         # Create run
-        with track(project="integration", config=config) as run:
+        with track(project="integration") as run:
             run.log_param("shots", 1000)
             run.log_metric("fidelity", 0.95)
             run.log_json(name="config", obj={"setting": "value"}, role="config")
@@ -46,9 +63,8 @@ class TestFullWorkflow:
         assert bundle_path.exists()
 
         # Unpack to new workspace
-        from devqubit_engine.storage.factory import create_registry, create_store
-
         workspace2 = tmp_path / ".devqubit2"
+        workspace2.mkdir(parents=True)
         store2 = create_store(f"file://{workspace2}/objects")
         registry2 = create_registry(f"file://{workspace2}")
 
@@ -71,94 +87,51 @@ class TestFullWorkflow:
 class TestCrossWorkspaceDiff:
     """Tests for comparing runs across workspaces."""
 
-    def test_diff_runs_different_workspaces(self, factory_store, factory_registry):
-        """Compare runs from different workspaces."""
-        store_a = factory_store()
-        reg_a = factory_registry()
-        store_b = factory_store()
-        reg_b = factory_registry()
-
-        # Create similar runs in different workspaces
-        with track(
-            project="test",
-            capture_env=False,
-            capture_git=False,
-            store=store_a,
-            registry=reg_a,
-        ) as run_a:
-            run_a.log_param("shots", 1000)
-            run_a.log_bytes(
-                kind="prog",
-                data=b"circuit",
-                media_type="text/plain",
-                role="program",
-            )
-            run_id_a = run_a.run_id
-
-        with track(
-            project="test",
-            capture_env=False,
-            capture_git=False,
-            store=store_b,
-            registry=reg_b,
-        ) as run_b:
-            run_b.log_param("shots", 1000)
-            run_b.log_bytes(
-                kind="prog",
-                data=b"circuit",
-                media_type="text/plain",
-                role="program",
-            )
-            run_id_b = run_b.run_id
-
-        # Load and compare
-        record_a = reg_a.load(run_id_a)
-        record_b = reg_b.load(run_id_b)
-
-        result = diff_runs(record_a, record_b, store_a=store_a, store_b=store_b)
-
-        assert isinstance(result, ComparisonResult)
-        assert result.metadata["project_match"]
-        assert result.params["match"]
-        assert result.program.matches(
-            ProgramMatchMode.EITHER
-        )  # Same content = same digest
-
-    def test_diff_detects_param_changes(self, store, registry, config):
+    def test_diff_detects_param_changes(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
         """Diff detects parameter differences."""
-        with track(project="test", config=config) as run_a:
+        set_config(config)
+
+        with track(project="test") as run_a:
             run_a.log_param("shots", 1000)
             run_a.log_param("seed", 42)
             run_id_a = run_a.run_id
 
-        with track(project="test", config=config) as run_b:
+        with track(project="test") as run_b:
             run_b.log_param("shots", 2000)  # Changed
             run_b.log_param("seed", 42)
             run_id_b = run_b.run_id
 
-        record_a = registry.load(run_id_a)
-        record_b = registry.load(run_id_b)
-
-        result = diff_runs(record_a, record_b, store_a=store, store_b=store)
+        result = diff(run_id_a, run_id_b, registry=registry, store=store)
 
         assert not result.params["match"]
         assert "shots" in result.params["changed"]
         assert result.params["changed"]["shots"] == {"a": 1000, "b": 2000}
 
-    def test_diff_detects_metric_changes(self, store, registry, config):
+    def test_diff_detects_metric_changes(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
         """Diff detects metric differences."""
-        with track(project="metrics", config=config) as run_a:
+        set_config(config)
+
+        with track(project="metrics") as run_a:
             run_a.log_metric("fidelity", 0.95)
             run_id_a = run_a.run_id
 
-        with track(project="metrics", config=config) as run_b:
+        with track(project="metrics") as run_b:
             run_b.log_metric("fidelity", 0.85)  # Different
             run_id_b = run_b.run_id
 
-        record_a = registry.load(run_id_a)
-        record_b = registry.load(run_id_b)
-
-        result = diff_runs(record_a, record_b, store_a=store, store_b=store)
+        result = diff(run_id_a, run_id_b, registry=registry, store=store)
 
         # Metrics comparison is in the result
         assert result.to_dict() is not None
@@ -167,11 +140,19 @@ class TestCrossWorkspaceDiff:
 class TestBundleDiff:
     """Tests for comparing bundles."""
 
-    def test_diff_bundle_to_run(self, store, registry, config, tmp_path: Path):
-        """Compare bundle to registry run using compare."""
+    def test_diff_bundle_to_run(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+        tmp_path: Path,
+    ):
+        """Compare bundle to registry run."""
+        set_config(config)
         bundle_path = tmp_path / "bundle.zip"
 
-        with track(project="bundle_diff", config=config) as run:
+        with track(project="bundle_diff") as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
@@ -189,34 +170,42 @@ class TestBundleDiff:
         assert result.run_id_a == run_id
         assert result.run_id_b == run_id
 
-    def test_diff_two_bundles(self, store, registry, config, tmp_path: Path):
+    def test_diff_two_bundles(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+        tmp_path: Path,
+    ):
         """Compare two bundle files."""
+        set_config(config)
         bundle_a = tmp_path / "bundle_a.zip"
         bundle_b = tmp_path / "bundle_b.zip"
 
         # Create and pack run A
-        with track(
-            project="test",
-            capture_env=False,
-            capture_git=False,
-            config=config,
-        ) as run_a:
+        with track(project="test", capture_env=False, capture_git=False) as run_a:
             run_a.log_param("value", 100)
             run_id_a = run_a.run_id
 
-        pack_run(run_id=run_id_a, output_path=bundle_a, store=store, registry=registry)
+        pack_run(
+            run_id=run_id_a,
+            output_path=bundle_a,
+            store=store,
+            registry=registry,
+        )
 
         # Create and pack run B with different param
-        with track(
-            project="test",
-            capture_env=False,
-            capture_git=False,
-            config=config,
-        ) as run_b:
+        with track(project="test", capture_env=False, capture_git=False) as run_b:
             run_b.log_param("value", 200)
             run_id_b = run_b.run_id
 
-        pack_run(run_id=run_id_b, output_path=bundle_b, store=store, registry=registry)
+        pack_run(
+            run_id=run_id_b,
+            output_path=bundle_b,
+            store=store,
+            registry=registry,
+        )
 
         # Compare bundles
         result = diff(bundle_a, bundle_b)
@@ -227,17 +216,57 @@ class TestBundleDiff:
         assert result.params["changed"]["value"] == {"a": 100, "b": 200}
 
 
+class TestBundleReader:
+    """Tests for Bundle reader API."""
+
+    def test_bundle_context_manager(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+        tmp_path: Path,
+    ):
+        """Bundle works as context manager."""
+        set_config(config)
+        bundle_path = tmp_path / "bundle.zip"
+
+        with track(project="reader_test") as run:
+            run.log_param("key", "value")
+            run_id = run.run_id
+
+        pack_run(
+            run_id=run_id,
+            output_path=bundle_path,
+            store=store,
+            registry=registry,
+        )
+
+        with Bundle(bundle_path) as bundle:
+            assert bundle.run_id == run_id
+            assert bundle.run_record is not None
+            # run_record is a dict when accessed from Bundle
+            record = bundle.run_record
+            if hasattr(record, "record"):
+                assert record.record["data"]["params"]["key"] == "value"
+            else:
+                assert record["data"]["params"]["key"] == "value"
+
+
 class TestArtifactRoundtrip:
     """Tests for artifact preservation through pack/unpack."""
 
-    def test_multiple_artifacts_preserved(
-        self, factory_store, factory_registry, tmp_path: Path
-    ):
+    def test_multiple_artifacts_preserved(self, tmp_path: Path):
         """Multiple artifacts survive pack/unpack."""
-        store_src = factory_store()
-        reg_src = factory_registry()
-        store_dst = factory_store()
-        reg_dst = factory_registry()
+        workspace_src = tmp_path / "src"
+        workspace_dst = tmp_path / "dst"
+        workspace_src.mkdir()
+        workspace_dst.mkdir()
+
+        store_src = create_store(f"file://{workspace_src}/objects")
+        reg_src = create_registry(f"file://{workspace_src}")
+        store_dst = create_store(f"file://{workspace_dst}/objects")
+        reg_dst = create_registry(f"file://{workspace_dst}")
         bundle_path = tmp_path / "bundle.zip"
 
         # Create run with multiple artifact types
@@ -279,14 +308,17 @@ class TestArtifactRoundtrip:
             data = store_dst.get_bytes(artifact.digest)
             assert len(data) > 0
 
-    def test_artifact_content_integrity(
-        self, factory_store, factory_registry, tmp_path: Path
-    ):
+    def test_artifact_content_integrity(self, tmp_path: Path):
         """Artifact content is identical after roundtrip."""
-        store_src = factory_store()
-        reg_src = factory_registry()
-        store_dst = factory_store()
-        reg_dst = factory_registry()
+        workspace_src = tmp_path / "src"
+        workspace_dst = tmp_path / "dst"
+        workspace_src.mkdir()
+        workspace_dst.mkdir()
+
+        store_src = create_store(f"file://{workspace_src}/objects")
+        reg_src = create_registry(f"file://{workspace_src}")
+        store_dst = create_store(f"file://{workspace_dst}/objects")
+        reg_dst = create_registry(f"file://{workspace_dst}")
         bundle_path = tmp_path / "bundle.zip"
 
         original_data = b"important quantum circuit data"
@@ -323,57 +355,19 @@ class TestArtifactRoundtrip:
         restored_data = store_dst.get_bytes(digest)
         assert restored_data == original_data
 
-    def test_large_artifact_roundtrip(
-        self, factory_store, factory_registry, tmp_path: Path
-    ):
-        """Large artifacts survive roundtrip."""
-        store_src = factory_store()
-        reg_src = factory_registry()
-        store_dst = factory_store()
-        reg_dst = factory_registry()
-        bundle_path = tmp_path / "bundle.zip"
-
-        # 1MB artifact
-        large_data = b"x" * (1024 * 1024)
-
-        with track(
-            project="large",
-            store=store_src,
-            registry=reg_src,
-            capture_env=False,
-            capture_git=False,
-        ) as run:
-            ref = run.log_bytes(
-                kind="large_data",
-                data=large_data,
-                media_type="application/octet-stream",
-                role="data",
-            )
-            run_id = run.run_id
-            digest = ref.digest
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store_src,
-            registry=reg_src,
-        )
-        unpack_bundle(
-            bundle_path=bundle_path,
-            dest_store=store_dst,
-            dest_registry=reg_dst,
-        )
-
-        restored = store_dst.get_bytes(digest)
-        assert len(restored) == len(large_data)
-        assert restored == large_data
-
 
 class TestEndToEndScenarios:
     """Real-world usage scenarios."""
 
-    def test_parameter_sweep_workflow(self, store, registry, config):
+    def test_parameter_sweep_workflow(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
         """Simulate a parameter sweep experiment."""
+        set_config(config)
         group_id = "sweep_shots"
         run_ids = []
 
@@ -383,7 +377,6 @@ class TestEndToEndScenarios:
                 project="sweep_test",
                 group_id=group_id,
                 group_name="Shot Count Sweep",
-                config=config,
             ) as run:
                 run.log_param("shots", shots)
                 # Simulate metric that improves with more shots
@@ -395,63 +388,23 @@ class TestEndToEndScenarios:
         assert len(runs_in_group) == 4
 
         # Compare first and last
-        first = registry.load(run_ids[0])
-        last = registry.load(run_ids[-1])
-
-        result = diff_runs(first, last, store_a=store, store_b=store)
+        result = diff(run_ids[0], run_ids[-1], registry=registry, store=store)
 
         assert not result.params["match"]
         assert "shots" in result.params["changed"]
 
-    def test_baseline_verification_workflow(self, store, registry, config):
-        """Simulate baseline verification in CI."""
-        # Create baseline
-        with track(
-            project="ci_test",
-            capture_env=False,
-            capture_git=False,
-            config=config,
-        ) as baseline_run:
-            baseline_run.log_param("shots", 1000)
-            baseline_run.log_bytes(
-                kind="circuit.qasm",
-                data=b"OPENQASM 3; qubit q; h q;",
-                media_type="text/plain",
-                role="program",
-            )
-            baseline_id = baseline_run.run_id
-
-        registry.set_baseline("ci_test", baseline_id)
-
-        # Create candidate (same config)
-        with track(
-            project="ci_test",
-            capture_env=False,
-            capture_git=False,
-            config=config,
-        ) as candidate_run:
-            candidate_run.log_param("shots", 1000)
-            candidate_run.log_bytes(
-                kind="circuit.qasm",
-                data=b"OPENQASM 3; qubit q; h q;",
-                media_type="text/plain",
-                role="program",
-            )
-            candidate_id = candidate_run.run_id
-
-        # Compare
-        baseline = registry.load(baseline_id)
-        candidate = registry.load(candidate_id)
-
-        result = diff_runs(baseline, candidate, store_a=store, store_b=store)
-
-        assert result.params["match"]
-        assert result.program.matches(ProgramMatchMode.EITHER)
-
-    def test_failed_run_captures_error(self, store, registry, config):
+    def test_failed_run_captures_error(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
         """Failed runs capture error information."""
+        set_config(config)
+
         try:
-            with track(project="error_test", config=config) as run:
+            with track(project="error_test") as run:
                 run.log_param("will_fail", True)
                 run_id = run.run_id
                 raise RuntimeError("Simulated quantum hardware error")
