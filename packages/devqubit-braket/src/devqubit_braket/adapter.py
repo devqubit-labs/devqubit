@@ -12,7 +12,7 @@ Example
 -------
 >>> from braket.circuits import Circuit
 >>> from braket.devices import LocalSimulator
->>> from devqubit_engine.core.tracker import track
+>>> from devqubit_engine.core.run import track
 >>>
 >>> circuit = Circuit().h(0).cnot(0, 1)
 >>>

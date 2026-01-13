@@ -21,13 +21,13 @@ import re
 from typing import Any, Dict, Iterator, List
 
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.core.types import ArtifactRef
 from devqubit_engine.storage.protocols import (
     BaselineInfo,
     ObjectNotFoundError,
     RunNotFoundError,
     RunSummary,
 )
+from devqubit_engine.uec.types import ArtifactRef
 from devqubit_engine.utils.time_utils import utc_now_iso
 
 

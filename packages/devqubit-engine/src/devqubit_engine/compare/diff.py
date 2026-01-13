@@ -44,11 +44,11 @@ from devqubit_engine.compare.results import (
 )
 from devqubit_engine.core.config import Config, get_config
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.core.types import ArtifactRef
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
 from devqubit_engine.uec.calibration import DeviceCalibration
 from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.types import ArtifactRef
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
     normalize_counts,

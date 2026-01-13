@@ -14,7 +14,6 @@ import pytest
 from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
 from devqubit_engine.core.config import Config
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.core.types import ArtifactRef
 from devqubit_engine.storage.local import LocalRegistry, LocalStore
 from devqubit_engine.uec.calibration import (
     DeviceCalibration,
@@ -22,6 +21,7 @@ from devqubit_engine.uec.calibration import (
     QubitCalibration,
 )
 from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.types import ArtifactRef
 
 
 # =============================================================================

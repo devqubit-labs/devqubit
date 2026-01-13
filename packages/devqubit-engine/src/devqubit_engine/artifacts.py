@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.core.types import ArtifactRef
 from devqubit_engine.storage.protocols import ObjectStoreProtocol
+from devqubit_engine.uec.types import ArtifactRef
 
 
 logger = logging.getLogger(__name__)
