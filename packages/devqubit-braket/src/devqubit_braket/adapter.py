@@ -411,7 +411,7 @@ class TrackedDevice:
                 task_ids=task_ids,
                 submitted_at=submitted_at,
                 circuit_hash=circuit_hash,
-                execution_index=exec_count,  # P0 fix: pass actual execution index
+                execution_index=exec_count,
                 options=options if options else None,
             )
 
@@ -433,7 +433,7 @@ class TrackedDevice:
             self.tracker.record["backend"] = {
                 "name": device_name,
                 "type": self.device.__class__.__name__,
-                "provider": "aws_braket",  # P1 fix: platform, not SDK
+                "provider": "aws_braket",
             }
 
             self.tracker.record["execute"] = {
@@ -555,7 +555,7 @@ class TrackedDevice:
                 task_ids=[],  # Batch doesn't have a single ID upfront
                 submitted_at=submitted_at,
                 circuit_hash=circuit_hash,
-                execution_index=exec_count,  # P0 fix: pass actual execution index
+                execution_index=exec_count,
                 options=options,
             )
 
@@ -579,7 +579,7 @@ class TrackedDevice:
             self.tracker.record["backend"] = {
                 "name": device_name,
                 "type": self.device.__class__.__name__,
-                "provider": "aws_braket",  # P1 fix: platform, not SDK
+                "provider": "aws_braket",
             }
 
             self.tracker.record["execute"] = {
@@ -709,7 +709,7 @@ class BraketAdapter:
         return {
             "name": get_backend_name(device),
             "type": device.__class__.__name__,
-            "provider": "aws_braket",  # P1 fix: platform, not SDK
+            "provider": "aws_braket",
         }
 
     def wrap_executor(

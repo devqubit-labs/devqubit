@@ -4,13 +4,18 @@
 """
 Utility functions for Braket adapter.
 
-Provides version utilities and common helpers used across
-the adapter components.
+Provides version utilities, bitstring canonicalization, and common helpers
+used across the adapter components.
 """
 
 from __future__ import annotations
 
 from typing import Any
+
+
+# =============================================================================
+# Version utilities
+# =============================================================================
 
 
 def braket_version() -> str:
@@ -32,13 +37,90 @@ def braket_version() -> str:
 
 
 def get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
+    """
+    Get the devqubit-braket adapter version.
+
+    Returns
+    -------
+    str
+        Adapter version string, or "unknown" if not installed.
+    """
     try:
         from importlib.metadata import version
 
         return version("devqubit-braket")
     except Exception:
         return "unknown"
+
+
+# =============================================================================
+# Bitstring canonicalization
+# =============================================================================
+
+
+def reverse_bitstring(bitstring: str) -> str:
+    """
+    Reverse a bitstring (convert between big-endian and little-endian).
+
+    Braket uses big-endian (qubit 0 = leftmost bit, cbit0_left).
+    UEC canonical format is little-endian (qubit 0 = rightmost bit, cbit0_right).
+
+    Parameters
+    ----------
+    bitstring : str
+        Input bitstring (e.g., "011").
+
+    Returns
+    -------
+    str
+        Reversed bitstring (e.g., "110").
+
+    Examples
+    --------
+    >>> reverse_bitstring("011")
+    '110'
+    >>> reverse_bitstring("00")
+    '00'
+    """
+    return bitstring[::-1]
+
+
+def canonicalize_counts(
+    counts: dict[str, int],
+    *,
+    reverse: bool = True,
+) -> dict[str, int]:
+    """
+    Transform measurement counts to canonical UEC format.
+
+    Braket returns counts with big-endian bitstrings (cbit0_left).
+    UEC canonical format uses little-endian (cbit0_right, like Qiskit).
+
+    Parameters
+    ----------
+    counts : dict
+        Measurement counts from Braket {bitstring: count}.
+    reverse : bool, optional
+        Whether to reverse bitstrings to canonical format. Default True.
+
+    Returns
+    -------
+    dict
+        Counts with canonicalized bitstrings.
+
+    Examples
+    --------
+    >>> canonicalize_counts({"01": 50, "10": 50})
+    {'10': 50, '01': 50}
+    """
+    if not reverse:
+        return counts
+    return {reverse_bitstring(k): v for k, v in counts.items()}
+
+
+# =============================================================================
+# Device utilities
+# =============================================================================
 
 
 def get_backend_name(device: Any) -> str:
@@ -95,6 +177,11 @@ def extract_task_id(task: Any) -> str | None:
         except Exception:
             continue
     return None
+
+
+# =============================================================================
+# Conversion utilities
+# =============================================================================
 
 
 def to_float(x: Any) -> float | None:

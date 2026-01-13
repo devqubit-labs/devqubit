@@ -4,16 +4,30 @@
 """
 Result processing for Braket adapter.
 
-Provides functions for extracting measurement counts from
-Braket task results, including Program Set results.
+Provides functions for extracting measurement counts from Braket task results,
+including Program Set results, with optional canonicalization to UEC format.
+
+Notes
+-----
+Braket uses big-endian bit ordering (qubit 0 = leftmost bit, cbit0_left).
+UEC canonical format uses little-endian (qubit 0 = rightmost bit, cbit0_right).
+
+When extracting counts, use ``canonicalize=True`` to transform bitstrings
+to the canonical format for cross-SDK comparison.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from devqubit_braket.utils import canonicalize_counts
 
-def _to_counts_dict(x: Any) -> dict[str, int] | None:
+
+def _to_counts_dict(
+    x: Any,
+    *,
+    canonicalize: bool = False,
+) -> dict[str, int] | None:
     """
     Convert a Counter/dict-like object into a {bitstring: count} dict.
 
@@ -21,6 +35,8 @@ def _to_counts_dict(x: Any) -> dict[str, int] | None:
     ----------
     x : Any
         Counter-like or dict-like object.
+    canonicalize : bool
+        If True, reverse bitstrings to canonical cbit0_right format.
 
     Returns
     -------
@@ -31,12 +47,19 @@ def _to_counts_dict(x: Any) -> dict[str, int] | None:
         return None
     try:
         d = dict(x)
-        return {str(k): int(v) for k, v in d.items()}
+        result = {str(k): int(v) for k, v in d.items()}
+        if canonicalize:
+            result = canonicalize_counts(result)
+        return result
     except Exception:
         return None
 
 
-def extract_measurement_counts(result: Any) -> dict[str, int] | None:
+def extract_measurement_counts(
+    result: Any,
+    *,
+    canonicalize: bool = False,
+) -> dict[str, int] | None:
     """
     Extract measurement counts from a single Braket result-like object.
 
@@ -44,6 +67,9 @@ def extract_measurement_counts(result: Any) -> dict[str, int] | None:
     ----------
     result : Any
         Braket result object (e.g., GateModelQuantumTaskResult).
+    canonicalize : bool
+        If True, reverse bitstrings to canonical cbit0_right format.
+        Default False (preserves Braket's native big-endian format).
 
     Returns
     -------
@@ -64,7 +90,7 @@ def extract_measurement_counts(result: Any) -> dict[str, int] | None:
             if hasattr(result, key):
                 v = getattr(result, key)
                 v = v() if callable(v) else v
-                out = _to_counts_dict(v)
+                out = _to_counts_dict(v, canonicalize=canonicalize)
                 if out is not None:
                     return out
         except Exception:
@@ -73,7 +99,11 @@ def extract_measurement_counts(result: Any) -> dict[str, int] | None:
     return None
 
 
-def extract_counts_payload(result: Any) -> dict[str, Any] | None:
+def extract_counts_payload(
+    result: Any,
+    *,
+    canonicalize: bool = False,
+) -> dict[str, Any] | None:
     """
     Extract a devqubit-style counts payload from a Braket result.
 
@@ -83,6 +113,9 @@ def extract_counts_payload(result: Any) -> dict[str, Any] | None:
         Braket result object. Supports:
         - GateModelQuantumTaskResult-like objects (single executable)
         - ProgramSetQuantumTaskResult-like objects (multiple executables)
+    canonicalize : bool
+        If True, reverse bitstrings to canonical cbit0_right format.
+        Default False (preserves Braket's native big-endian format).
 
     Returns
     -------
@@ -121,10 +154,12 @@ def extract_counts_payload(result: Any) -> dict[str, Any] | None:
                     continue
                 for executable_index, measured in enumerate(inner_entries):
                     counts_obj = getattr(measured, "counts", None)
-                    counts = _to_counts_dict(counts_obj)
+                    counts = _to_counts_dict(counts_obj, canonicalize=canonicalize)
                     if counts is None:
                         # Fallback: see if measured itself has measurement_counts
-                        counts = extract_measurement_counts(measured)
+                        counts = extract_measurement_counts(
+                            measured, canonicalize=canonicalize
+                        )
 
                     if counts is None:
                         continue
@@ -146,7 +181,7 @@ def extract_counts_payload(result: Any) -> dict[str, Any] | None:
 
     # Single-result fallback
     try:
-        counts = extract_measurement_counts(result)
+        counts = extract_measurement_counts(result, canonicalize=canonicalize)
     except Exception:
         counts = None
 

@@ -6,6 +6,16 @@ Envelope creation for Braket adapter.
 
 Creates UEC 1.0 compliant ExecutionEnvelopes with proper snapshots
 for device, program, execution, and result data.
+
+Notes
+-----
+Braket uses big-endian bit ordering (qubit 0 = leftmost bit).
+In UEC terminology this is ``cbit0_left``. The canonical UEC format
+is ``cbit0_right`` (little-endian, like Qiskit).
+
+By default, this adapter preserves Braket's native format and records
+``transformed=False`` in CountsFormat. Consumers should check the
+``bit_order`` field and transform if needed for cross-SDK comparison.
 """
 
 from __future__ import annotations
@@ -61,22 +71,28 @@ def _get_braket_counts_format(transformed: bool = False) -> dict[str, Any]:
     Get CountsFormat metadata for Braket results.
 
     Braket uses big-endian bit order (qubit 0 = leftmost bit),
-    which corresponds to cbit0_left in UEC canonical terminology.
+    which corresponds to ``cbit0_left`` in UEC canonical terminology.
 
     Parameters
     ----------
     transformed : bool
-        Whether counts have been transformed to canonical cbit0_right format.
+        Whether counts have been transformed to canonical ``cbit0_right`` format.
+        Default False - Braket's native format is preserved.
 
     Returns
     -------
     dict
         CountsFormat as dictionary for JSON serialization.
+
+    Notes
+    -----
+    UEC canonical format is ``cbit0_right`` (like Qiskit). When ``transformed=False``,
+    consumers must reverse bitstrings themselves for cross-SDK comparison.
     """
     return CountsFormat(
         source_sdk="braket",
         source_key_format="bitstring",
-        bit_order="cbit0_left",  # Braket native is big-endian
+        bit_order="cbit0_left",  # Braket native: big-endian
         transformed=transformed,
     ).to_dict()
 
@@ -222,7 +238,7 @@ def create_execution_snapshot(
     submitted_at : str
         ISO 8601 submission timestamp.
     execution_index : int
-        Which execution this is (1-indexed). NOT the count of tasks.
+        Which execution this is (1-indexed sequence number).
     options : dict, optional
         Additional execution options.
 
@@ -234,8 +250,8 @@ def create_execution_snapshot(
     return ExecutionSnapshot(
         submitted_at=submitted_at,
         shots=shots,
-        job_ids=task_ids,  # UEC 1.0 uses job_ids not task_ids
-        execution_count=execution_index,  # P0 fix: this is the Nth execution, not len(task_ids)
+        job_ids=task_ids,
+        execution_count=execution_index,
         transpilation=TranspilationInfo(
             mode=TranspilationMode.MANAGED,
             transpiled_by="provider",
@@ -314,7 +330,7 @@ def create_result_snapshot(
                     )
                 )
 
-            # Success = we have at least one item with non-empty counts
+            # Success = at least one item with non-empty counts
             success = any(item.success for item in items)
             status = "completed" if success else "partial"
 
@@ -378,7 +394,7 @@ def create_envelope(
     circuit_hash : str or None
         Circuit hash.
     execution_index : int
-        Which execution this is (1-indexed).
+        Which execution this is (1-indexed sequence number).
     options : dict, optional
         Execution options.
 
@@ -398,12 +414,11 @@ def create_envelope(
         logger.warning(
             "Failed to create device snapshot: %s. Using minimal snapshot.", e
         )
-        # Create minimal snapshot on failure
         device_snapshot = DeviceSnapshot(
             captured_at=utc_now_iso(),
             backend_name=device_name,
-            backend_type="simulator",  # P1 fix: use valid enum value
-            provider="aws_braket",  # P1 fix: platform, not SDK
+            backend_type="simulator",
+            provider="aws_braket",
             sdk_versions={"braket": braket_version()},
         )
 
@@ -448,13 +463,13 @@ def create_envelope(
         adapter_version=get_adapter_version(),
         sdk="braket",
         sdk_version=sdk_version,
-        frontends=["braket-sdk"],  # P1 fix: proper frontend naming
+        frontends=["braket-sdk"],
     )
 
-    # Create pending result (UEC 1.0 requires result field, cannot be None)
+    # Create pending result (UEC 1.0 requires result field)
     pending_result = ResultSnapshot(
         success=False,
-        status="failed",  # Valid status - will be updated by finalize_envelope
+        status="failed",  # Will be updated by finalize_envelope
         items=[],
         metadata={"state": "pending"},
     )

@@ -86,7 +86,7 @@ class TestBraketAdapterUECContract:
 
         # Tags/params are part of the adapter contract (only set on logged executions)
         assert loaded.record["data"]["tags"]["provider"] == "aws_braket"
-        assert loaded.record["data"]["tags"]["adapter"] == "braket"
+        assert loaded.record["data"]["tags"]["adapter"] == "devqubit-braket"
         assert loaded.record["data"]["params"]["shots"] == shots
         assert loaded.record["data"]["params"]["num_circuits"] == 1
 

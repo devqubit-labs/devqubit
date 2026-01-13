@@ -133,7 +133,7 @@ class TrackedTask:
                         result=None,
                         device_name=self.device_name,
                         shots=self.shots,
-                        error=e,  # P0 fix: pass exception object, not string
+                        error=e,
                     )
                 except Exception as log_err:
                     logger.warning(
@@ -141,7 +141,7 @@ class TrackedTask:
                         self.device_name,
                         log_err,
                     )
-            # P0 fix: re-raise original exception, don't wrap in RuntimeError
+
             raise
 
         # Log successful result
@@ -255,7 +255,7 @@ class TrackedTaskBatch:
                         None,
                         self.device_name,
                         self.shots,
-                        error=e,  # P0 fix: pass exception object
+                        error=e,
                     )
                 except Exception as log_err:
                     logger.warning(
@@ -263,7 +263,7 @@ class TrackedTaskBatch:
                         self.device_name,
                         log_err,
                     )
-            # P0 fix: re-raise original exception
+
             raise
 
         # Check for partial failures (None in results)
