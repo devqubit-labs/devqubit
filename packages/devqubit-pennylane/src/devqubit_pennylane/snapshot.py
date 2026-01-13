@@ -45,7 +45,10 @@ _REMOTE_RESOLUTION_TIMEOUT = 10.0
 
 def _detect_execution_provider(device: Any) -> str:
     """
-    Detect the execution provider from device name/type.
+    Detect the PHYSICAL execution provider from device name/type.
+
+    Per UEC, provider should be the physical execution platform,
+    not the SDK name.
 
     Parameters
     ----------
@@ -55,13 +58,73 @@ def _detect_execution_provider(device: Any) -> str:
     Returns
     -------
     str
-        Provider identifier: 'braket', 'qiskit', 'pennylane', or 'unknown'.
+        Physical provider identifier: 'local', 'aws_braket', 'ibm_quantum'.
     """
     device_name = get_device_name(device).lower()
     short_name = getattr(device, "short_name", "").lower()
     module = getattr(device, "__module__", "").lower()
 
-    # Check for Braket plugin
+    # Check for Braket plugin -> physical provider is AWS or local
+    if (
+        device_name.startswith("braket.")
+        or short_name.startswith("braket.")
+        or "braket" in module
+    ):
+        # Check if it's a local simulator
+        if "local" in device_name or "localsimulator" in module:
+            return "local"
+        return "aws_braket"
+
+    # Check for Qiskit plugin -> physical provider depends on backend
+    if (
+        device_name.startswith("qiskit.")
+        or short_name.startswith("qiskit.")
+        or "qiskit" in module
+    ):
+        # Check backend for IBM quantum vs local
+        backend = getattr(device, "backend", None) or getattr(device, "_backend", None)
+        if backend:
+            backend_name = str(getattr(backend, "name", "")).lower()
+            if "ibm_" in backend_name or "ibmq" in backend_name:
+                return "ibm_quantum"
+            if "aer" in backend_name or "fake" in backend_name:
+                return "local"
+        return "ibm_quantum"  # Default for Qiskit plugin
+
+    # PennyLane native devices are always local simulators
+    if any(
+        pattern in device_name
+        for pattern in ("default.", "lightning.", "numpy", "mixed", "qutrit")
+    ):
+        return "local"
+
+    # Check module for other hints
+    if "pennylane" in module:
+        return "local"
+
+    return "local"  # Default to local
+
+
+def _detect_sdk_frontend(device: Any) -> str:
+    """
+    Detect the SDK frontend from device name/type.
+
+    This returns the SDK name for tracking purposes (goes in producer.frontends).
+
+    Parameters
+    ----------
+    device : Any
+        PennyLane device.
+
+    Returns
+    -------
+    str
+        SDK identifier: 'braket', 'qiskit', 'pennylane'.
+    """
+    device_name = get_device_name(device).lower()
+    short_name = getattr(device, "short_name", "").lower()
+    module = getattr(device, "__module__", "").lower()
+
     if (
         device_name.startswith("braket.")
         or short_name.startswith("braket.")
@@ -69,7 +132,6 @@ def _detect_execution_provider(device: Any) -> str:
     ):
         return "braket"
 
-    # Check for Qiskit plugin
     if (
         device_name.startswith("qiskit.")
         or short_name.startswith("qiskit.")
@@ -77,18 +139,7 @@ def _detect_execution_provider(device: Any) -> str:
     ):
         return "qiskit"
 
-    # Check for PennyLane native devices
-    if any(
-        pattern in device_name
-        for pattern in ("default.", "lightning.", "numpy", "mixed", "qutrit")
-    ):
-        return "pennylane"
-
-    # Check module for other hints
-    if "pennylane" in module:
-        return "pennylane"
-
-    return "unknown"
+    return "pennylane"
 
 
 def _detect_backend_type(device: Any, provider: str) -> str:
@@ -100,7 +151,7 @@ def _detect_backend_type(device: Any, provider: str) -> str:
     device : Any
         PennyLane device.
     provider : str
-        Detected provider.
+        Physical provider (local, aws_braket, ibm_quantum).
 
     Returns
     -------
@@ -109,12 +160,12 @@ def _detect_backend_type(device: Any, provider: str) -> str:
     """
     device_name = get_device_name(device).lower()
 
-    # PennyLane native devices are always simulators
-    if provider == "pennylane":
+    # Local provider is always simulator
+    if provider == "local":
         return "simulator"
 
-    # Braket: check for simulator indicators
-    if provider == "braket":
+    # AWS Braket: check for simulator indicators
+    if provider == "aws_braket":
         if "local" in device_name or "simulator" in device_name:
             return "simulator"
         # Check ARN for simulator service
@@ -123,8 +174,8 @@ def _detect_backend_type(device: Any, provider: str) -> str:
             return "simulator"
         return "hardware"
 
-    # Qiskit: check for simulator indicators
-    if provider == "qiskit":
+    # IBM Quantum: check for simulator indicators
+    if provider == "ibm_quantum":
         if "aer" in device_name or "simulator" in device_name or "fake" in device_name:
             return "simulator"
         # Check backend object
@@ -541,7 +592,9 @@ def _build_frontend_config(device: Any) -> FrontendConfig:
     )
 
 
-def _build_raw_properties(device: Any, provider: str) -> dict[str, Any]:
+def _build_raw_properties(
+    device: Any, provider: str, sdk_frontend: str
+) -> dict[str, Any]:
     """
     Build the complete raw_properties dictionary for a device.
 
@@ -550,7 +603,9 @@ def _build_raw_properties(device: Any, provider: str) -> dict[str, Any]:
     device : Any
         PennyLane device instance.
     provider : str
-        Detected execution provider.
+        Physical execution provider (local, aws_braket, ibm_quantum).
+    sdk_frontend : str
+        SDK frontend (braket, qiskit, pennylane).
 
     Returns
     -------
@@ -562,6 +617,7 @@ def _build_raw_properties(device: Any, provider: str) -> dict[str, Any]:
         "device_module": getattr(device, "__module__", ""),
         "short_name": getattr(device, "short_name", None),
         "execution_provider": provider,
+        "sdk_frontend": sdk_frontend,
     }
 
     # Extract wire info
@@ -576,10 +632,10 @@ def _build_raw_properties(device: Any, provider: str) -> dict[str, Any]:
     raw_properties.update(_extract_seed(device))
     raw_properties.update(_extract_capabilities(device))
 
-    # Extract provider-specific properties
-    if provider == "braket":
+    # Extract SDK-specific properties based on frontend
+    if sdk_frontend == "braket":
         raw_properties.update(_extract_braket_info(device))
-    elif provider == "qiskit":
+    elif sdk_frontend == "qiskit":
         raw_properties.update(_extract_qiskit_info(device))
 
     return raw_properties
@@ -641,7 +697,7 @@ def create_device_snapshot(
     >>> dev = qml.device("braket.aws.qubit", wires=2, device_arn="...")
     >>> snapshot = create_device_snapshot(dev)
     >>> snapshot.provider
-    'braket'
+    'aws_braket'
     """
     if device is None:
         raise ValueError("Cannot create device snapshot from None device")
@@ -650,12 +706,18 @@ def create_device_snapshot(
     backend_name = get_device_name(device)
     sdk_versions = collect_sdk_versions()
 
-    # Detect execution provider
+    # Detect physical execution provider and SDK frontend
     try:
         provider = _detect_execution_provider(device)
     except Exception as e:
         logger.debug("Failed to detect execution provider: %s", e)
-        provider = "unknown"
+        provider = "local"
+
+    try:
+        sdk_frontend = _detect_sdk_frontend(device)
+    except Exception as e:
+        logger.debug("Failed to detect SDK frontend: %s", e)
+        sdk_frontend = "pennylane"
 
     try:
         backend_type = _detect_backend_type(device, provider)
@@ -670,11 +732,11 @@ def create_device_snapshot(
         logger.debug("Failed to build frontend config: %s", e)
         frontend = None
 
-    # Try to resolve execution backend for Braket/Qiskit
+    # Try to resolve execution backend for Braket/Qiskit (based on SDK frontend)
     resolved_backend: DeviceSnapshot | None = None
     backend_id: str | None = None
 
-    if provider == "braket":
+    if sdk_frontend == "braket":
         try:
             resolved_backend = _resolve_braket_backend(
                 device, resolve_remote=resolve_remote_backend
@@ -691,7 +753,7 @@ def create_device_snapshot(
         except Exception:
             pass
 
-    elif provider == "qiskit":
+    elif sdk_frontend == "qiskit":
         try:
             resolved_backend = _resolve_qiskit_backend(device)
         except Exception as e:
@@ -738,7 +800,7 @@ def create_device_snapshot(
     raw_properties_ref = None
     if tracker is not None:
         try:
-            raw_properties = _build_raw_properties(device, provider)
+            raw_properties = _build_raw_properties(device, provider, sdk_frontend)
             raw_properties_ref = tracker.log_json(
                 name="device_raw_properties",
                 obj=raw_properties,
@@ -781,7 +843,8 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
     -------
     dict or None
         Dictionary with resolved backend information:
-        - ``provider``: Execution provider (braket/qiskit/pennylane)
+        - ``provider``: Physical execution provider (local/aws_braket/ibm_quantum)
+        - ``sdk_frontend``: SDK frontend (braket/qiskit/pennylane)
         - ``backend_name``: Device name
         - ``backend_id``: Stable unique ID (ARN for Braket, etc.)
         - ``backend_type``: Type (hardware/simulator)
@@ -795,7 +858,7 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
     >>> dev = qml.device("braket.aws.qubit", wires=2, device_arn="...")
     >>> info = resolve_pennylane_backend(dev)
     >>> info["provider"]
-    'braket'
+    'aws_braket'
     """
     if device is None:
         return None
@@ -803,7 +866,12 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
     try:
         provider = _detect_execution_provider(device)
     except Exception:
-        provider = "unknown"
+        provider = "local"
+
+    try:
+        sdk_frontend = _detect_sdk_frontend(device)
+    except Exception:
+        sdk_frontend = "pennylane"
 
     try:
         backend_name = get_device_name(device)
@@ -817,13 +885,15 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
 
     result: dict[str, Any] = {
         "provider": provider,
+        "sdk_frontend": sdk_frontend,
         "backend_name": backend_name,
         "backend_id": None,
         "backend_type": backend_type,
         "backend_obj": None,
     }
 
-    if provider == "braket":
+    # Use sdk_frontend for backend-specific resolution
+    if sdk_frontend == "braket":
         try:
             arn = getattr(device, "device_arn", None) or getattr(
                 device, "_device_arn", None
@@ -833,7 +903,7 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
         except Exception:
             pass
 
-    elif provider == "qiskit":
+    elif sdk_frontend == "qiskit":
         try:
             backend = getattr(device, "backend", None) or getattr(
                 device, "_backend", None

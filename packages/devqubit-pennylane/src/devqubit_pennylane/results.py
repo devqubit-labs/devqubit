@@ -11,18 +11,30 @@ following the devqubit Uniform Execution Contract (UEC).
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 from devqubit_engine.uec.result import (
-    NormalizedCounts,
+    CountsFormat,
     NormalizedExpectation,
+    ResultError,
+    ResultItem,
     ResultSnapshot,
 )
-from devqubit_engine.uec.types import ResultType
 
 
 logger = logging.getLogger(__name__)
+
+
+# Internal dataclass for intermediate counts extraction
+@dataclass
+class _CountsData:
+    """Internal representation for extracted counts."""
+
+    circuit_index: int
+    counts: dict[str, int]
+    shots: int | None
 
 
 def _result_type_for_tape(tape: Any) -> str:
@@ -102,41 +114,6 @@ def extract_result_type(tapes: list[Any]) -> str:
     if len(types) == 1:
         return next(iter(types))
     return "mixed"
-
-
-def _map_result_type_to_enum(result_type: str | None) -> ResultType:
-    """
-    Map PennyLane result type string to UEC ResultType enum.
-
-    Parameters
-    ----------
-    result_type : str or None
-        PennyLane result type string.
-
-    Returns
-    -------
-    ResultType
-        UEC result type enum.
-    """
-    if result_type is None:
-        return ResultType.OTHER
-
-    rt_lower = result_type.lower()
-
-    if "expectation" in rt_lower or "expval" in rt_lower:
-        return ResultType.EXPECTATION
-    elif "sample" in rt_lower:
-        return ResultType.SAMPLES
-    elif "counts" in rt_lower:
-        return ResultType.COUNTS
-    elif "probability" in rt_lower or "probs" in rt_lower:
-        return ResultType.QUASI_DIST
-    elif "state" in rt_lower:
-        return ResultType.STATEVECTOR
-    elif "variance" in rt_lower or "var" in rt_lower:
-        return ResultType.EXPECTATION  # Variance is expectation-like
-    else:
-        return ResultType.OTHER
 
 
 def _to_numpy(arr: Any) -> np.ndarray | None:
@@ -304,7 +281,7 @@ def _extract_expectation_values(
 def _extract_sample_counts(
     results: Any,
     num_circuits: int = 1,
-) -> list[NormalizedCounts]:
+) -> list[_CountsData]:
     """
     Extract sample counts from PennyLane results.
 
@@ -320,7 +297,7 @@ def _extract_sample_counts(
 
     Returns
     -------
-    list of NormalizedCounts
+    list of _CountsData
         Normalized counts.
     """
     if results is None:
@@ -328,14 +305,14 @@ def _extract_sample_counts(
 
     from collections import Counter
 
-    counts_list: list[NormalizedCounts] = []
+    counts_list: list[_CountsData] = []
 
     try:
         # Case 1: Already counts-like (dict)
         if isinstance(results, dict):
             counts_dict = {str(k): int(v) for k, v in results.items()}
             counts_list.append(
-                NormalizedCounts(
+                _CountsData(
                     circuit_index=0,
                     counts=counts_dict,
                     shots=sum(counts_dict.values()),
@@ -352,7 +329,7 @@ def _extract_sample_counts(
                 counter = Counter(bitstrings)
                 counts_dict = dict(counter)
                 counts_list.append(
-                    NormalizedCounts(
+                    _CountsData(
                         circuit_index=0,
                         counts=counts_dict,
                         shots=len(bitstrings),
@@ -365,7 +342,7 @@ def _extract_sample_counts(
                 counter = Counter(bitstrings)
                 counts_dict = dict(counter)
                 counts_list.append(
-                    NormalizedCounts(
+                    _CountsData(
                         circuit_index=0,
                         counts=counts_dict,
                         shots=len(bitstrings),
@@ -380,7 +357,7 @@ def _extract_sample_counts(
                     # Already counts
                     counts_dict = {str(k): int(v) for k, v in res.items()}
                     counts_list.append(
-                        NormalizedCounts(
+                        _CountsData(
                             circuit_index=i,
                             counts=counts_dict,
                             shots=sum(counts_dict.values()),
@@ -402,7 +379,7 @@ def _extract_sample_counts(
                         counter = Counter(bitstrings)
                         counts_dict = dict(counter)
                         counts_list.append(
-                            NormalizedCounts(
+                            _CountsData(
                                 circuit_index=i,
                                 counts=counts_dict,
                                 shots=len(bitstrings),
@@ -418,7 +395,7 @@ def _extract_sample_counts(
 def _extract_probabilities(
     results: Any,
     num_circuits: int = 1,
-) -> list[NormalizedCounts]:
+) -> list[_CountsData]:
     """
     Extract probabilities from PennyLane results as pseudo-counts.
 
@@ -433,13 +410,13 @@ def _extract_probabilities(
 
     Returns
     -------
-    list of NormalizedCounts
+    list of _CountsData
         Normalized probabilities as counts (values sum to ~1).
     """
     if results is None:
         return []
 
-    counts_list: list[NormalizedCounts] = []
+    counts_list: list[_CountsData] = []
 
     try:
         arr = _to_numpy(results)
@@ -455,7 +432,7 @@ def _extract_probabilities(
             }
             if counts_dict:
                 counts_list.append(
-                    NormalizedCounts(
+                    _CountsData(
                         circuit_index=0,
                         counts=counts_dict,
                         shots=None,  # Probabilities don't have shots
@@ -477,7 +454,7 @@ def _extract_probabilities(
                     }
                     if counts_dict:
                         counts_list.append(
-                            NormalizedCounts(
+                            _CountsData(
                                 circuit_index=i,
                                 counts=counts_dict,
                                 shots=None,
@@ -503,6 +480,8 @@ def build_result_snapshot(
     """
     Build a ResultSnapshot from PennyLane execution results.
 
+    Uses UEC 1.0 structure with items[] for per-circuit results.
+
     Parameters
     ----------
     results : Any
@@ -523,33 +502,80 @@ def build_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot.
-
-    Examples
-    --------
-    >>> snapshot = build_result_snapshot(
-    ...     [0.5, -0.3],
-    ...     result_type="Expectation",
-    ...     num_circuits=2,
-    ... )
-    >>> snapshot.result_type
-    ResultType.EXPECTATION
+        Structured result snapshot following UEC 1.0.
     """
-    uec_result_type = _map_result_type_to_enum(result_type)
+    # Determine status
+    status = "completed" if success else "failed"
 
-    # Extract normalized results based on type
-    counts: list[NormalizedCounts] = []
-    expectations: list[NormalizedExpectation] = []
+    # Build error object if execution failed
+    error: ResultError | None = None
+    if not success and error_info:
+        error = ResultError(
+            type=error_info.get("type", "UnknownError"),
+            message=error_info.get("message", "Unknown error"),
+        )
+
+    # Build items list (UEC 1.0)
+    items: list[ResultItem] = []
 
     if success and results is not None:
         try:
-            if uec_result_type == ResultType.EXPECTATION:
+            rt_lower = (result_type or "").lower()
+
+            # Handle expectation values
+            if "expectation" in rt_lower or "expval" in rt_lower or "var" in rt_lower:
                 expectations = _extract_expectation_values(results, num_circuits)
-            elif uec_result_type in (ResultType.COUNTS, ResultType.SAMPLES):
-                counts = _extract_sample_counts(results, num_circuits)
-            elif uec_result_type == ResultType.QUASI_DIST:
-                counts = _extract_probabilities(results, num_circuits)
-            # For STATEVECTOR and OTHER, we just store raw results
+                for exp in expectations:
+                    items.append(
+                        ResultItem(
+                            item_index=exp.circuit_index,
+                            success=True,
+                            expectation=exp,
+                        )
+                    )
+
+            # Handle counts/samples
+            elif "counts" in rt_lower or "sample" in rt_lower:
+                counts_list = _extract_sample_counts(results, num_circuits)
+                # PennyLane counts format
+                counts_format = CountsFormat(
+                    source_sdk="pennylane",
+                    source_key_format="pennylane_bitstring",
+                    bit_order="cbit0_right",  # Canonical UEC format
+                    transformed=False,
+                )
+                for cd in counts_list:
+                    items.append(
+                        ResultItem(
+                            item_index=cd.circuit_index,
+                            success=True,
+                            counts={
+                                "counts": cd.counts,
+                                "shots": cd.shots,
+                                "format": counts_format.to_dict(),
+                            },
+                        )
+                    )
+
+            # Handle probabilities
+            elif "probability" in rt_lower or "probs" in rt_lower:
+                probs_list = _extract_probabilities(results, num_circuits)
+                for cd in probs_list:
+                    items.append(
+                        ResultItem(
+                            item_index=cd.circuit_index,
+                            success=True,
+                            counts={
+                                "counts": cd.counts,
+                                "shots": None,  # Probabilities don't have shots
+                                "format": {
+                                    "source_sdk": "pennylane",
+                                    "source_key_format": "probability_distribution",
+                                },
+                            },
+                        )
+                    )
+
         except Exception as e:
             logger.debug("Failed to extract normalized results: %s", e)
 
@@ -557,16 +583,14 @@ def build_result_snapshot(
     metadata: dict[str, Any] = {
         "backend_name": backend_name,
         "pennylane_result_type": result_type,
+        "num_circuits": num_circuits,
     }
-    if error_info:
-        metadata["error"] = error_info
 
     return ResultSnapshot(
-        result_type=uec_result_type,
-        raw_result_ref=raw_result_ref,
-        counts=counts if counts else None,
-        expectations=expectations if expectations else None,
-        num_experiments=num_circuits,
         success=success,
+        status=status,
+        items=items,
+        error=error,
+        raw_result_ref=raw_result_ref,
         metadata=metadata,
     )
