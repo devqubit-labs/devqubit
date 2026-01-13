@@ -14,12 +14,12 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.core.snapshot import (
+from devqubit_engine.uec.result import (
     ExpectationValue,
     NormalizedCounts,
     ResultSnapshot,
-    ResultType,
 )
+from devqubit_engine.uec.types import ResultType
 from devqubit_engine.utils.serialization import to_jsonable
 
 
