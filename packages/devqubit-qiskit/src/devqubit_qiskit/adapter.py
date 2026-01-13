@@ -131,7 +131,7 @@ class TrackedJob:
         Retrieve job result and log artifacts.
 
         Always creates an envelope - even when job.result() fails.
-        This is a UEC requirement (P0): envelope must exist for
+        This is a UEC requirement: envelope must exist for
         failure cases to enable debugging and telemetry.
 
         Idempotent: calling result() multiple times will only log once.
@@ -158,7 +158,7 @@ class TrackedJob:
         try:
             result = self.job.result(*args, **kwargs)
         except Exception as exc:
-            # P0: ALWAYS create failure envelope before re-raising
+            # ALWAYS create failure envelope before re-raising
             if self.should_log_results and not self._result_logged:
                 self._result_logged = True
                 self._log_failure(exc)
