@@ -5,7 +5,6 @@
 
 import numpy as np
 import pennylane as qml
-from devqubit_engine.uec.types import ResultType
 from devqubit_pennylane.results import (
     _extract_probabilities,
     _extract_sample_counts,
@@ -124,7 +123,7 @@ class TestSampleToBitstring:
 
 
 class TestBuildResultSnapshot:
-    """Tests for result snapshot building."""
+    """Tests for result snapshot building (UEC 1.0 API)."""
 
     def test_expectations_two_circuits(self):
         """Builds expectation snapshot for multiple circuits."""
@@ -135,10 +134,13 @@ class TestBuildResultSnapshot:
             num_circuits=2,
         )
 
-        assert snap.result_type == ResultType.EXPECTATION
-        assert snap.expectations is not None
-        assert [e.circuit_index for e in snap.expectations] == [0, 1]
-        assert [e.value for e in snap.expectations] == [0.125, -0.5]
+        assert snap.status == "completed"
+        assert snap.success is True
+        assert len(snap.items) == 2
+        assert snap.items[0].item_index == 0
+        assert snap.items[1].item_index == 1
+        assert snap.items[0].expectation.value == 0.125
+        assert snap.items[1].expectation.value == -0.5
 
     def test_expectations_single_circuit(self):
         """Builds expectation snapshot for single circuit."""
@@ -149,11 +151,10 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.EXPECTATION
-        assert snap.expectations is not None
-        assert len(snap.expectations) == 1
-        assert snap.expectations[0].value == 0.5
-        assert snap.expectations[0].circuit_index == 0
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        assert snap.items[0].expectation.value == 0.5
+        assert snap.items[0].expectation.circuit_index == 0
 
     def test_expectations_multiple_observables_single_circuit(self):
         """Handles multiple observables for single circuit."""
@@ -165,10 +166,9 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.EXPECTATION
-        assert snap.expectations is not None
-        assert len(snap.expectations) == 3
-        assert [e.observable_index for e in snap.expectations] == [0, 1, 2]
+        assert snap.status == "completed"
+        assert len(snap.items) == 3
+        assert [item.expectation.observable_index for item in snap.items] == [0, 1, 2]
 
     def test_counts_dict(self):
         """Builds counts snapshot from dict."""
@@ -179,11 +179,11 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.COUNTS
-        assert snap.counts is not None and len(snap.counts) == 1
-        assert snap.counts[0].shots == 5
-        assert snap.counts[0].counts["0"] == 2
-        assert snap.counts[0].counts["1"] == 3
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        assert snap.items[0].counts["shots"] == 5
+        assert snap.items[0].counts["counts"]["0"] == 2
+        assert snap.items[0].counts["counts"]["1"] == 3
 
     def test_samples_bitstring_single_circuit(self):
         """
@@ -209,11 +209,11 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.SAMPLES
-        assert snap.counts is not None and len(snap.counts) == 1
-        assert snap.counts[0].shots == 4
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        assert snap.items[0].counts["shots"] == 4
 
-        counts = snap.counts[0].counts
+        counts = snap.items[0].counts["counts"]
         assert counts["00"] == 2
         assert counts["01"] == 1
         assert counts["11"] == 1
@@ -235,11 +235,11 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.SAMPLES
-        assert snap.counts is not None and len(snap.counts) == 1
-        assert snap.counts[0].shots == 5
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        assert snap.items[0].counts["shots"] == 5
 
-        counts = snap.counts[0].counts
+        counts = snap.items[0].counts["counts"]
         assert counts["1"] == 3
         assert counts["-1"] == 2
 
@@ -258,9 +258,9 @@ class TestBuildResultSnapshot:
             num_circuits=2,
         )
 
-        assert snap.counts is not None and len(snap.counts) == 2
-        assert snap.counts[0].shots == 3
-        assert snap.counts[1].shots == 2
+        assert len(snap.items) == 2
+        assert snap.items[0].counts["shots"] == 3
+        assert snap.items[1].counts["shots"] == 2
 
     def test_probabilities_single_circuit_flat(self):
         """
@@ -279,11 +279,11 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.QUASI_DIST
-        assert snap.counts is not None and len(snap.counts) == 1
-        assert snap.counts[0].shots is None  # Probabilities don't have shots
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        assert snap.items[0].counts["shots"] is None  # Probabilities don't have shots
 
-        dist = snap.counts[0].counts
+        dist = snap.items[0].counts["counts"]
         assert set(dist.keys()) == {"00", "01"}
         assert abs(dist["00"] - 0.5) < 1e-9
         assert abs(dist["01"] - 0.5) < 1e-9
@@ -303,20 +303,20 @@ class TestBuildResultSnapshot:
             num_circuits=2,
         )
 
-        assert snap.result_type == ResultType.QUASI_DIST
-        assert snap.counts is not None and len(snap.counts) == 2
+        assert snap.status == "completed"
+        assert len(snap.items) == 2
 
         # First circuit
-        assert abs(sum(snap.counts[0].counts.values()) - 1.0) < 1e-9
+        assert abs(sum(snap.items[0].counts["counts"].values()) - 1.0) < 1e-9
 
         # Second circuit (uniform)
-        dist1 = snap.counts[1].counts
+        dist1 = snap.items[1].counts["counts"]
         assert len(dist1) == 4
         for v in dist1.values():
             assert abs(v - 0.25) < 1e-9
 
     def test_unknown_type_goes_to_other(self):
-        """Unknown result type goes to OTHER."""
+        """Unknown result type stores in metadata."""
         snap = build_result_snapshot(
             "raw-result",
             result_type=None,
@@ -324,9 +324,9 @@ class TestBuildResultSnapshot:
             num_circuits=1,
         )
 
-        assert snap.result_type == ResultType.OTHER
-        assert snap.counts is None
-        assert snap.expectations is None
+        assert snap.status == "completed"
+        assert snap.metadata["pennylane_result_type"] is None
+        assert len(snap.items) == 0  # No structured items for unknown type
 
     def test_failed_execution_snapshot(self):
         """Builds snapshot for failed execution."""
@@ -340,9 +340,10 @@ class TestBuildResultSnapshot:
         )
 
         assert snap.success is False
-        assert snap.metadata["error"]["type"] == "RuntimeError"
-        assert snap.counts is None
-        assert snap.expectations is None
+        assert snap.status == "failed"
+        assert snap.error.type == "RuntimeError"
+        assert snap.error.message == "Backend failed"
+        assert len(snap.items) == 0
 
 
 class TestExtractProbabilities:
@@ -438,38 +439,41 @@ class TestEdgeCases:
         )
 
         assert snap.success is True
-        assert snap.expectations == [] or snap.expectations is None
+        assert len(snap.items) == 0  # No items for empty results
 
 
 class TestResultTypeMapping:
-    """Tests for result type to enum mapping."""
+    """Tests for result type stored in metadata."""
 
-    def test_sample_maps_to_samples(self):
-        """Sample type maps to SAMPLES enum."""
+    def test_sample_maps_correctly(self):
+        """Sample type is stored in metadata."""
         snap = build_result_snapshot(
             np.array([0, 1, 0]),
             result_type="Sample",
             backend_name="default.qubit",
             num_circuits=1,
         )
-        assert snap.result_type == ResultType.SAMPLES
+        assert snap.metadata["pennylane_result_type"] == "Sample"
+        assert snap.status == "completed"
 
-    def test_counts_maps_to_counts(self):
-        """Counts type maps to COUNTS enum."""
+    def test_counts_maps_correctly(self):
+        """Counts type is stored in metadata."""
         snap = build_result_snapshot(
             {"0": 5, "1": 5},
             result_type="Counts",
             backend_name="default.qubit",
             num_circuits=1,
         )
-        assert snap.result_type == ResultType.COUNTS
+        assert snap.metadata["pennylane_result_type"] == "Counts"
+        assert snap.status == "completed"
 
-    def test_state_maps_to_statevector(self):
-        """State type maps to STATEVECTOR enum."""
+    def test_state_maps_correctly(self):
+        """State type is stored in metadata."""
         snap = build_result_snapshot(
             np.array([0.707, 0.707]),
             result_type="State",
             backend_name="default.qubit",
             num_circuits=1,
         )
-        assert snap.result_type == ResultType.STATEVECTOR
+        assert snap.metadata["pennylane_result_type"] == "State"
+        assert snap.status == "completed"

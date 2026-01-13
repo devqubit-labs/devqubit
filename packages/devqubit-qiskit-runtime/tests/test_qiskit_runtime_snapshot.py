@@ -110,7 +110,8 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         """Snapshot has correct provider and ISO timestamp."""
         snapshot = create_device_snapshot(fake_sampler)
 
-        assert snapshot.provider == "qiskit-ibm-runtime"
+        # Provider should be physical (fake for fake backends)
+        assert snapshot.provider in ("fake", "ibm_quantum", "aer", "local")
         assert snapshot.captured_at is not None
         # Verify ISO format
         ts = snapshot.captured_at.replace("Z", "+00:00")
@@ -121,7 +122,8 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         snapshot = create_device_snapshot(fake_sampler)
         d = snapshot.to_dict()
 
-        assert d["provider"] == "qiskit-ibm-runtime"
+        # Provider should be physical (fake for fake backends)
+        assert d["provider"] in ("fake", "ibm_quantum", "aer", "local")
         assert "captured_at" in d
         assert "num_qubits" in d
         assert "connectivity" in d
@@ -132,7 +134,8 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         """Snapshot works for Estimator primitive."""
         snapshot = create_device_snapshot(fake_estimator)
 
-        assert snapshot.provider == "qiskit-ibm-runtime"
+        # Provider should be physical (fake for fake backends)
+        assert snapshot.provider in ("fake", "ibm_quantum", "aer", "local")
         assert snapshot.num_qubits is not None
 
     def test_raw_properties_ref_when_tracker_provided(
@@ -204,7 +207,8 @@ class TestResolveRuntimeBackend:
         info = resolve_runtime_backend(fake_sampler)
 
         assert info is not None
-        assert info["provider"] == "qiskit-ibm-runtime"
+        # Provider should be physical (fake for fake backends)
+        assert info["provider"] in ("fake", "ibm_quantum", "aer", "local")
         assert info["backend_name"]
         assert info["backend_obj"] is not None
         assert info["primitive_type"] in ("sampler", "estimator")

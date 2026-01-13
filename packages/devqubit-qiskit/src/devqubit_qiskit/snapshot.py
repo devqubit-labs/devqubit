@@ -281,7 +281,10 @@ def _detect_backend_type(backend: Any) -> str:
 
 def _detect_provider(backend: Any) -> str:
     """
-    Detect the provider for a Qiskit backend.
+    Detect the physical provider for a Qiskit backend.
+
+    This returns the physical backend provider (ibm_quantum, aer, etc.),
+    not the SDK. The SDK (qiskit) goes in producer.frontends[].
 
     Parameters
     ----------
@@ -291,18 +294,19 @@ def _detect_provider(backend: Any) -> str:
     Returns
     -------
     str
-        Provider identifier.
+        Provider identifier: "ibm_quantum", "aer", "fake", or "local".
     """
     module_name = type(backend).__module__.lower()
+    backend_name = get_backend_name(backend).lower()
 
+    if "ibm" in module_name or "ibm_" in backend_name:
+        return "ibm_quantum"
     if "qiskit_aer" in module_name or "aer" in module_name:
         return "aer"
     if "fake" in module_name:
         return "fake"
-    if "ibm" in module_name:
-        return "ibm_quantum"
 
-    return "qiskit"
+    return "local"
 
 
 def _get_sdk_versions() -> dict[str, str]:

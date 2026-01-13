@@ -409,7 +409,7 @@ def create_device_snapshot(
         captured_at=captured_at,
         backend_name=backend_name,
         backend_type=backend_type,
-        provider="braket",
+        provider="aws_braket",
         backend_id=backend_id,
         num_qubits=num_qubits,
         connectivity=connectivity,

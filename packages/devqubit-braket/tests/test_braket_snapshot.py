@@ -13,7 +13,7 @@ class TestSnapshotWithRealDevice:
         """Creates snapshot from real LocalSimulator."""
         snap = create_device_snapshot(local_simulator)
 
-        assert snap.provider == "braket"
+        assert snap.provider == "aws_braket"
         assert snap.backend_name is not None
         assert snap.backend_type == "simulator"  # Schema-valid value
         assert snap.captured_at is not None
@@ -30,8 +30,8 @@ class TestSnapshotWithRealDevice:
         snap = create_device_snapshot(local_simulator)
         d = snap.to_dict()
 
-        assert d["schema"] == "devqubit.device_snapshot/0.1"
-        assert d["provider"] == "braket"
+        assert d["schema"] == "devqubit.device_snapshot/1.0"
+        assert d["provider"] == "aws_braket"
         assert d["backend_type"] == "simulator"
         assert "sdk_versions" in d
         assert isinstance(d["sdk_versions"], dict)
@@ -274,7 +274,7 @@ class TestErrorHandling:
 
         snap = create_device_snapshot(NoPropsDevice())
 
-        assert snap.provider == "braket"
+        assert snap.provider == "aws_braket"
         assert snap.backend_type == "simulator"  # Default for non-AWS
         assert snap.num_qubits is None
         assert snap.connectivity is None
@@ -296,7 +296,7 @@ class TestErrorHandling:
 
         snap = create_device_snapshot(BrokenDevice())
 
-        assert snap.provider == "braket"
+        assert snap.provider == "aws_braket"
         assert snap.captured_at is not None
         # Should not crash, just return None for unavailable data
         assert snap.num_qubits is None

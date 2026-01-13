@@ -1,0 +1,533 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://devqubit.io/schema/devqubit.envelope.1.0.schema.json",
+  "title": "devqubit.envelope/1.0",
+  "description": "UEC ExecutionEnvelope schema with production requirements",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "envelope_id",
+    "created_at",
+    "producer",
+    "result"
+  ],
+  "properties": {
+    "schema": {
+      "const": "devqubit.envelope/1.0"
+    },
+    "envelope_id": {
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 40,
+      "description": "ULID or UUID identifier"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "RFC3339 timestamp"
+    },
+    "producer": {
+      "$ref": "#/$defs/producer_info"
+    },
+    "program": {
+      "$ref": "#/$defs/program_snapshot"
+    },
+    "device": {
+      "$ref": "#/$defs/device_snapshot"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution_snapshot"
+    },
+    "result": {
+      "$ref": "#/$defs/result_snapshot"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata (extensible)"
+    }
+  },
+  "$defs": {
+    "producer_info": {
+      "type": "object",
+      "description": "Complete SDK stack that produced this envelope",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "adapter",
+        "frontends"
+      ],
+      "properties": {
+        "name": {
+          "const": "devqubit"
+        },
+        "engine_version": {
+          "type": "string"
+        },
+        "adapter": {
+          "type": "string",
+          "description": "Adapter package name (devqubit-qiskit, devqubit-braket, etc.)"
+        },
+        "adapter_version": {
+          "type": "string"
+        },
+        "sdk": {
+          "type": "string",
+          "description": "Primary SDK (qiskit, braket-sdk, pennylane, cirq)"
+        },
+        "sdk_version": {
+          "type": "string"
+        },
+        "frontends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "SDK stack from highest to lowest level"
+        },
+        "build": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "commit": {
+              "type": "string"
+            },
+            "dirty": {
+              "type": "boolean"
+            },
+            "branch": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "program_snapshot": {
+      "type": "object",
+      "required": [
+        "schema"
+      ],
+      "properties": {
+        "schema": {
+          "const": "devqubit.program_snapshot/1.0"
+        },
+        "logical": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/program_artifact"
+          }
+        },
+        "physical": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/program_artifact"
+          }
+        },
+        "program_hash": {
+          "type": "string"
+        },
+        "num_circuits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transpilation": {
+          "type": "object"
+        }
+      }
+    },
+    "program_artifact": {
+      "type": "object",
+      "required": [
+        "ref",
+        "role",
+        "format"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["logical", "physical"]
+        },
+        "format": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
+        }
+      }
+    },
+    "device_snapshot": {
+      "type": "object",
+      "required": [
+        "schema"
+      ],
+      "properties": {
+        "schema": {
+          "const": "devqubit.device_snapshot/1.0"
+        },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "backend_name": {
+          "type": "string"
+        },
+        "backend_type": {
+          "type": "string",
+          "enum": ["hardware", "simulator", "emulator"]
+        },
+        "provider": {
+          "type": "string"
+        },
+        "num_qubits": {
+          "type": "integer"
+        },
+        "connectivity": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "native_gates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calibration": {
+          "type": "object"
+        },
+        "sdk_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "raw_properties_ref": {
+          "$ref": "#/$defs/artifact_ref"
+        }
+      }
+    },
+    "execution_snapshot": {
+      "type": "object",
+      "required": [
+        "schema"
+      ],
+      "properties": {
+        "schema": {
+          "const": "devqubit.execution_snapshot/1.0"
+        },
+        "submitted_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "shots": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "execution_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transpilation": {
+          "type": "object"
+        },
+        "options": {
+          "type": "object"
+        },
+        "sdk": {
+          "type": "string"
+        }
+      }
+    },
+    "result_snapshot": {
+      "type": "object",
+      "description": "Execution results with explicit success/status",
+      "required": [
+        "schema",
+        "success",
+        "status",
+        "items"
+      ],
+      "properties": {
+        "schema": {
+          "const": "devqubit.result_snapshot/1.0"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "failed",
+            "cancelled",
+            "partial"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/result_item"
+          },
+          "description": "Results as list (always present, may be empty)"
+        },
+        "error": {
+          "$ref": "#/$defs/result_error"
+        },
+        "raw_result_ref": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      }
+    },
+    "result_item": {
+      "type": "object",
+      "description": "Single item in batch results",
+      "required": [
+        "item_index",
+        "success"
+      ],
+      "properties": {
+        "item_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "counts": {
+          "$ref": "#/$defs/normalized_counts"
+        },
+        "quasi_probability": {
+          "$ref": "#/$defs/quasi_probability"
+        },
+        "expectation": {
+          "$ref": "#/$defs/normalized_expectation"
+        },
+        "raw_ref": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "error_message": {
+          "type": "string"
+        }
+      }
+    },
+    "normalized_counts": {
+      "type": "object",
+      "required": [
+        "counts",
+        "shots",
+        "format"
+      ],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Bitstring to count mapping"
+        },
+        "shots": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "format": {
+          "$ref": "#/$defs/counts_format"
+        }
+      }
+    },
+    "counts_format": {
+      "type": "object",
+      "description": "Metadata about how counts are formatted",
+      "required": [
+        "source_sdk",
+        "bit_order"
+      ],
+      "properties": {
+        "source_sdk": {
+          "type": "string",
+          "description": "SDK that produced the raw counts"
+        },
+        "source_key_format": {
+          "type": "string",
+          "description": "Original format identifier"
+        },
+        "bit_order": {
+          "type": "string",
+          "enum": [
+            "cbit0_right",
+            "cbit0_left"
+          ],
+          "description": "Canonical is cbit0_right (LSB on right)"
+        },
+        "transformed": {
+          "type": "boolean",
+          "description": "Whether adapter remapped keys"
+        },
+        "num_clbits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "registers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "quasi_probability": {
+      "type": "object",
+      "description": "Quasi-probability distribution from error mitigation",
+      "required": [
+        "distribution"
+      ],
+      "properties": {
+        "distribution": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bitstring to probability (may be negative)"
+        },
+        "precision": {
+          "type": "number",
+          "description": "Rounding precision applied"
+        },
+        "sum_probs": {
+          "type": "number"
+        },
+        "min_prob": {
+          "type": "number"
+        },
+        "max_prob": {
+          "type": "number"
+        }
+      }
+    },
+    "normalized_expectation": {
+      "type": "object",
+      "required": [
+        "circuit_index",
+        "observable_index",
+        "value"
+      ],
+      "properties": {
+        "circuit_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observable_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "value": {
+          "type": "number"
+        },
+        "variance": {
+          "type": "number"
+        },
+        "std_error": {
+          "type": "number"
+        },
+        "observable": {
+          "type": "string"
+        }
+      }
+    },
+    "result_error": {
+      "type": "object",
+      "description": "Structured error information",
+      "required": [
+        "type",
+        "message"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Error class name"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack_hash": {
+          "type": "string",
+          "description": "Hash of stack trace for grouping"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "details": {
+          "type": "object"
+        }
+      }
+    },
+    "artifact_ref": {
+      "type": "object",
+      "description": "Content-addressed artifact reference",
+      "required": [
+        "kind",
+        "digest",
+        "media_type",
+        "role"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Artifact type identifier"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest (sha256:hex)"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 3,
+          "description": "MIME type"
+        },
+        "role": {
+          "type": "string",
+          "description": "Logical role"
+        },
+        "meta": {
+          "type": "object",
+          "description": "Additional metadata"
+        }
+      }
+    }
+  }
+}

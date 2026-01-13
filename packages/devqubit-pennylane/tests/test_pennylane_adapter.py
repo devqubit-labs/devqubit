@@ -41,7 +41,8 @@ class TestPennyLaneAdapter:
         desc = PennyLaneAdapter().describe_executor(default_qubit)
 
         assert desc["name"] == "default.qubit"
-        assert desc["provider"] == "pennylane"
+        assert desc["provider"] == "local"  # Physical provider for native PL devices
+        assert desc["sdk"] == "pennylane"  # SDK frontend
         assert desc["num_wires"] == 2
 
     def test_describe_executor_shows_analytic_mode(self, default_qubit):
@@ -158,9 +159,11 @@ class TestTrackedExecution:
         loaded = registry.load(run.run_id)
 
         assert loaded.status == "FINISHED"
-        assert loaded.record["data"]["tags"]["provider"] == "pennylane"
+        assert loaded.record["data"]["tags"]["provider"] == "local"  # Physical provider
+        assert loaded.record["data"]["tags"]["sdk"] == "pennylane"  # SDK frontend
         assert loaded.record["backend"]["name"] == "default.qubit"
-        assert loaded.record["backend"]["provider"] == "pennylane"
+        assert loaded.record["backend"]["provider"] == "local"  # Physical provider
+        assert loaded.record["backend"]["sdk"] == "pennylane"  # SDK frontend
 
     def test_execution_count_incremented(self, store, registry, default_qubit):
         """Execution count is incremented correctly."""

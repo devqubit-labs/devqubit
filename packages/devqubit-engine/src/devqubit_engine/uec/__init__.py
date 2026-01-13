@@ -4,14 +4,25 @@
 """
 Uniform Execution Contract (UEC) snapshot schemas.
 
-This module provides standardized types for capturing quantum experiment state
-across all supported SDKs. The UEC defines four canonical snapshot types that
-every adapter must produce, plus a unified envelope container.
+This module provides standardized types for capturing quantum experiment
+state across all supported SDKs. The UEC defines canonical snapshot types
+that every adapter must produce, plus a unified envelope container.
+
+Requirements
+------------
+- ``producer`` is REQUIRED (SDK stack tracking)
+- ``result.success`` and ``result.status`` are REQUIRED
+- ``result.items[]`` is always a list (even single executions)
+- ``counts.format`` MUST describe bit ordering
+- ``quasi_probabilities`` are first-class (IBM Runtime)
 
 Snapshot Hierarchy
 ------------------
 ExecutionEnvelope
     Top-level container unifying all snapshots for a single execution.
+
+    ProducerInfo
+        SDK stack information for debug/compatibility.
 
     DeviceSnapshot
         Point-in-time capture of quantum backend state.
@@ -30,4 +41,13 @@ ExecutionEnvelope
 
     ResultSnapshot
         Raw result references and normalized summaries.
+
+        ResultItem
+            Per-item results for batch executions.
+
+        CountsFormat
+            Bit ordering and source SDK metadata.
+
+        QuasiProbability
+            Quasi-distributions from error mitigation.
 """

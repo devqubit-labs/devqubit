@@ -14,6 +14,34 @@ from typing import Any
 
 import numpy as np
 
+# Use CountsFormat from UEC for format metadata
+from devqubit_engine.uec.result import CountsFormat
+
+
+def _get_cirq_counts_format() -> dict[str, Any]:
+    """
+    Get CountsFormat metadata for Cirq results.
+
+    Cirq measurement arrays are converted to bitstring counts by:
+    1. Sorting measurement keys alphabetically
+    2. Concatenating bits from each key in sorted order
+    3. Converting each row to a bitstring (left-to-right = first-to-last bit)
+
+    Cirq uses big-endian bit order (first qubit = leftmost bit),
+    which corresponds to cbit0_left in UEC canonical terminology.
+
+    Returns
+    -------
+    dict
+        CountsFormat as dictionary for JSON serialization.
+    """
+    return CountsFormat(
+        source_sdk="cirq",
+        source_key_format="measurement_key_concatenated",
+        bit_order="cbit0_left",  # Cirq big-endian = cbit0_left in UEC terminology
+        transformed=False,  # Not transformed to canonical cbit0_right
+    ).to_dict()
+
 
 def get_result_measurements(result: Any) -> dict[str, Any]:
     """
@@ -254,9 +282,11 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
     >>> payload = normalize_counts_payload(result)
     >>> payload["experiments"][0]["counts"]
     {'00': 48, '11': 52}
+    >>> payload["format"]["source_sdk"]
+    'cirq'
     """
     if results is None:
-        return {"experiments": []}
+        return {"experiments": [], "format": _get_cirq_counts_format()}
 
     experiments: list[dict[str, Any]] = []
 
@@ -266,7 +296,10 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
             experiments.append(_process_result(results, 0))
         except Exception:
             pass
-        return {"experiments": experiments}
+        return {
+            "experiments": experiments,
+            "format": _get_cirq_counts_format(),
+        }
 
     # List of results
     if isinstance(results, (list, tuple)) and results:
@@ -284,7 +317,10 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
                     except Exception:
                         pass
                     idx += 1
-            return {"experiments": experiments}
+            return {
+                "experiments": experiments,
+                "format": _get_cirq_counts_format(),
+            }
 
         # Flat list of results (run_sweep)
         for i, r in enumerate(results):
@@ -293,4 +329,7 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
             except Exception:
                 pass
 
-    return {"experiments": experiments}
+    return {
+        "experiments": experiments,
+        "format": _get_cirq_counts_format(),
+    }

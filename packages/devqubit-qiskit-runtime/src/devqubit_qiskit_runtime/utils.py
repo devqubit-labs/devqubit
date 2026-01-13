@@ -146,6 +146,16 @@ def get_backend_name(primitive: Any) -> str:
     return primitive.__class__.__name__
 
 
+def get_adapter_version() -> str:
+    """Get adapter version dynamically from package metadata."""
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-qiskit-runtime")
+    except Exception:
+        return "unknown"
+
+
 def get_primitive_type(executor: Any) -> str:
     """
     Determine if primitive is sampler or estimator.

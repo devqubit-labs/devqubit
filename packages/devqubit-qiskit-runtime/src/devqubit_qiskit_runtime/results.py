@@ -15,11 +15,11 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from devqubit_engine.uec.result import (
-    ExpectationValue,
-    NormalizedCounts,
+    CountsFormat,
+    ResultError,
+    ResultItem,
     ResultSnapshot,
 )
-from devqubit_engine.uec.types import ResultType
 from devqubit_engine.utils.serialization import to_jsonable
 
 
@@ -221,6 +221,9 @@ def build_sampler_result_snapshot(
     """
     Build a ResultSnapshot from a Sampler result.
 
+    Uses UEC 1.0 structure with items[], CountsFormat for
+    cross-SDK comparability.
+
     Parameters
     ----------
     result : Any
@@ -233,16 +236,15 @@ def build_sampler_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot with normalized counts.
+        Structured result snapshot with items[].
     """
     if result is None:
         return ResultSnapshot(
-            result_type=ResultType.COUNTS,
-            raw_result_ref=raw_result_ref,
-            counts=[],
-            num_experiments=0,
             success=False,
-            error_message="Result is None",
+            status="failed",
+            items=[],
+            error=ResultError(type="NullResult", message="Result is None"),
+            raw_result_ref=raw_result_ref,
             metadata={
                 "backend_name": backend_name,
                 "primitive_type": "sampler",
@@ -250,27 +252,44 @@ def build_sampler_result_snapshot(
         )
 
     counts_data = extract_sampler_results(result)
-    normalized_counts: list[NormalizedCounts] = []
 
+    # Qiskit Runtime counts format metadata
+    # Qiskit uses little-endian (cbit[0] on right) = UEC canonical
+    counts_format = CountsFormat(
+        source_sdk="qiskit-ibm-runtime",
+        source_key_format="qiskit_little_endian",
+        bit_order="cbit0_right",
+        transformed=False,
+    )
+
+    items: list[ResultItem] = []
     if counts_data:
         for exp in counts_data.get("experiments", []):
-            normalized_counts.append(
-                NormalizedCounts(
-                    circuit_index=exp.get("index", 0),
-                    counts=exp.get("counts", {}),
-                    shots=exp.get("shots"),
+            counts = exp.get("counts", {})
+            shots = exp.get("shots")
+            item_index = exp.get("index", 0)
+
+            items.append(
+                ResultItem(
+                    item_index=item_index,
+                    success=True,
+                    counts={
+                        "counts": counts,
+                        "shots": shots,
+                        "format": counts_format.to_dict(),
+                    },
                 )
             )
 
     return ResultSnapshot(
-        result_type=ResultType.COUNTS,
-        raw_result_ref=raw_result_ref,
-        counts=normalized_counts,
-        num_experiments=len(normalized_counts),
         success=True,
+        status="completed",
+        items=items,
+        raw_result_ref=raw_result_ref,
         metadata={
             "backend_name": backend_name,
             "primitive_type": "sampler",
+            "num_experiments": len(items),
         },
     )
 
@@ -343,6 +362,9 @@ def build_estimator_result_snapshot(
     """
     Build a ResultSnapshot from an Estimator result.
 
+    Uses UEC 1.0 structure. Since ResultItem is designed for counts,
+    estimator expectations are stored in ResultSnapshot.metadata.
+
     Parameters
     ----------
     result : Any
@@ -355,16 +377,15 @@ def build_estimator_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot with normalized expectations.
+        Structured result snapshot with expectations in metadata.
     """
     if result is None:
         return ResultSnapshot(
-            result_type=ResultType.EXPECTATION,
-            raw_result_ref=raw_result_ref,
-            expectations=[],
-            num_experiments=0,
             success=False,
-            error_message="Result is None",
+            status="failed",
+            items=[],
+            error=ResultError(type="NullResult", message="Result is None"),
+            raw_result_ref=raw_result_ref,
             metadata={
                 "backend_name": backend_name,
                 "primitive_type": "estimator",
@@ -372,10 +393,12 @@ def build_estimator_result_snapshot(
         )
 
     est_data = extract_estimator_results(result)
-    normalized_expectations: list[ExpectationValue] = []
 
+    # Build experiments list for metadata (estimator doesn't use ResultItem.counts)
+    experiments_data = []
     if est_data:
         for exp in est_data.get("experiments", []):
+            item_index = exp.get("index", 0)
             evs = exp.get("expectation_values", [])
             stds = exp.get("standard_deviations", [])
 
@@ -385,26 +408,36 @@ def build_estimator_result_snapshot(
             if not isinstance(stds, list):
                 stds = [stds] if stds else []
 
+            # Build expectations list
+            expectations = []
             for obs_idx, ev in enumerate(evs):
                 std = stds[obs_idx] if obs_idx < len(stds) else None
-                normalized_expectations.append(
-                    ExpectationValue(
-                        circuit_index=exp.get("index", 0),
-                        observable_index=obs_idx,
-                        value=float(ev) if ev is not None else 0.0,
-                        std_error=float(std) if std is not None else None,
-                    )
+                expectations.append(
+                    {
+                        "observable_index": obs_idx,
+                        "value": float(ev) if ev is not None else 0.0,
+                        "std_error": float(std) if std is not None else None,
+                    }
                 )
 
+            experiments_data.append(
+                {
+                    "index": item_index,
+                    "expectations": expectations,
+                    "num_observables": len(expectations),
+                }
+            )
+
     return ResultSnapshot(
-        result_type=ResultType.EXPECTATION,
-        raw_result_ref=raw_result_ref,
-        expectations=normalized_expectations,
-        num_experiments=len(est_data.get("experiments", [])) if est_data else 0,
         success=True,
+        status="completed",
+        items=[],  # Estimator doesn't produce counts-based items
+        raw_result_ref=raw_result_ref,
         metadata={
             "backend_name": backend_name,
             "primitive_type": "estimator",
+            "num_experiments": len(experiments_data),
+            "experiments": experiments_data,  # Store expectations here
         },
     )
 

@@ -48,12 +48,14 @@ import hashlib
 import logging
 import traceback
 import types
+import uuid
 from typing import Any
 
 from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.producer import ProducerInfo
 from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
@@ -75,6 +77,7 @@ from devqubit_pennylane.snapshot import (
 from devqubit_pennylane.utils import (
     collect_sdk_versions,
     extract_shots_info,
+    get_adapter_version,
     get_device_name,
     is_pennylane_device,
 )
@@ -576,9 +579,17 @@ def patch_device(
             # Log structure and build ProgramSnapshot
             program_artifacts: list[ProgramArtifact] = []
             if should_log_structure and tapes and circuit_hash not in logged_hashes:
+                # Get physical provider from device snapshot
+                physical_provider = (
+                    self._devqubit_device_snapshot.provider
+                    if self._devqubit_device_snapshot
+                    else "local"
+                )
+
                 tracker.set_tag("backend_name", backend_name)
-                tracker.set_tag("provider", "pennylane")
-                tracker.set_tag("adapter", "pennylane")
+                tracker.set_tag("provider", physical_provider)  # Physical provider
+                tracker.set_tag("sdk", "pennylane")  # SDK frontend
+                tracker.set_tag("adapter", "devqubit-pennylane")
 
                 program_artifacts = _log_tapes(tracker, tapes, circuit_hash)
 
@@ -588,7 +599,8 @@ def patch_device(
                 tracker.record["backend"] = {
                     "name": backend_name,
                     "type": self.__class__.__name__,
-                    "provider": "pennylane",
+                    "provider": physical_provider,  # Physical provider
+                    "sdk": "pennylane",  # SDK frontend
                 }
                 self._devqubit_logged_execution_count += 1
 
@@ -629,6 +641,7 @@ def patch_device(
             result = None
             execution_error: dict[str, Any] | None = None
             execution_succeeded = True
+            original_exception: BaseException | None = None  # Save for re-raise
 
             try:
                 result = getattr(self, f"_devqubit_original_{method_name}")(
@@ -636,6 +649,7 @@ def patch_device(
                 )
             except Exception as e:
                 execution_succeeded = False
+                original_exception = e  # Save original exception
                 execution_error = {
                     "type": type(e).__name__,
                     "message": str(e),
@@ -697,16 +711,34 @@ def patch_device(
                     "success": execution_succeeded,
                 }
 
-                # Create and finalize ExecutionEnvelope
+                # Create and finalize ExecutionEnvelope (UEC 1.0)
                 if self._devqubit_device_snapshot is not None:
+                    # Create ProducerInfo for UEC 1.0
+                    sdk_versions = collect_sdk_versions()
+                    producer = ProducerInfo.create(
+                        adapter="devqubit-pennylane",
+                        adapter_version=get_adapter_version(),
+                        sdk="pennylane",
+                        sdk_version=sdk_versions.get("pennylane", "unknown"),
+                        frontends=["pennylane"],
+                    )
+
+                    # Create pending result (will be updated when finalized)
+                    pending_result = ResultSnapshot(
+                        success=False,
+                        status="failed",  # Will be updated by _finalize_envelope_with_result
+                        items=[],
+                        metadata={"state": "pending"},
+                    )
+
                     self._devqubit_envelope = ExecutionEnvelope(
-                        schema_version="devqubit.envelope/0.1",
-                        adapter="pennylane",
+                        envelope_id=uuid.uuid4().hex[:26],
                         created_at=utc_now_iso(),
+                        producer=producer,
+                        result=pending_result,
                         device=self._devqubit_device_snapshot,
                         program=self._devqubit_program_snapshot,
                         execution=self._devqubit_execution_snapshot,
-                        result=None,  # Will be filled by _finalize_envelope_with_result
                     )
                     try:
                         _finalize_envelope_with_result(
@@ -738,12 +770,9 @@ def patch_device(
                 "last_execution_at": utc_now_iso(),
             }
 
-            # Re-raise execution error after logging
-            if not execution_succeeded and execution_error:
-                # Reconstruct the original exception type if possible
-                exc_type = execution_error["type"]
-                exc_msg = execution_error["message"]
-                raise RuntimeError(f"{exc_type}: {exc_msg}") from None
+            # Re-raise execution error after logging (preserve original exception type)
+            if not execution_succeeded and original_exception is not None:
+                raise original_exception
 
             return result
 
@@ -806,10 +835,15 @@ class PennyLaneAdapter:
         dict
             Device description with multi-layer stack info.
         """
+        # Detect physical execution provider
+        backend_info = resolve_pennylane_backend(device)
+        physical_provider = backend_info["provider"] if backend_info else "local"
+
         desc: dict[str, Any] = {
             "name": get_device_name(device),
             "type": device.__class__.__name__,
-            "provider": "pennylane",
+            "provider": physical_provider,  # Physical provider
+            "sdk": "pennylane",  # SDK frontend
         }
 
         # Add wire info
@@ -824,10 +858,8 @@ class PennyLaneAdapter:
         shots_info = extract_shots_info(device)
         desc["shots_info"] = shots_info.to_dict()
 
-        # Detect execution provider
-        backend_info = resolve_pennylane_backend(device)
-        if backend_info and backend_info["provider"] != "pennylane":
-            desc["execution_provider"] = backend_info["provider"]
+        # Add backend-specific info
+        if backend_info:
             desc["backend_type"] = backend_info["backend_type"]
             if backend_info["backend_id"]:
                 desc["backend_id"] = backend_info["backend_id"]

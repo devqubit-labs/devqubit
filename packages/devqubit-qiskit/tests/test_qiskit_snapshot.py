@@ -196,7 +196,7 @@ class TestCreateDeviceSnapshot:
         snapshot = create_device_snapshot(MinimalBackend())
 
         assert snapshot.backend_name == "MinimalBackend"
-        assert snapshot.provider == "qiskit"
+        assert snapshot.provider == "local"  # Physical provider, not SDK
         assert snapshot.num_qubits is None
         assert snapshot.calibration is None
 

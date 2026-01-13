@@ -184,7 +184,7 @@ class TestRawPropertiesArtifact:
         assert "device_class" in raw_props
         assert "device_module" in raw_props
         assert "execution_provider" in raw_props
-        assert raw_props["execution_provider"] == "pennylane"
+        assert raw_props["execution_provider"] == "local"
 
     def test_raw_properties_includes_shots_info(self, default_qubit, store, registry):
         """raw_properties artifact should include shots configuration."""
@@ -220,7 +220,7 @@ class TestCreateDeviceSnapshot:
         """Creates snapshot with core fields from default.qubit."""
         snap = create_device_snapshot(default_qubit)
 
-        assert snap.provider == "pennylane"
+        assert snap.provider == "local"
         assert snap.backend_name == "default.qubit"
         assert snap.backend_type == "simulator"
         assert snap.captured_at is not None
@@ -238,7 +238,7 @@ class TestCreateDeviceSnapshot:
         snap = create_device_snapshot(default_qubit)
         d = snap.to_dict()
 
-        assert d["provider"] == "pennylane"
+        assert d["provider"] == "local"
         assert d["backend_name"] == "default.qubit"
         assert "captured_at" in d
         assert "num_qubits" in d
@@ -266,7 +266,7 @@ class TestDeviceSnapshotWithDifferentDevices:
             dev = qml.device("lightning.qubit", wires=3)
             snap = create_device_snapshot(dev)
 
-            assert snap.provider == "pennylane"
+            assert snap.provider == "local"
             assert "lightning" in snap.backend_name
             assert snap.num_qubits == 3
         except Exception:
@@ -278,7 +278,7 @@ class TestDeviceSnapshotWithDifferentDevices:
             dev = qml.device("default.mixed", wires=2)
             snap = create_device_snapshot(dev)
 
-            assert snap.provider == "pennylane"
+            assert snap.provider == "local"
             assert "mixed" in snap.backend_name
             assert snap.num_qubits == 2
         except Exception:
@@ -297,7 +297,7 @@ class TestMockDevices:
         snap = create_device_snapshot(MinimalDevice())
 
         assert snap.backend_name == "minimal"
-        assert snap.provider == "pennylane"
+        assert snap.provider == "local"
         assert snap.num_qubits is None
 
     def test_device_with_wires_only(self):
@@ -387,7 +387,8 @@ class TestResolvePennyLaneBackend:
         info = resolve_pennylane_backend(MockBraketDevice())
 
         assert info is not None
-        assert info["provider"] == "braket"
+        assert info["provider"] == "aws_braket"  # Physical provider
+        assert info["sdk_frontend"] == "braket"  # SDK frontend
         assert info["backend_type"] == "simulator"
         assert info["backend_id"] == MockBraketDevice.device_arn
 
@@ -412,7 +413,8 @@ class TestResolvePennyLaneBackend:
 
         snap = create_device_snapshot(MockQiskitDevice())
 
-        assert snap.provider == "qiskit"
+        # aer_simulator is local, so provider is "local"
+        assert snap.provider == "local"  # Physical provider (aer is local)
         assert snap.backend_id == "ibm-backend-123"
         assert snap.backend_type == "simulator"
         assert snap.num_qubits == 2
@@ -432,7 +434,8 @@ class TestResolvePennyLaneBackend:
 
         info = resolve_pennylane_backend(MockBraketHardware())
 
-        assert info["provider"] == "braket"
+        assert info["provider"] == "aws_braket"  # Physical provider
+        assert info["sdk_frontend"] == "braket"  # SDK frontend
         assert info["backend_type"] == "hardware"  # Not simulator
 
 
@@ -528,7 +531,7 @@ class TestSchemaValidation:
         json_str = json.dumps(d)
         parsed = json.loads(json_str)
 
-        assert parsed["provider"] == "pennylane"
+        assert parsed["provider"] == "local"
         assert parsed["backend_name"] == "default.qubit"
 
     def test_frontend_config_serializable(self, default_qubit):

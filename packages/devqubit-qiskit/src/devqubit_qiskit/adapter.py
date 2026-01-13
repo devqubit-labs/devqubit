@@ -43,647 +43,43 @@ Example
 
 from __future__ import annotations
 
-import hashlib
 import logging
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
-from devqubit_engine.uec.execution import ExecutionSnapshot
-from devqubit_engine.uec.program import (
-    ProgramArtifact,
-    ProgramSnapshot,
-    TranspilationInfo,
-)
-from devqubit_engine.uec.result import NormalizedCounts, ResultSnapshot
-from devqubit_engine.uec.types import (
-    ProgramRole,
-    ResultType,
-    TranspilationMode,
-)
+from devqubit_engine.uec.producer import ProducerInfo
+from devqubit_engine.uec.program import ProgramSnapshot
+from devqubit_engine.uec.result import ResultSnapshot
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
-from devqubit_qiskit.results import (
-    detect_result_type,
-    extract_result_metadata,
-    normalize_result_counts,
+from devqubit_qiskit.circuits import (
+    compute_circuit_hash,
+    materialize_circuits,
+    serialize_and_log_circuits,
 )
-from devqubit_qiskit.serialization import QiskitCircuitSerializer
-from devqubit_qiskit.snapshot import create_device_snapshot
-from devqubit_qiskit.utils import extract_job_id, get_backend_name, qiskit_version
-from qiskit import QuantumCircuit
+from devqubit_qiskit.envelope import (
+    create_execution_snapshot,
+    create_failure_result_snapshot,
+    create_program_snapshot,
+    create_result_snapshot,
+    detect_physical_provider,
+    finalize_envelope_with_result,
+    log_device_snapshot,
+)
+from devqubit_qiskit.utils import (
+    extract_job_id,
+    get_adapter_version,
+    get_backend_name,
+    qiskit_version,
+)
 from qiskit.providers.backend import BackendV2
 
 
 logger = logging.getLogger(__name__)
-
-# Module-level serializer instance
-_serializer = QiskitCircuitSerializer()
-
-
-def _materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
-    """
-    Materialize circuit inputs exactly once.
-
-    Prevents consumption bugs when the user provides generators/iterators.
-
-    Parameters
-    ----------
-    circuits : Any
-        A QuantumCircuit, or an iterable of QuantumCircuit objects.
-
-    Returns
-    -------
-    circuit_list : list
-        List of circuit-like objects.
-    was_single : bool
-        True if the input was a single circuit-like object.
-    """
-    if circuits is None:
-        return [], False
-
-    # QuantumCircuit is iterable over instructions, so check explicitly
-    if isinstance(circuits, QuantumCircuit):
-        return [circuits], True
-
-    if isinstance(circuits, (list, tuple)):
-        return list(circuits), False
-
-    # Generic iterables (generator, iterator, etc.)
-    try:
-        return list(circuits), False
-    except TypeError:
-        # Not iterable -> treat as a single circuit-like payload
-        return [circuits], True
-
-
-def _compute_circuit_hash(circuits: list[Any]) -> str | None:
-    """
-    Compute a structure-only hash for Qiskit QuantumCircuit objects.
-
-    Captures circuit structure (gates, qubits, classical bits) while
-    ignoring parameter values for deduplication purposes.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Qiskit QuantumCircuit objects.
-
-    Returns
-    -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if empty.
-
-    Notes
-    -----
-    The hash captures:
-    - Operation names (e.g., 'rx', 'cx', 'measure')
-    - Ordered qubit indices
-    - Ordered clbit indices (measurement wiring)
-    - Parameter arity (count only, not values)
-    - Classical condition presence
-    """
-    if not circuits:
-        return None
-
-    circuit_signatures: list[str] = []
-
-    for circuit in circuits:
-        try:
-            # Precompute indices for speed and stability
-            qubit_index = {
-                q: i for i, q in enumerate(getattr(circuit, "qubits", ()) or ())
-            }
-            clbit_index = {
-                c: i for i, c in enumerate(getattr(circuit, "clbits", ()) or ())
-            }
-
-            op_sigs: list[str] = []
-            for instr in getattr(circuit, "data", []) or []:
-                op = getattr(instr, "operation", None)
-                name = getattr(op, "name", None)
-                op_name = name if isinstance(name, str) and name else type(op).__name__
-
-                # Qubits / clbits in order (control-target order matters)
-                qs: list[int] = []
-                for q in getattr(instr, "qubits", ()) or ():
-                    if q in qubit_index:
-                        qs.append(qubit_index[q])
-                    else:
-                        # Fallback if circuit has unusual bit containers
-                        qs.append(getattr(circuit.find_bit(q), "index", -1))
-                cs: list[int] = []
-                for c in getattr(instr, "clbits", ()) or ():
-                    if c in clbit_index:
-                        cs.append(clbit_index[c])
-                    else:
-                        cs.append(getattr(circuit.find_bit(c), "index", -1))
-
-                # Parameter arity (count only)
-                params = getattr(op, "params", None)
-                parity = len(params) if isinstance(params, (list, tuple)) else 0
-
-                # Classical condition presence
-                cond = getattr(op, "condition", None)
-                has_cond = 1 if cond is not None else 0
-
-                op_sigs.append(
-                    f"{op_name}|p{parity}|q{tuple(qs)}|c{tuple(cs)}|if{has_cond}"
-                )
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            # Conservative fallback: avoid breaking tracking
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _circuits_to_text(circuits: list[Any]) -> str:
-    """
-    Convert circuits to human-readable text diagrams.
-
-    Parameters
-    ----------
-    circuits : list
-        List of QuantumCircuit objects.
-
-    Returns
-    -------
-    str
-        Combined text diagram of all circuits.
-    """
-    parts: list[str] = []
-
-    for i, circuit in enumerate(circuits):
-        if i > 0:
-            parts.append("")  # Blank line between circuits
-
-        name = getattr(circuit, "name", None) or f"circuit_{i}"
-        parts.append(f"[{i}] {name}")
-
-        try:
-            diagram = circuit.draw(output="text", fold=80)
-            if hasattr(diagram, "single_string"):
-                parts.append(diagram.single_string())
-            else:
-                parts.append(str(diagram))
-        except Exception:
-            parts.append(str(circuit))
-
-    return "\n".join(parts)
-
-
-def _serialize_and_log_circuits(
-    tracker: Run,
-    circuits: list[Any],
-    backend_name: str,
-    circuit_hash: str | None,
-) -> list[ProgramArtifact]:
-    """
-    Serialize and log circuits in multiple formats.
-
-    Creates ProgramArtifact references for each circuit in each format,
-    properly handling multi-circuit batches.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-    circuits : list
-        List of QuantumCircuit objects.
-    backend_name : str
-        Backend name for metadata.
-    circuit_hash : str or None
-        Circuit structure hash.
-
-    Returns
-    -------
-    list of ProgramArtifact
-        References to logged program artifacts, one per format per circuit.
-    """
-    artifacts: list[ProgramArtifact] = []
-    meta = {
-        "backend_name": backend_name,
-        "qiskit_version": qiskit_version(),
-        "circuit_hash": circuit_hash,
-        "num_circuits": len(circuits),
-    }
-
-    # Log circuits in QPY format (batch, lossless)
-    try:
-        qpy_data = _serializer.serialize(circuits, CircuitFormat.QPY)
-        ref = tracker.log_bytes(
-            kind="qiskit.qpy.circuits",
-            data=qpy_data.as_bytes(),
-            media_type="application/vnd.qiskit.qpy",
-            role="program",
-            meta={**meta, "security_note": "opaque_bytes_only"},
-        )
-        # QPY is a batch format - single artifact for all circuits
-        artifacts.append(
-            ProgramArtifact(
-                ref=ref,
-                role=ProgramRole.LOGICAL,
-                format="qpy",
-                name="circuits_batch",
-                index=0,
-            )
-        )
-    except Exception as e:
-        logger.debug("Failed to serialize circuits to QPY: %s", e)
-
-    # Log circuits in QASM3 format (per circuit, portable)
-    oq3_items: list[dict[str, Any]] = []
-    for i, c in enumerate(circuits):
-        try:
-            qasm_data = _serializer.serialize(c, CircuitFormat.OPENQASM3, index=i)
-            qc_name = getattr(c, "name", None) or f"circuit_{i}"
-            oq3_items.append(
-                {
-                    "source": qasm_data.as_text(),
-                    "name": f"circuit_{i}:{qc_name}",
-                    "index": i,
-                }
-            )
-        except Exception:
-            continue
-
-    if oq3_items:
-        oq3_result = tracker.log_openqasm3(oq3_items, name="circuits", meta=meta)
-        # Generate ProgramArtifact per circuit, not just the first one
-        items = oq3_result.get("items", [])
-        for item in items:
-            ref = item.get("raw_ref")
-            if ref:
-                item_index = item.get("index", 0)
-                item_name = item.get("name", f"circuit_{item_index}")
-                artifacts.append(
-                    ProgramArtifact(
-                        ref=ref,
-                        role=ProgramRole.LOGICAL,
-                        format="openqasm3",
-                        name=item_name,
-                        index=item_index,
-                    )
-                )
-
-    # Log circuit diagrams (human-readable text)
-    try:
-        diagram_text = _circuits_to_text(circuits)
-        ref = tracker.log_bytes(
-            kind="qiskit.circuits.diagram",
-            data=diagram_text.encode("utf-8"),
-            media_type="text/plain; charset=utf-8",
-            role="program",
-            meta={"num_circuits": len(circuits)},
-        )
-        artifacts.append(
-            ProgramArtifact(
-                ref=ref,
-                role=ProgramRole.LOGICAL,
-                format="diagram",
-                name="circuits",
-                index=0,
-            )
-        )
-    except Exception:
-        pass  # Diagram logging is best-effort
-
-    return artifacts
-
-
-def _create_program_snapshot(
-    program_artifacts: list[ProgramArtifact],
-    circuit_hash: str | None,
-    num_circuits: int,
-) -> ProgramSnapshot:
-    """
-    Create a ProgramSnapshot from logged artifacts.
-
-    Parameters
-    ----------
-    program_artifacts : list of ProgramArtifact
-        References to logged circuit artifacts.
-    circuit_hash : str or None
-        Circuit structure hash.
-    num_circuits : int
-        Number of circuits in the program.
-
-    Returns
-    -------
-    ProgramSnapshot
-        Program snapshot with artifact references.
-    """
-    return ProgramSnapshot(
-        logical=program_artifacts,
-        physical=[],  # Base Qiskit adapter doesn't transpile
-        program_hash=circuit_hash,
-        num_circuits=num_circuits,
-    )
-
-
-def _create_execution_snapshot(
-    submitted_at: str,
-    shots: int | None,
-    exec_count: int,
-    job_ids: list[str] | None,
-    options: dict[str, Any],
-) -> ExecutionSnapshot:
-    """
-    Create an ExecutionSnapshot.
-
-    Parameters
-    ----------
-    submitted_at : str
-        ISO timestamp of submission.
-    shots : int or None
-        Number of shots requested.
-    exec_count : int
-        Execution count.
-    job_ids : list of str or None
-        Job IDs if available.
-    options : dict
-        Execution options (args, kwargs).
-
-    Returns
-    -------
-    ExecutionSnapshot
-        Execution metadata snapshot.
-    """
-    return ExecutionSnapshot(
-        submitted_at=submitted_at,
-        shots=shots,
-        execution_count=exec_count,
-        job_ids=job_ids or [],
-        transpilation=TranspilationInfo(
-            mode=TranspilationMode.MANUAL,
-            transpiled_by="user",
-        ),
-        options=options,
-        sdk="qiskit",
-    )
-
-
-def _create_result_snapshot(
-    tracker: Run,
-    backend_name: str,
-    result: Any,
-) -> ResultSnapshot:
-    """
-    Create a ResultSnapshot from a Qiskit Result object.
-
-    Detects result type and extracts appropriate normalized data.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-    backend_name : str
-        Backend name.
-    result : Any
-        Qiskit Result object.
-
-    Returns
-    -------
-    ResultSnapshot
-        Structured result snapshot.
-    """
-    # Handle None result
-    if result is None:
-        return ResultSnapshot(
-            result_type=ResultType.OTHER,
-            raw_result_ref=None,
-            counts=[],
-            num_experiments=0,
-            success=False,
-            error_message="Result is None",
-            metadata={"backend_name": backend_name},
-        )
-
-    # Detect result type
-    result_type = detect_result_type(result)
-
-    # Serialize full result
-    try:
-        if hasattr(result, "to_dict") and callable(result.to_dict):
-            result_dict = result.to_dict()
-        else:
-            result_dict = result
-        payload = to_jsonable(result_dict)
-    except Exception as e:
-        logger.debug("Failed to serialize result to dict: %s", e)
-        payload = {"repr": repr(result)[:2000]}
-
-    raw_result_ref = tracker.log_json(
-        name="qiskit.result",
-        obj=payload,
-        role="results",
-        kind="result.qiskit.result_json",
-    )
-
-    # Extract and log measurement counts
-    counts_data = normalize_result_counts(result)
-    normalized_counts: list[NormalizedCounts] = []
-
-    if counts_data.get("experiments"):
-        tracker.log_json(
-            name="counts",
-            obj=counts_data,
-            role="results",
-            kind="result.counts.json",
-        )
-
-        # Build normalized counts list
-        for exp in counts_data["experiments"]:
-            normalized_counts.append(
-                NormalizedCounts(
-                    circuit_index=exp.get("index", 0),
-                    counts=exp.get("counts", {}),
-                    shots=exp.get("shots"),
-                    name=exp.get("name"),
-                )
-            )
-
-    # Extract metadata
-    meta = extract_result_metadata(result)
-    success = meta.get("success", True)
-
-    # Build result snapshot
-    return ResultSnapshot(
-        result_type=result_type,
-        raw_result_ref=raw_result_ref,
-        counts=normalized_counts,
-        num_experiments=len(counts_data.get("experiments", [])),
-        success=success,
-        metadata={
-            "backend_name": backend_name,
-            **meta,
-        },
-    )
-
-
-def _finalize_envelope_with_result(
-    tracker: Run,
-    envelope: ExecutionEnvelope,
-    result_snapshot: ResultSnapshot,
-) -> None:
-    """
-    Finalize envelope with result and log as artifact.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-    envelope : ExecutionEnvelope
-        Envelope to finalize.
-    result_snapshot : ResultSnapshot
-        Result to add to envelope.
-
-    Raises
-    ------
-    ValueError
-        If envelope is None.
-    """
-    if envelope is None:
-        raise ValueError("Cannot finalize None envelope")
-
-    if result_snapshot is None:
-        logger.warning("Finalizing envelope with None result_snapshot")
-
-    # Add result to envelope
-    envelope.result = result_snapshot
-
-    # Set completion time
-    if envelope.execution is not None:
-        envelope.execution.completed_at = utc_now_iso()
-
-    # Validate and log envelope using tracker's canonical method
-    tracker.log_envelope(envelope=envelope)
-
-
-def _create_minimal_device_snapshot(
-    backend: Any,
-    captured_at: str,
-    error_msg: str | None = None,
-) -> DeviceSnapshot:
-    """
-    Create a minimal DeviceSnapshot when full snapshot creation fails.
-
-    Ensures envelope can always be completed even if backend introspection
-    fails due to network issues or unsupported backend types.
-
-    Parameters
-    ----------
-    backend : Any
-        Qiskit backend (may be partially functional).
-    captured_at : str
-        ISO timestamp.
-    error_msg : str, optional
-        Error message explaining why full snapshot failed.
-
-    Returns
-    -------
-    DeviceSnapshot
-        Minimal snapshot with available information.
-    """
-    backend_name = get_backend_name(backend)
-
-    # Try to determine backend type
-    backend_type = "unknown"
-    name_lower = backend_name.lower()
-    type_lower = type(backend).__name__.lower()
-
-    if any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
-        backend_type = "simulator"
-    elif any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
-        backend_type = "hardware"
-
-    # Try to get num_qubits
-    num_qubits = None
-    try:
-        num_qubits = backend.num_qubits
-    except Exception:
-        pass
-
-    snapshot = DeviceSnapshot(
-        captured_at=captured_at,
-        backend_name=backend_name,
-        backend_type=backend_type,
-        provider="qiskit",
-        num_qubits=num_qubits,
-        sdk_versions={"qiskit": qiskit_version()},
-    )
-
-    if error_msg:
-        logger.warning(
-            "Created minimal device snapshot for %s: %s",
-            backend_name,
-            error_msg,
-        )
-
-    return snapshot
-
-
-def _log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
-    """
-    Log device snapshot with fallback to minimal snapshot on failure.
-
-    Logs both the snapshot summary and raw properties as separate artifacts
-    for complete backend state capture.
-
-    Parameters
-    ----------
-    backend : Any
-        Qiskit backend.
-    tracker : Run
-        Tracker instance.
-
-    Returns
-    -------
-    DeviceSnapshot
-        Created device snapshot (full or minimal).
-    """
-    backend_name = get_backend_name(backend)
-    captured_at = utc_now_iso()
-
-    try:
-        # Create snapshot with tracker for raw_properties logging
-        snapshot = create_device_snapshot(
-            backend,
-            refresh_properties=True,
-            tracker=tracker,
-        )
-    except Exception as e:
-        # Generate minimal snapshot on failure instead of propagating
-        logger.warning(
-            "Full device snapshot failed for %s: %s. Using minimal snapshot.",
-            backend_name,
-            e,
-        )
-        snapshot = _create_minimal_device_snapshot(
-            backend, captured_at, error_msg=str(e)
-        )
-
-    # Update tracker record with summary (for querying and fingerprinting)
-    tracker.record["device_snapshot"] = {
-        "sdk": "qiskit",
-        "backend_name": backend_name,
-        "backend_type": snapshot.backend_type,
-        "provider": snapshot.provider,
-        "captured_at": snapshot.captured_at,
-        "num_qubits": snapshot.num_qubits,
-        "calibration_summary": snapshot.get_calibration_summary(),
-    }
-
-    logger.debug("Logged device snapshot for %s", backend_name)
-
-    return snapshot
 
 
 @dataclass
@@ -734,6 +130,10 @@ class TrackedJob:
         """
         Retrieve job result and log artifacts.
 
+        Always creates an envelope - even when job.result() fails.
+        This is a UEC requirement: envelope must exist for
+        failure cases to enable debugging and telemetry.
+
         Idempotent: calling result() multiple times will only log once.
 
         Parameters
@@ -747,16 +147,30 @@ class TrackedJob:
         -------
         Result
             Qiskit Result object.
-        """
-        result = self.job.result(*args, **kwargs)
 
-        # Idempotent result logging - only log once
+        Raises
+        ------
+        Exception
+            Re-raises any exception from job.result() after logging
+            the failure envelope.
+        """
+        # Try to get result - may raise exception
+        try:
+            result = self.job.result(*args, **kwargs)
+        except Exception as exc:
+            # ALWAYS create failure envelope before re-raising
+            if self.should_log_results and not self._result_logged:
+                self._result_logged = True
+                self._log_failure(exc)
+            raise  # Re-raise original exception with original traceback
+
+        # Happy path - log successful result
         if self.should_log_results and not self._result_logged:
             self._result_logged = True
 
             try:
                 # Create result snapshot
-                self.result_snapshot = _create_result_snapshot(
+                self.result_snapshot = create_result_snapshot(
                     self.tracker,
                     self.backend_name,
                     result,
@@ -764,37 +178,32 @@ class TrackedJob:
 
                 # Finalize envelope with result
                 if self.envelope is not None and self.result_snapshot is not None:
-                    _finalize_envelope_with_result(
+                    finalize_envelope_with_result(
                         self.tracker,
                         self.envelope,
                         self.result_snapshot,
                     )
 
-                # Update tracker record (used by fingerprint computation)
+                # Update tracker record
                 if self.result_snapshot is not None:
-                    result_type_str = (
-                        self.result_snapshot.result_type.value
-                        if hasattr(self.result_snapshot.result_type, "value")
-                        else str(self.result_snapshot.result_type)
-                    )
                     self.tracker.record["results"] = {
                         "completed_at": utc_now_iso(),
                         "backend_name": self.backend_name,
-                        "num_experiments": self.result_snapshot.num_experiments,
-                        "result_type": result_type_str,
+                        "success": self.result_snapshot.success,
+                        "status": self.result_snapshot.status,
+                        "num_items": len(self.result_snapshot.items),
                         **self.result_snapshot.metadata,
                     }
 
                 logger.debug("Logged results on %s", self.backend_name)
 
             except Exception as e:
-                # Log error but don't fail - result retrieval should always succeed
+                # Log error but don't fail - result retrieval should succeed
                 logger.warning(
                     "Failed to log results for %s: %s",
                     self.backend_name,
                     e,
                 )
-                # Record error in tracker for visibility
                 self.tracker.record.setdefault("warnings", []).append(
                     {
                         "type": "result_logging_failed",
@@ -804,6 +213,54 @@ class TrackedJob:
                 )
 
         return result
+
+    def _log_failure(self, exc: Exception) -> None:
+        """
+        Log failure envelope when job.result() raises an exception.
+
+        Parameters
+        ----------
+        exc : Exception
+            The exception that was raised.
+        """
+        try:
+            # Create failure result snapshot
+            self.result_snapshot = create_failure_result_snapshot(
+                exception=exc,
+                backend_name=self.backend_name,
+            )
+
+            # Finalize envelope with failure result
+            if self.envelope is not None:
+                finalize_envelope_with_result(
+                    self.tracker,
+                    self.envelope,
+                    self.result_snapshot,
+                )
+
+            # Update tracker record with failure info
+            self.tracker.record["results"] = {
+                "completed_at": utc_now_iso(),
+                "backend_name": self.backend_name,
+                "success": False,
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:500],
+            }
+
+            logger.debug(
+                "Logged failure envelope for %s: %s",
+                self.backend_name,
+                type(exc).__name__,
+            )
+
+        except Exception as log_error:
+            # Last resort - don't let logging failure mask original error
+            logger.error(
+                "Failed to log failure envelope for %s: %s",
+                self.backend_name,
+                log_error,
+            )
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped job."""
@@ -906,7 +363,7 @@ class TrackedBackend:
         submitted_at = utc_now_iso()
 
         # Materialize once to avoid consuming generators during logging
-        circuit_list, was_single = _materialize_circuits(circuits)
+        circuit_list, was_single = materialize_circuits(circuits)
 
         # Payload for backend.run(): single circuit if user gave single, else list
         run_payload: Any = (
@@ -918,7 +375,7 @@ class TrackedBackend:
         exec_count = self._execution_count
 
         # Compute circuit hash for structure detection
-        circuit_hash = _compute_circuit_hash(circuit_list)
+        circuit_hash = compute_circuit_hash(circuit_list)
         is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
         if circuit_hash:
             self._seen_circuit_hashes.add(circuit_hash)
@@ -961,14 +418,18 @@ class TrackedBackend:
                 envelope=None,
             )
 
+        # Detect physical provider (not SDK)
+        detected_provider = detect_physical_provider(self.backend)
+
         # Set tags
         self.tracker.set_tag("backend_name", backend_name)
-        self.tracker.set_tag("provider", "qiskit")
-        self.tracker.set_tag("adapter", "qiskit")
+        self.tracker.set_tag("sdk", "qiskit")
+        self.tracker.set_tag("adapter", "devqubit-qiskit")
+        self.tracker.set_tag("provider", detected_provider)
 
         # Log device snapshot (once per run)
         if not self._snapshot_logged:
-            self.device_snapshot = _log_device_snapshot(self.backend, self.tracker)
+            self.device_snapshot = log_device_snapshot(self.backend, self.tracker)
             self._snapshot_logged = True
 
         # Build program snapshot
@@ -988,7 +449,7 @@ class TrackedBackend:
                 )
 
             # Log circuits
-            program_artifacts = _serialize_and_log_circuits(
+            program_artifacts = serialize_and_log_circuits(
                 self.tracker,
                 circuit_list,
                 backend_name,
@@ -999,7 +460,7 @@ class TrackedBackend:
                 self._logged_circuit_hashes.add(circuit_hash)
 
             # Create program snapshot
-            program_snapshot = _create_program_snapshot(
+            program_snapshot = create_program_snapshot(
                 program_artifacts,
                 circuit_hash,
                 len(circuit_list),
@@ -1013,7 +474,8 @@ class TrackedBackend:
             self.tracker.record["backend"] = {
                 "name": backend_name,
                 "type": self.backend.__class__.__name__,
-                "provider": "qiskit",
+                "provider": detected_provider,
+                "sdk": "qiskit",
             }
 
             self._logged_execution_count += 1
@@ -1024,7 +486,7 @@ class TrackedBackend:
 
         # Build ExecutionSnapshot
         shots = kwargs.get("shots")
-        execution_snapshot = _create_execution_snapshot(
+        execution_snapshot = create_execution_snapshot(
             submitted_at=submitted_at,
             shots=int(shots) if shots is not None else None,
             exec_count=exec_count,
@@ -1075,14 +537,31 @@ class TrackedBackend:
                     num_circuits=len(circuit_list),
                 )
 
+            # Create ProducerInfo for SDK stack tracking
+            producer = ProducerInfo.create(
+                adapter="devqubit-qiskit",
+                adapter_version=get_adapter_version(),
+                sdk="qiskit",
+                sdk_version=qiskit_version(),
+                frontends=["qiskit"],
+            )
+
+            # Create envelope with pending result (will be updated in result())
+            pending_result = ResultSnapshot(
+                success=False,
+                status="failed",  # Will be updated when result() completes
+                items=[],
+                metadata={"state": "pending"},
+            )
+
             envelope = ExecutionEnvelope(
-                schema_version="devqubit.envelope/0.1",
-                adapter="qiskit",
+                envelope_id=uuid.uuid4().hex[:26],
                 created_at=utc_now_iso(),
+                producer=producer,
+                result=pending_result,
                 device=self.device_snapshot,
                 program=program_snapshot,
                 execution=execution_snapshot,
-                result=None,  # Will be filled when result() is called
             )
 
         # Update stats
@@ -1178,12 +657,13 @@ class QiskitAdapter:
         Returns
         -------
         dict
-            Backend description with keys: name, type, provider.
+            Backend description with keys: name, type, provider, sdk.
         """
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": "qiskit",
+            "provider": detect_physical_provider(executor),
+            "sdk": "qiskit",
         }
 
     def wrap_executor(

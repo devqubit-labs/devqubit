@@ -12,8 +12,10 @@ from devqubit_qiskit.adapter import (
     QiskitAdapter,
     TrackedBackend,
     TrackedJob,
-    _compute_circuit_hash,
-    _materialize_circuits,
+)
+from devqubit_qiskit.circuits import (
+    compute_circuit_hash,
+    materialize_circuits,
 )
 from devqubit_qiskit.serialization import (
     LoadedCircuitBatch,
@@ -83,13 +85,13 @@ class TestMaterializeCircuits:
 
     def test_single_circuit(self, bell_circuit):
         """Single circuit returns (list, was_single=True)."""
-        result, was_single = _materialize_circuits(bell_circuit)
+        result, was_single = materialize_circuits(bell_circuit)
         assert len(result) == 1
         assert was_single is True
 
     def test_list_of_circuits(self, bell_circuit, ghz_circuit):
         """List of circuits passes through."""
-        result, was_single = _materialize_circuits([bell_circuit, ghz_circuit])
+        result, was_single = materialize_circuits([bell_circuit, ghz_circuit])
         assert len(result) == 2
         assert was_single is False
 
@@ -104,7 +106,7 @@ class TestMaterializeCircuits:
                 yield qc
 
         gen = circuit_gen()
-        result, _ = _materialize_circuits(gen)
+        result, _ = materialize_circuits(gen)
         assert len(result) == 3
 
 
@@ -121,7 +123,7 @@ class TestCircuitHash:
         qc2.h(0)
         qc2.cx(0, 1)
 
-        assert _compute_circuit_hash([qc1]) == _compute_circuit_hash([qc2])
+        assert compute_circuit_hash([qc1]) == compute_circuit_hash([qc2])
 
     def test_different_gates_different_hash(self):
         """Different gates produce different hash."""
@@ -131,7 +133,7 @@ class TestCircuitHash:
         qc2 = QuantumCircuit(2)
         qc2.x(0)
 
-        assert _compute_circuit_hash([qc1]) != _compute_circuit_hash([qc2])
+        assert compute_circuit_hash([qc1]) != compute_circuit_hash([qc2])
 
     def test_parameter_values_dont_change_hash(self):
         """Parameter values don't affect structure hash."""
@@ -142,7 +144,7 @@ class TestCircuitHash:
         bound1 = qc.assign_parameters({theta: 0.5})
         bound2 = qc.assign_parameters({theta: 1.5})
 
-        assert _compute_circuit_hash([bound1]) == _compute_circuit_hash([bound2])
+        assert compute_circuit_hash([bound1]) == compute_circuit_hash([bound2])
 
 
 class TestTrackedBackendExecution:
@@ -257,7 +259,7 @@ class TestEnvelopeStructure:
         _, envelope = _load_envelope(run.run_id, store, registry)
 
         assert envelope is not None
-        assert envelope["schema"] == "devqubit.envelope/0.1"
+        assert envelope["schema"] == "devqubit.envelope/1.0"
         assert "device" in envelope
         assert "program" in envelope
         assert "execution" in envelope
@@ -418,7 +420,7 @@ class TestEnvelopeErrorPath:
         qc.measure_all()
 
         with patch(
-            "devqubit_qiskit.adapter.create_device_snapshot",
+            "devqubit_qiskit.envelope.create_device_snapshot",
             side_effect=RuntimeError("Snapshot failed"),
         ):
             with track(project="test", store=store, registry=registry) as run:

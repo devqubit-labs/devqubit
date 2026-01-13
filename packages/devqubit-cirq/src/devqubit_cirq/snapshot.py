@@ -24,6 +24,58 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _detect_execution_provider(executor: Any) -> str:
+    """
+    Detect the physical execution provider for a Cirq executor.
+
+    This distinguishes between the SDK (always "cirq") and the physical
+    execution platform where circuits actually run.
+
+    Parameters
+    ----------
+    executor : Any
+        Cirq sampler or simulator.
+
+    Returns
+    -------
+    str
+        Physical provider identifier:
+        - "local" - Local simulators (Simulator, DensityMatrixSimulator, etc.)
+        - "google_quantum" - Google Quantum Engine / Quantum AI
+        - "ionq" - IonQ hardware via cirq_ionq
+        - "aqt" - Alpine Quantum Technologies
+        - "pasqal" - Pasqal neutral atoms
+        - "rigetti" - Rigetti via cirq_rigetti
+    """
+    class_name = executor.__class__.__name__.lower()
+    module = getattr(executor, "__module__", "").lower()
+
+    # Google Quantum Engine / Quantum AI
+    if "engine" in module or "google" in module:
+        return "google_quantum"
+    if "processor" in class_name and "google" in module:
+        return "google_quantum"
+
+    # IonQ
+    if "ionq" in module or "ionq" in class_name:
+        return "ionq"
+
+    # AQT (Alpine Quantum Technologies)
+    if "aqt" in module or "aqt" in class_name:
+        return "aqt"
+
+    # Pasqal
+    if "pasqal" in module or "pasqal" in class_name:
+        return "pasqal"
+
+    # Rigetti
+    if "rigetti" in module or "rigetti" in class_name:
+        return "rigetti"
+
+    # Default: local simulator
+    return "local"
+
+
 def _resolve_backend_type(executor: Any) -> str:
     """
     Resolve backend_type to a schema-valid value.
@@ -359,7 +411,7 @@ def create_device_snapshot(
     >>> snapshot.backend_name
     'Simulator'
     >>> snapshot.provider
-    'cirq'
+    'local'
     """
     if executor is None:
         raise ValueError("Cannot create device snapshot from None executor")
@@ -376,6 +428,13 @@ def create_device_snapshot(
     except Exception as e:
         logger.debug("Failed to resolve backend type: %s", e)
         backend_type = "simulator"
+
+    # Detect physical provider (not SDK frontend)
+    try:
+        physical_provider = _detect_execution_provider(executor)
+    except Exception as e:
+        logger.debug("Failed to detect execution provider: %s", e)
+        physical_provider = "local"
 
     try:
         num_qubits = _extract_num_qubits(executor)
@@ -405,6 +464,8 @@ def create_device_snapshot(
     if tracker is not None:
         try:
             raw_properties = _build_raw_properties(executor)
+            # Include execution provider in raw properties
+            raw_properties["execution_provider"] = physical_provider
             raw_properties_ref = tracker.log_json(
                 name="device_raw_properties",
                 obj=raw_properties,
@@ -419,7 +480,7 @@ def create_device_snapshot(
         captured_at=utc_now_iso(),
         backend_name=backend_name,
         backend_type=backend_type,
-        provider="cirq",
+        provider=physical_provider,  # Physical provider, not "cirq"
         num_qubits=num_qubits,
         connectivity=connectivity,
         native_gates=native_gates,

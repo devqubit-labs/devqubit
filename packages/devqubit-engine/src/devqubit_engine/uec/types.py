@@ -188,4 +188,23 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
+        """Return True if validation passed."""
         return self.valid
+
+    def __iter__(self):
+        """Iterate over validation errors."""
+        return iter(self.errors)
+
+    def __len__(self) -> int:
+        """Return number of validation errors."""
+        return len(self.errors)
+
+    @property
+    def ok(self) -> bool:
+        """Alias for valid - returns True if no errors."""
+        return self.valid
+
+    @property
+    def error_count(self) -> int:
+        """Return the number of validation errors."""
+        return len(self.errors)
