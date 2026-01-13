@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.core.snapshot import DeviceSnapshot, FrontendConfig
+from devqubit_engine.uec.device import DeviceSnapshot, FrontendConfig
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_pennylane.utils import (
@@ -34,7 +34,7 @@ from devqubit_pennylane.utils import (
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.tracker import Run
+    from devqubit_engine.core.run import Run
 
 logger = logging.getLogger(__name__)
 

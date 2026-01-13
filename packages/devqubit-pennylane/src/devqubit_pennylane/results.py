@@ -14,12 +14,12 @@ import logging
 from typing import Any
 
 import numpy as np
-from devqubit_engine.core.snapshot import (
+from devqubit_engine.uec.result import (
     NormalizedCounts,
     NormalizedExpectation,
     ResultSnapshot,
-    ResultType,
 )
+from devqubit_engine.uec.types import ResultType
 
 
 logger = logging.getLogger(__name__)

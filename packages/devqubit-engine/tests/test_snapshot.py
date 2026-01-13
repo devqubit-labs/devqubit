@@ -7,26 +7,26 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from devqubit_engine.core.snapshot import (
+from devqubit_engine.uec.calibration import (
     DeviceCalibration,
-    DeviceSnapshot,
-    ExecutionEnvelope,
-    ExecutionSnapshot,
-    FrontendConfig,
     GateCalibration,
-    NormalizedCounts,
+    QubitCalibration,
+)
+from devqubit_engine.uec.device import DeviceSnapshot, FrontendConfig
+from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
-    QubitCalibration,
-    ResultSnapshot,
     TranspilationInfo,
-    ValidationResult,
 )
-from devqubit_engine.core.types import (
+from devqubit_engine.uec.result import NormalizedCounts, ResultSnapshot
+from devqubit_engine.uec.types import (
     ArtifactRef,
     ProgramRole,
     ResultType,
     TranspilationMode,
+    ValidationResult,
 )
 
 

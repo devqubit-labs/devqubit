@@ -13,7 +13,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.core.snapshot import DeviceCalibration, DeviceSnapshot
+from devqubit_engine.uec.calibration import DeviceCalibration
+from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.calibration import extract_calibration_from_properties
@@ -21,7 +22,7 @@ from devqubit_qiskit.utils import get_backend_name, qiskit_version
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.tracker import Run
+    from devqubit_engine.core.run import Run
 
 logger = logging.getLogger(__name__)
 

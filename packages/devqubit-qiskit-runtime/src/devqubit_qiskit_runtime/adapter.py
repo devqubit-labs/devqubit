@@ -65,17 +65,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from devqubit_engine.circuit.models import CircuitFormat
-from devqubit_engine.core.snapshot import (
-    DeviceSnapshot,
-    ExecutionEnvelope,
-    ExecutionSnapshot,
+from devqubit_engine.core.run import Run
+from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
-    ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
-from devqubit_engine.core.types import ProgramRole, TranspilationMode
+from devqubit_engine.uec.result import ResultSnapshot
+from devqubit_engine.uec.types import (
+    ProgramRole,
+    TranspilationMode,
+)
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.serialization import QiskitCircuitSerializer

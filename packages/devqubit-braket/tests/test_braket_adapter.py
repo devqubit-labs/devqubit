@@ -16,7 +16,7 @@ from devqubit_braket.adapter import (
     _is_program_set,
     _materialize_task_spec,
 )
-from devqubit_engine.core.tracker import track
+from devqubit_engine.core.run import track
 
 
 def _artifact_kinds(run_loaded) -> list[str]:

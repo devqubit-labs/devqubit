@@ -49,18 +49,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from devqubit_engine.circuit.models import CircuitFormat
-from devqubit_engine.core.snapshot import (
-    DeviceSnapshot,
-    ExecutionEnvelope,
-    ExecutionSnapshot,
-    NormalizedCounts,
+from devqubit_engine.core.run import Run
+from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
-    ResultSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.core.tracker import Run
-from devqubit_engine.core.types import (
+from devqubit_engine.uec.result import NormalizedCounts, ResultSnapshot
+from devqubit_engine.uec.types import (
     ProgramRole,
     ResultType,
     TranspilationMode,

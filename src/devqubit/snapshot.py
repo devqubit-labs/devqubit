@@ -42,23 +42,20 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.snapshot import (
-        DeviceSnapshot,
-        ExecutionEnvelope,
-        ExecutionSnapshot,
-        ProgramSnapshot,
-        ResultSnapshot,
-        ValidationResult,
-    )
-
+    from devqubit_engine.uec.device import DeviceSnapshot
+    from devqubit_engine.uec.envelope import ExecutionEnvelope
+    from devqubit_engine.uec.execution import ExecutionSnapshot
+    from devqubit_engine.uec.program import ProgramSnapshot
+    from devqubit_engine.uec.result import ResultSnapshot
+    from devqubit_engine.uec.types import ValidationResult
 
 _LAZY_IMPORTS = {
-    "ExecutionEnvelope": ("devqubit_engine.snapshot", "ExecutionEnvelope"),
-    "DeviceSnapshot": ("devqubit_engine.snapshot", "DeviceSnapshot"),
-    "ProgramSnapshot": ("devqubit_engine.snapshot", "ProgramSnapshot"),
-    "ExecutionSnapshot": ("devqubit_engine.snapshot", "ExecutionSnapshot"),
-    "ResultSnapshot": ("devqubit_engine.snapshot", "ResultSnapshot"),
-    "ValidationResult": ("devqubit_engine.snapshot", "ValidationResult"),
+    "ExecutionEnvelope": ("devqubit_engine.uec.envelope", "ExecutionEnvelope"),
+    "DeviceSnapshot": ("devqubit_engine.uec.device", "DeviceSnapshot"),
+    "ProgramSnapshot": ("devqubit_engine.uec.program", "ProgramSnapshot"),
+    "ExecutionSnapshot": ("devqubit_engine.uec.execution", "ExecutionSnapshot"),
+    "ResultSnapshot": ("devqubit_engine.uecresult", "ResultSnapshot"),
+    "ValidationResult": ("devqubit_engine.uec.types", "ValidationResult"),
 }
 
 

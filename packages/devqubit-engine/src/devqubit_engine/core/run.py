@@ -17,7 +17,7 @@ Examples
 --------
 Basic usage with context manager:
 
->>> from devqubit_engine.core.tracker import track
+>>> from devqubit_engine.core.run import track
 >>> with track(project="bell_state") as run:
 ...     run.log_param("shots", 1000)
 ...     run.log_param("optimization_level", 3)
@@ -26,7 +26,7 @@ Basic usage with context manager:
 
 Using the wrap pattern for automatic artifact logging:
 
->>> from devqubit_engine.core.tracker import track, wrap_backend
+>>> from devqubit_engine.core.run import track, wrap_backend
 >>> from qiskit_aer import AerSimulator
 >>> with track(project="bell_state") as run:
 ...     backend = wrap_backend(run, AerSimulator())
@@ -44,11 +44,11 @@ from typing import Any, Sequence
 from devqubit_engine.artifacts import get_artifact_digests
 from devqubit_engine.core.config import Config, get_config
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.core.snapshot import ExecutionEnvelope
-from devqubit_engine.core.types import ArtifactRef
 from devqubit_engine.schema.validation import validate_run_record
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.types import ArtifactRef
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
 from devqubit_engine.utils.hashing import sha256_digest
 from devqubit_engine.utils.qasm3 import canonicalize_qasm3, coerce_openqasm3_sources
@@ -971,7 +971,7 @@ class Run:
         --------
         wrap_backend : Standalone convenience function.
         """
-        from devqubit_engine.core.plugins import resolve_adapter
+        from devqubit_engine.core.adapters import resolve_adapter
 
         adapter = resolve_adapter(executor)
 
@@ -1231,7 +1231,7 @@ def wrap_backend(run: Run, backend: Any, **kwargs: Any) -> Any:
 
     Examples
     --------
-    >>> from devqubit_engine.core.tracker import track, wrap_backend
+    >>> from devqubit_engine.core.run import track, wrap_backend
     >>> from qiskit_aer import AerSimulator
     >>>
     >>> with track(project="bell") as run:

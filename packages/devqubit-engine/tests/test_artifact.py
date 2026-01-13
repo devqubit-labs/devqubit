@@ -14,7 +14,7 @@ from devqubit_engine.artifacts import (
     get_counts,
     list_artifacts,
 )
-from devqubit_engine.core.tracker import track
+from devqubit_engine.core.run import track
 
 
 class TestFindArtifact:

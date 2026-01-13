@@ -15,7 +15,7 @@ from pathlib import Path
 from devqubit_engine.bundle.pack import pack_run, unpack_bundle
 from devqubit_engine.compare.diff import ComparisonResult, diff, diff_runs
 from devqubit_engine.compare.results import ProgramMatchMode
-from devqubit_engine.core.tracker import track
+from devqubit_engine.core.run import track
 
 
 class TestFullWorkflow:

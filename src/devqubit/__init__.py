@@ -98,18 +98,18 @@ if TYPE_CHECKING:
     from devqubit_engine.compare.verify import verify, verify_against_baseline
     from devqubit_engine.core.config import Config, get_config, set_config
     from devqubit_engine.core.record import RunRecord
-    from devqubit_engine.core.tracker import Run, track, wrap_backend
-    from devqubit_engine.core.types import ArtifactRef
+    from devqubit_engine.core.run import Run, track, wrap_backend
     from devqubit_engine.storage.factory import create_registry, create_store
+    from devqubit_engine.uec.types import ArtifactRef
     from devqubit_ui.app import run_server
 
 
 _LAZY_IMPORTS = {
-    "Run": ("devqubit_engine.core.tracker", "Run"),
-    "track": ("devqubit_engine.core.tracker", "track"),
-    "wrap_backend": ("devqubit_engine.core.tracker", "wrap_backend"),
+    "Run": ("devqubit_engine.core.run", "Run"),
+    "track": ("devqubit_engine.core.run", "track"),
+    "wrap_backend": ("devqubit_engine.core.run", "wrap_backend"),
     "RunRecord": ("devqubit_engine.core.record", "RunRecord"),
-    "ArtifactRef": ("devqubit_engine.core.types", "ArtifactRef"),
+    "ArtifactRef": ("devqubit_engine.uec.types", "ArtifactRef"),
     "diff": ("devqubit_engine.compare.diff", "diff"),
     "diff_runs": ("devqubit_engine.compare.diff", "diff_runs"),
     "verify": ("devqubit_engine.compare.verify", "verify"),

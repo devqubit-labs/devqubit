@@ -146,7 +146,7 @@ import logging
 logging.getLogger("devqubit_engine").setLevel(logging.DEBUG)
 
 # Or for specific modules
-logging.getLogger("devqubit_engine.core.tracker").setLevel(logging.DEBUG)
+logging.getLogger("devqubit_engine.core.run").setLevel(logging.DEBUG)
 ```
 
 Log levels:

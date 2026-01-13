@@ -25,7 +25,7 @@ from statistics import median
 from typing import Any
 
 from devqubit_braket.utils import get_nested, obj_to_dict, to_float
-from devqubit_engine.core.snapshot import (
+from devqubit_engine.uec.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,

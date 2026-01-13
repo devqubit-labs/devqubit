@@ -29,7 +29,7 @@ from devqubit_engine.circuit.summary import (
     CircuitSummary,
     summarize_circuit_data,
 )
-from devqubit_engine.core.types import ArtifactRef
+from devqubit_engine.uec.types import ArtifactRef
 
 
 def sdk_available(sdk_name: str) -> bool:
