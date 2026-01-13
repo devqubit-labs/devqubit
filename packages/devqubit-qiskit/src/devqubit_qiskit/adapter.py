@@ -53,21 +53,26 @@ from devqubit_engine.core.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot
+from devqubit_engine.uec.producer import ProducerInfo
 from devqubit_engine.uec.program import (
     ProgramArtifact,
     ProgramSnapshot,
     TranspilationInfo,
 )
-from devqubit_engine.uec.result import NormalizedCounts, ResultSnapshot
+from devqubit_engine.uec.result import (
+    CountsFormat,
+    ResultError,
+    ResultItem,
+    ResultSnapshot,
+)
 from devqubit_engine.uec.types import (
+    ArtifactRef,
     ProgramRole,
-    ResultType,
     TranspilationMode,
 )
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.results import (
-    detect_result_type,
     extract_result_metadata,
     normalize_result_counts,
 )
@@ -79,6 +84,9 @@ from qiskit.providers.backend import BackendV2
 
 
 logger = logging.getLogger(__name__)
+
+# Adapter version for ProducerInfo
+_ADAPTER_VERSION = "0.4.0"
 
 # Module-level serializer instance
 _serializer = QiskitCircuitSerializer()
@@ -430,6 +438,35 @@ def _create_execution_snapshot(
     )
 
 
+def _detect_physical_provider(backend: Any) -> str:
+    """
+    Detect physical provider from backend (not SDK).
+
+    UEC requires provider to be the physical backend provider,
+    not the SDK name. SDK goes in producer.frontends[].
+
+    Parameters
+    ----------
+    backend : Any
+        Qiskit backend instance.
+
+    Returns
+    -------
+    str
+        Physical provider: "ibm_quantum", "aer", "fake", or "local".
+    """
+    module_name = type(backend).__module__.lower()
+    backend_name = get_backend_name(backend).lower()
+
+    if "ibm" in module_name or "ibm_" in backend_name:
+        return "ibm_quantum"
+    if "qiskit_aer" in module_name or "aer" in module_name:
+        return "aer"
+    if "fake" in module_name:
+        return "fake"
+    return "local"
+
+
 def _create_result_snapshot(
     tracker: Run,
     backend_name: str,
@@ -438,7 +475,8 @@ def _create_result_snapshot(
     """
     Create a ResultSnapshot from a Qiskit Result object.
 
-    Detects result type and extracts appropriate normalized data.
+    Uses UEC 1.0 structure with items[], CountsFormat for
+    cross-SDK comparability.
 
     Parameters
     ----------
@@ -452,46 +490,41 @@ def _create_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot.
+        Structured result snapshot with items[].
     """
     # Handle None result
     if result is None:
         return ResultSnapshot(
-            result_type=ResultType.OTHER,
-            raw_result_ref=None,
-            counts=[],
-            num_experiments=0,
             success=False,
-            error_message="Result is None",
+            status="failed",
+            items=[],
+            error=ResultError(type="NullResult", message="Result is None"),
             metadata={"backend_name": backend_name},
         )
 
-    # Detect result type
-    result_type = detect_result_type(result)
-
-    # Serialize full result
+    # Serialize full result as artifact
+    raw_result_ref: ArtifactRef | None = None
     try:
         if hasattr(result, "to_dict") and callable(result.to_dict):
             result_dict = result.to_dict()
         else:
             result_dict = result
         payload = to_jsonable(result_dict)
+        raw_result_ref = tracker.log_json(
+            name="qiskit.result",
+            obj=payload,
+            role="results",
+            kind="result.qiskit.result_json",
+        )
     except Exception as e:
         logger.debug("Failed to serialize result to dict: %s", e)
-        payload = {"repr": repr(result)[:2000]}
 
-    raw_result_ref = tracker.log_json(
-        name="qiskit.result",
-        obj=payload,
-        role="results",
-        kind="result.qiskit.result_json",
-    )
-
-    # Extract and log measurement counts
+    # Extract measurement counts
     counts_data = normalize_result_counts(result)
-    normalized_counts: list[NormalizedCounts] = []
+    experiments = counts_data.get("experiments", [])
 
-    if counts_data.get("experiments"):
+    # Log counts as separate artifact
+    if experiments:
         tracker.log_json(
             name="counts",
             obj=counts_data,
@@ -499,32 +532,80 @@ def _create_result_snapshot(
             kind="result.counts.json",
         )
 
-        # Build normalized counts list
-        for exp in counts_data["experiments"]:
-            normalized_counts.append(
-                NormalizedCounts(
-                    circuit_index=exp.get("index", 0),
-                    counts=exp.get("counts", {}),
-                    shots=exp.get("shots"),
-                    name=exp.get("name"),
-                )
-            )
+    # Qiskit counts format metadata
+    # Qiskit uses little-endian (cbit[0] on right) = UEC canonical
+    counts_format = CountsFormat(
+        source_sdk="qiskit",
+        source_key_format="qiskit_little_endian",
+        bit_order="cbit0_right",  # Qiskit native = UEC canonical
+        transformed=False,  # No transformation needed
+    )
 
-    # Extract metadata
+    # Build ResultItem list
+    items: list[ResultItem] = []
+    for exp in experiments:
+        counts = exp.get("counts", {})
+        shots = exp.get("shots")
+        item_index = exp.get("index", 0)
+
+        # Ensure counts keys are strings and values are ints
+        normalized_counts = {str(k): int(v) for k, v in counts.items()}
+
+        items.append(
+            ResultItem(
+                item_index=item_index,
+                success=True,
+                counts={
+                    "counts": normalized_counts,
+                    "shots": shots,
+                    "format": counts_format.to_dict(),
+                },
+            )
+        )
+
+    # Extract metadata for status
     meta = extract_result_metadata(result)
     success = meta.get("success", True)
+    status = "completed" if success else "failed"
 
-    # Build result snapshot
     return ResultSnapshot(
-        result_type=result_type,
-        raw_result_ref=raw_result_ref,
-        counts=normalized_counts,
-        num_experiments=len(counts_data.get("experiments", [])),
         success=success,
+        status=status,
+        items=items,
+        raw_result_ref=raw_result_ref,
         metadata={
             "backend_name": backend_name,
+            "num_experiments": len(experiments),
             **meta,
         },
+    )
+
+
+def _create_failure_result_snapshot(
+    exception: BaseException,
+    backend_name: str,
+) -> ResultSnapshot:
+    """
+    Create a ResultSnapshot for a failed execution.
+
+    Used when job.result() raises an exception. Ensures envelope
+    is always created even on failures (UEC P0 requirement).
+
+    Parameters
+    ----------
+    exception : BaseException
+        The exception that caused the failure.
+    backend_name : str
+        Backend name for metadata.
+
+    Returns
+    -------
+    ResultSnapshot
+        Failed result snapshot with error details.
+    """
+    return ResultSnapshot.create_failed(
+        exception=exception,
+        metadata={"backend_name": backend_name},
     )
 
 
@@ -593,16 +674,19 @@ def _create_minimal_device_snapshot(
         Minimal snapshot with available information.
     """
     backend_name = get_backend_name(backend)
-
-    # Try to determine backend type
-    backend_type = "unknown"
     name_lower = backend_name.lower()
     type_lower = type(backend).__name__.lower()
 
-    if any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
-        backend_type = "simulator"
-    elif any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
+    # Determine backend type - default to simulator (safer fallback)
+    # Schema allows: "hardware", "simulator", "emulator"
+    backend_type = "simulator"
+    if any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
         backend_type = "hardware"
+    elif any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
+        backend_type = "simulator"
+
+    # Detect physical provider (not SDK)
+    provider = _detect_physical_provider(backend)
 
     # Try to get num_qubits
     num_qubits = None
@@ -615,7 +699,7 @@ def _create_minimal_device_snapshot(
         captured_at=captured_at,
         backend_name=backend_name,
         backend_type=backend_type,
-        provider="qiskit",
+        provider=provider,
         num_qubits=num_qubits,
         sdk_versions={"qiskit": qiskit_version()},
     )
@@ -734,6 +818,10 @@ class TrackedJob:
         """
         Retrieve job result and log artifacts.
 
+        Always creates an envelope - even when job.result() fails.
+        This is a UEC requirement (P0): envelope must exist for
+        failure cases to enable debugging and telemetry.
+
         Idempotent: calling result() multiple times will only log once.
 
         Parameters
@@ -747,10 +835,24 @@ class TrackedJob:
         -------
         Result
             Qiskit Result object.
-        """
-        result = self.job.result(*args, **kwargs)
 
-        # Idempotent result logging - only log once
+        Raises
+        ------
+        Exception
+            Re-raises any exception from job.result() after logging
+            the failure envelope.
+        """
+        # Try to get result - may raise exception
+        try:
+            result = self.job.result(*args, **kwargs)
+        except Exception as exc:
+            # P0: ALWAYS create failure envelope before re-raising
+            if self.should_log_results and not self._result_logged:
+                self._result_logged = True
+                self._log_failure(exc)
+            raise  # Re-raise original exception with original traceback
+
+        # Happy path - log successful result
         if self.should_log_results and not self._result_logged:
             self._result_logged = True
 
@@ -770,31 +872,26 @@ class TrackedJob:
                         self.result_snapshot,
                     )
 
-                # Update tracker record (used by fingerprint computation)
+                # Update tracker record
                 if self.result_snapshot is not None:
-                    result_type_str = (
-                        self.result_snapshot.result_type.value
-                        if hasattr(self.result_snapshot.result_type, "value")
-                        else str(self.result_snapshot.result_type)
-                    )
                     self.tracker.record["results"] = {
                         "completed_at": utc_now_iso(),
                         "backend_name": self.backend_name,
-                        "num_experiments": self.result_snapshot.num_experiments,
-                        "result_type": result_type_str,
+                        "success": self.result_snapshot.success,
+                        "status": self.result_snapshot.status,
+                        "num_items": len(self.result_snapshot.items),
                         **self.result_snapshot.metadata,
                     }
 
                 logger.debug("Logged results on %s", self.backend_name)
 
             except Exception as e:
-                # Log error but don't fail - result retrieval should always succeed
+                # Log error but don't fail - result retrieval should succeed
                 logger.warning(
                     "Failed to log results for %s: %s",
                     self.backend_name,
                     e,
                 )
-                # Record error in tracker for visibility
                 self.tracker.record.setdefault("warnings", []).append(
                     {
                         "type": "result_logging_failed",
@@ -804,6 +901,54 @@ class TrackedJob:
                 )
 
         return result
+
+    def _log_failure(self, exc: Exception) -> None:
+        """
+        Log failure envelope when job.result() raises an exception.
+
+        Parameters
+        ----------
+        exc : Exception
+            The exception that was raised.
+        """
+        try:
+            # Create failure result snapshot
+            self.result_snapshot = _create_failure_result_snapshot(
+                exception=exc,
+                backend_name=self.backend_name,
+            )
+
+            # Finalize envelope with failure result
+            if self.envelope is not None:
+                _finalize_envelope_with_result(
+                    self.tracker,
+                    self.envelope,
+                    self.result_snapshot,
+                )
+
+            # Update tracker record with failure info
+            self.tracker.record["results"] = {
+                "completed_at": utc_now_iso(),
+                "backend_name": self.backend_name,
+                "success": False,
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "error_message": str(exc)[:500],
+            }
+
+            logger.debug(
+                "Logged failure envelope for %s: %s",
+                self.backend_name,
+                type(exc).__name__,
+            )
+
+        except Exception as log_error:
+            # Last resort - don't let logging failure mask original error
+            logger.error(
+                "Failed to log failure envelope for %s: %s",
+                self.backend_name,
+                log_error,
+            )
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped job."""
@@ -961,10 +1106,14 @@ class TrackedBackend:
                 envelope=None,
             )
 
+        # Detect physical provider (not SDK)
+        detected_provider = _detect_physical_provider(self.backend)
+
         # Set tags
         self.tracker.set_tag("backend_name", backend_name)
-        self.tracker.set_tag("provider", "qiskit")
-        self.tracker.set_tag("adapter", "qiskit")
+        self.tracker.set_tag("sdk", "qiskit")
+        self.tracker.set_tag("adapter", "devqubit-qiskit")
+        self.tracker.set_tag("provider", detected_provider)
 
         # Log device snapshot (once per run)
         if not self._snapshot_logged:
@@ -1013,7 +1162,8 @@ class TrackedBackend:
             self.tracker.record["backend"] = {
                 "name": backend_name,
                 "type": self.backend.__class__.__name__,
-                "provider": "qiskit",
+                "provider": detected_provider,
+                "sdk": "qiskit",
             }
 
             self._logged_execution_count += 1
@@ -1075,14 +1225,32 @@ class TrackedBackend:
                     num_circuits=len(circuit_list),
                 )
 
+            # Create ProducerInfo for SDK stack tracking
+            producer = ProducerInfo.create(
+                adapter="devqubit-qiskit",
+                adapter_version=_ADAPTER_VERSION,
+                sdk="qiskit",
+                sdk_version=qiskit_version(),
+                frontends=["qiskit"],
+            )
+
+            # Create envelope with pending result (will be updated in result())
+            # Using ResultSnapshot with status="pending" until result() is called
+            pending_result = ResultSnapshot(
+                success=False,
+                status="failed",  # Will be updated when result() completes
+                items=[],
+                metadata={"state": "pending"},
+            )
+
             envelope = ExecutionEnvelope(
-                schema_version="devqubit.envelope/0.1",
-                adapter="qiskit",
+                envelope_id=f"{utc_now_iso().replace(':', '').replace('-', '')[:20]}",
                 created_at=utc_now_iso(),
+                producer=producer,
+                result=pending_result,
                 device=self.device_snapshot,
                 program=program_snapshot,
                 execution=execution_snapshot,
-                result=None,  # Will be filled when result() is called
             )
 
         # Update stats
@@ -1178,12 +1346,13 @@ class QiskitAdapter:
         Returns
         -------
         dict
-            Backend description with keys: name, type, provider.
+            Backend description with keys: name, type, provider, sdk.
         """
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": "qiskit",
+            "provider": _detect_physical_provider(executor),
+            "sdk": "qiskit",
         }
 
     def wrap_executor(
