@@ -8,15 +8,37 @@ To keep runs reproducible and comparable, adapters produce a standardized **Exec
 
 ```
 ExecutionEnvelope
-├── device: DeviceSnapshot       # Backend state and calibration
-├── program: ProgramSnapshot     # Circuit artifacts and hashes
-├── execution: ExecutionSnapshot # Job metadata and settings
-└── result: ResultSnapshot       # Normalized measurement results
+├── schema: "devqubit.envelope/1.0"
+├── envelope_id, created_at       # Envelope metadata
+├── producer: ProducerInfo        # SDK stack + versions
+├── device: DeviceSnapshot        # Backend state and calibration
+├── program: ProgramSnapshot      # Circuit artifacts and hashes
+├── execution: ExecutionSnapshot  # Job metadata and settings
+└── result: ResultSnapshot        # Normalized results (items[])
 ```
 
 The envelope is stored as an artifact with role `envelope` (typically kind `devqubit.envelope.json`).
 
+The envelope schema is `devqubit.envelope/1.0` and requires `envelope_id`, `created_at`, `producer`, and `result`.
+
+
 ## Snapshots
+
+### ProducerInfo
+
+Captures the complete SDK/toolchain stack that produced the envelope:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Producer name (always `"devqubit"`) |
+| `engine_version` | devqubit-engine version |
+| `adapter` | Adapter package name (e.g., `devqubit-qiskit`) |
+| `adapter_version` | Adapter version |
+| `sdk` | Lowest/primary SDK (e.g., `qiskit`, `braket-sdk`, `cirq`) |
+| `sdk_version` | Primary SDK version |
+| `frontends` | Ordered SDK stack from highest to lowest layer |
+| `build` | Optional build identifier (commit/dirty flag) |
+
 
 ### DeviceSnapshot
 
@@ -25,8 +47,8 @@ Captures backend state at execution time:
 | Field | Description |
 |-------|-------------|
 | `backend_name` | Backend identifier (e.g., "ibm_brisbane", "aer_simulator") |
-| `backend_type` | "simulator" or "hardware" |
-| `provider` | Provider name (e.g., "ibm_quantum", "aer") |
+| `backend_type` | Backend type (e.g., `"hardware"`, `"simulator"`, `"emulator"`, `"unknown"`) |
+| `provider` | Physical provider (e.g., `"ibm_quantum"`, `"aws_braket"`, `"local"`) |
 | `num_qubits` | Number of qubits |
 | `connectivity` | Qubit coupling map as edge list |
 | `native_gates` | Supported gate set |
@@ -50,8 +72,8 @@ Captures circuit/program artifacts:
 
 Each artifact in `logical`/`physical` includes:
 - `format`: Circuit format (QPY, QASM3, etc.)
-- `artifact_ref`: Reference to stored artifact
-- `circuit_index`: Index in multi-circuit batch
+- `ref`: Reference to stored artifact
+- `index`: Index in multi-circuit batch
 - `name`: Circuit name (if available)
 
 ### ExecutionSnapshot
@@ -66,21 +88,22 @@ Captures submission and job metadata:
 | `execution_count` | Execution counter within run |
 | `transpilation` | Transpilation info (mode, transpiled_by) |
 | `options` | Raw execution options (args, kwargs) |
-| `sdk` | SDK used for execution |
+| `sdk` | Optional legacy field (prefer `producer.sdk` / `producer.frontends`) |
 
 ### ResultSnapshot
 
-Captures normalized execution results:
+Captures normalized execution results (always as a list of per-item results):
 
 | Field | Description |
 |-------|-------------|
-| `result_type` | Type of result (counts, quasi_dist, expectation, etc.) |
-| `raw_result_ref` | Reference to full serialized result artifact |
-| `counts` | Normalized measurement counts per circuit |
-| `num_experiments` | Number of experiments in result |
-| `success` | Whether execution succeeded |
-| `error_message` | Error message if failed |
+| `success` | Overall execution success |
+| `status` | `"completed"`, `"failed"`, `"cancelled"`, or `"partial"` |
+| `items` | List of `ResultItem` (one per circuit/parameter-set) |
+| `error` | Structured error info when failed |
+| `raw_result_ref` | Reference to the full serialized SDK result (optional) |
 | `metadata` | Additional result metadata |
+
+Each `ResultItem` may contain one primary payload, e.g. `counts`, `quasi_probability`, or `expectation`. If `counts` are present, they include `format` metadata (source SDK + bit ordering) to make results comparable across SDKs.
 
 ## Why UEC matters
 
@@ -135,10 +158,17 @@ if envelope_artifact:
     device = envelope["device"]
     print(f"Backend: {device['backend_name']}")
     print(f"Qubits: {device['num_qubits']}")
-
-    # Access results
-    for counts in envelope["result"]["counts"]:
-        print(f"Circuit {counts['circuit_index']}: {counts['counts']}")
+    # Access results (per-item)
+    for item in envelope["result"]["items"]:
+        if "counts" in item:
+            counts = item["counts"]["counts"]
+            print(f"Item {item['item_index']}: {counts}")
+        elif "quasi_probability" in item:
+            dist = item["quasi_probability"]["distribution"]
+            print(f"Item {item['item_index']} quasi: {dist}")
+        elif "expectation" in item:
+            value = item["expectation"]["value"]
+            print(f"Item {item['item_index']} expval: {value}")
 ```
 
-See {doc}`../guides/adapters` for what each SDK adapter captures.
+See `../guides/adapters` for what each SDK adapter captures.

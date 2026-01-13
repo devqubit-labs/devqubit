@@ -42,7 +42,7 @@ All adapters produce a standardized **ExecutionEnvelope** containing four canoni
 
 | Snapshot | Description |
 |----------|-------------|
-| `DeviceSnapshot` | Backend state, calibration, topology, and SDK versions |
+| `DeviceSnapshot` | Backend state, calibration, topology, and provider properties |
 | `ProgramSnapshot` | Logical and physical circuit artifacts with hashes |
 | `ExecutionSnapshot` | Submission metadata, transpilation info, job IDs |
 | `ResultSnapshot` | Normalized measurement counts or expectation values |
@@ -92,9 +92,9 @@ with track(project="bell-state") as run:
 | QPY binary | `qiskit.qpy.circuits` | `program` |
 | OpenQASM 3 | `source.openqasm3` | `program` |
 | Circuit diagram | `qiskit.circuits.diagram` | `program` |
-| Counts | `result.counts.json` | `results` |
-| Full result | `result.qiskit.result_json` | `results` |
-| Raw backend properties | `device.qiskit.raw_properties.json` | `device_raw` |
+| Counts | `result.counts.json` | `result` |
+| Full result | `result.qiskit.result_json` | `result_raw` |
+| Raw backend properties | `device.qiskit.raw_properties.json` | `device_snapshot` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -149,9 +149,9 @@ job = sampler.run([qc],
 | Transpiled QPY | `qiskit.qpy.circuits.transpiled` | `program` |
 | OpenQASM 3 | `source.openqasm3` | `program` |
 | PUB structure | `qiskit_runtime.pubs.json` | `program` |
-| Sampler counts | `result.counts.json` | `results` |
-| Estimator values | `result.qiskit_runtime.estimator.json` | `results` |
-| Raw runtime properties | `device.qiskit_runtime.raw_properties.json` | `device_raw` |
+| Sampler counts | `result.counts.json` | `result` |
+| Estimator values | `result.qiskit_runtime.estimator.json` | `result` |
+| Raw runtime properties | `device.qiskit_runtime.raw_properties.json` | `device_snapshot` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -177,9 +177,9 @@ with track(project="braket-experiment") as run:
 |----------|------|------|
 | OpenQASM 3 | `source.openqasm3` | `program` |
 | Circuit diagram | `braket.circuits.diagram` | `program` |
-| Counts | `result.counts.json` | `results` |
-| Raw result | `result.braket.raw.json` | `results` |
-| Raw device properties | `device.braket.raw_properties.json` | `device_raw` |
+| Counts | `result.counts.json` | `result` |
+| Raw result | `result.braket.raw.json` | `result_raw` |
+| Raw device properties | `device.braket.raw_properties.json` | `device_snapshot` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -225,8 +225,8 @@ with track(project="sweep") as run:
 |----------|------|------|
 | Cirq JSON | `cirq.circuit.json` | `program` |
 | Circuit diagram | `cirq.circuits.txt` | `program` |
-| Counts | `result.counts.json` | `results` |
-| Raw device properties | `device.cirq.raw_properties.json` | `device_raw` |
+| Counts | `result.counts.json` | `result` |
+| Raw device properties | `device.cirq.raw_properties.json` | `device_snapshot` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -261,8 +261,8 @@ with track(project="vqe") as run:
 |----------|------|------|
 | Tape JSON | `pennylane.tapes.json` | `program` |
 | Tape diagram | `pennylane.tapes.txt` | `program` |
-| Results | `result.pennylane.output.json` | `results` |
-| Raw device properties | `device.pennylane.raw_properties.json` | `device_raw` |
+| Results | `result.pennylane.output.json` | `result` |
+| Raw device properties | `device.pennylane.raw_properties.json` | `device_snapshot` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ### Multi-Layer Stack
@@ -400,7 +400,7 @@ with track(project="custom-sdk") as run:
     run.log_json(
         name="counts",
         obj={"00": 500, "11": 500},
-        role="results",
+        role="result",
         kind="result.counts.json",
     )
 ```
@@ -411,6 +411,7 @@ For full UEC compliance, create an ExecutionEnvelope:
 
 ```python
 from devqubit.uec import (
+    ProducerInfo,
     DeviceSnapshot,
     ExecutionEnvelope,
     ExecutionSnapshot,
@@ -418,11 +419,19 @@ from devqubit.uec import (
     ResultSnapshot,
 )
 
+producer = ProducerInfo.create(
+    adapter="devqubit-custom",
+    adapter_version="0.1.0",
+    sdk="custom-sdk",
+    sdk_version="1.0.0",
+    frontends=["custom-sdk"],
+)
+
 # Build snapshots
 device = DeviceSnapshot(
     backend_name="custom_device",
     backend_type="simulator",
-    provider="custom",
+    provider="local",
     captured_at=utc_now_iso(),
 )
 
@@ -435,13 +444,14 @@ program = ProgramSnapshot(
 execution = ExecutionSnapshot(
     submitted_at=utc_now_iso(),
     shots=1000,
-    sdk="custom",
 )
 
 # Create and log envelope
 envelope = ExecutionEnvelope(
-    schema_version="devqubit.envelope/0.1",
-    adapter="custom",
+    schema_version="devqubit.envelope/1.0",
+    envelope_id="01J0EXAMPLEENVELOPEID0000",
+    created_at=utc_now_iso(),
+    producer=producer,
     device=device,
     program=program,
     execution=execution,
