@@ -971,7 +971,7 @@ class Run:
         --------
         wrap_backend : Standalone convenience function.
         """
-        from devqubit_engine.core.plugins import resolve_adapter
+        from devqubit_engine.core.adapters import resolve_adapter
 
         adapter = resolve_adapter(executor)
 
