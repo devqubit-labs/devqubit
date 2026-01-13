@@ -158,7 +158,7 @@ class ProgramSnapshot:
     num_circuits: int | None = None
     transpilation: TranspilationInfo | None = None
 
-    schema_version: str = "devqubit.program_snapshot/0.1"
+    schema_version: str = "devqubit.program_snapshot/1.0"
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -199,5 +199,5 @@ class ProgramSnapshot:
             executed_hash=d.get("executed_hash"),
             num_circuits=d.get("num_circuits"),
             transpilation=transpilation,
-            schema_version=d.get("schema", "devqubit.program_snapshot/0.1"),
+            schema_version=d.get("schema", "devqubit.program_snapshot/1.0"),
         )

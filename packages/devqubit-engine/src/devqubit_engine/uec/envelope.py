@@ -61,7 +61,7 @@ class ExecutionEnvelope:
     envelope_id: str | None = None
     created_at: str | None = None
 
-    schema_version: str = "devqubit.envelope/0.1"
+    schema_version: str = "devqubit.envelope/1.0"
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {"schema": self.schema_version}
@@ -109,7 +109,7 @@ class ExecutionEnvelope:
             adapter=d.get("adapter"),
             envelope_id=d.get("envelope_id"),
             created_at=d.get("created_at"),
-            schema_version=d.get("schema", "devqubit.envelope/0.1"),
+            schema_version=d.get("schema", "devqubit.envelope/1.0"),
         )
 
     def validate(self) -> list[str]:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://devqubit.dev/schemas/devqubit.run.0.1.schema.json",
-  "title": "devqubit.run/0.1",
+  "$id": "https://devqubit.dev/schemas/devqubit.run.1.0.schema.json",
+  "title": "devqubit.run/1.0",
   "description": "Schema for quantum experiment run records in devqubit.",
   "type": "object",
   "required": ["schema", "run_id", "created_at", "project", "adapter", "data", "artifacts"],
@@ -35,7 +35,7 @@
 
   "properties": {
     "schema": {
-      "const": "devqubit.run/0.1",
+      "const": "devqubit.run/1.0",
       "description": "Schema version identifier."
     },
 

@@ -53,7 +53,7 @@ class ExecutionSnapshot:
     sdk: str | None = None
     completed_at: str | None = None
 
-    schema_version: str = "devqubit.execution_snapshot/0.1"
+    schema_version: str = "devqubit.execution_snapshot/1.0"
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -94,5 +94,5 @@ class ExecutionSnapshot:
             options=d.get("options", {}),
             sdk=d.get("sdk"),
             completed_at=d.get("completed_at"),
-            schema_version=d.get("schema", "devqubit.execution_snapshot/0.1"),
+            schema_version=d.get("schema", "devqubit.execution_snapshot/1.0"),
         )

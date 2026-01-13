@@ -112,7 +112,7 @@ class DeviceSnapshot:
     sdk_versions: dict[str, str] = field(default_factory=dict)
     raw_properties_ref: ArtifactRef | None = None
 
-    schema_version: str = "devqubit.device_snapshot/0.1"
+    schema_version: str = "devqubit.device_snapshot/1.0"
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -173,7 +173,7 @@ class DeviceSnapshot:
             frontend=frontend,
             sdk_versions=d.get("sdk_versions", {}),
             raw_properties_ref=raw_properties_ref,
-            schema_version=d.get("schema", "devqubit.device_snapshot/0.1"),
+            schema_version=d.get("schema", "devqubit.device_snapshot/1.0"),
         )
 
     def get_calibration_summary(self) -> dict[str, Any] | None:
