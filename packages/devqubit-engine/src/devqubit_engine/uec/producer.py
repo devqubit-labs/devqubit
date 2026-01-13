@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Producer information for UEC 2.0.
+Producer information for UEC.
 
 This module defines ProducerInfo which captures the complete SDK
 stack that produced an execution envelope. This is critical for:
@@ -87,8 +87,6 @@ class ProducerInfo:
         SDK stack from highest to lowest layer.
         E.g., ["pennylane", "amazon-braket-pennylane-plugin", "braket-sdk"]
         For simple setups: ["qiskit"]
-    build : str, optional
-        Build identifier (git commit, dirty flag).
     """
 
     name: str
@@ -98,7 +96,6 @@ class ProducerInfo:
     sdk: str
     sdk_version: str
     frontends: list[str] = field(default_factory=list)
-    build: str | None = None
 
     def __post_init__(self) -> None:
         """Validate required fields."""
@@ -127,8 +124,6 @@ class ProducerInfo:
             "sdk_version": self.sdk_version,
             "frontends": self.frontends,
         }
-        if self.build:
-            d["build"] = self.build
         return d
 
     @classmethod
@@ -153,8 +148,7 @@ class ProducerInfo:
             adapter_version=str(d.get("adapter_version", "")),
             sdk=str(d.get("sdk", "")),
             sdk_version=str(d.get("sdk_version", "")),
-            frontends=d.get("frontends", []),
-            build=d.get("build"),
+            frontends=d.get("frontends", ["unknown"]),
         )
 
     @classmethod
@@ -166,7 +160,6 @@ class ProducerInfo:
         sdk: str,
         sdk_version: str,
         frontends: list[str],
-        build: str | None = None,
     ) -> ProducerInfo:
         """
         Create ProducerInfo with auto-detected engine version.
@@ -185,8 +178,6 @@ class ProducerInfo:
             Primary SDK version string.
         frontends : list of str
             SDK stack from highest to lowest layer.
-        build : str, optional
-            Build identifier.
 
         Returns
         -------
@@ -201,5 +192,4 @@ class ProducerInfo:
             sdk=sdk,
             sdk_version=sdk_version,
             frontends=frontends,
-            build=build,
         )

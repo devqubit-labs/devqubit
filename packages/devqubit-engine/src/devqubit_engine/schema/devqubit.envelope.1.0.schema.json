@@ -4,6 +4,7 @@
   "title": "devqubit.envelope/1.0",
   "description": "UEC ExecutionEnvelope schema with production requirements",
   "type": "object",
+  "additionalProperties": false,
   "required": [
     "schema",
     "envelope_id",
@@ -17,7 +18,8 @@
     },
     "envelope_id": {
       "type": "string",
-      "pattern": "^[0-9A-Za-z-_]{20,40}$",
+      "minLength": 20,
+      "maxLength": 40,
       "description": "ULID or UUID identifier"
     },
     "created_at": {
@@ -40,21 +42,16 @@
     "result": {
       "$ref": "#/$defs/result_snapshot"
     },
-    "artifacts": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/artifact_ref"
-      }
-    },
     "metadata": {
       "type": "object",
-      "additionalProperties": true
+      "description": "Additional metadata (extensible)"
     }
   },
   "$defs": {
     "producer_info": {
       "type": "object",
       "description": "Complete SDK stack that produced this envelope",
+      "additionalProperties": false,
       "required": [
         "name",
         "adapter",
@@ -91,12 +88,16 @@
         },
         "build": {
           "type": "object",
+          "additionalProperties": false,
           "properties": {
             "commit": {
               "type": "string"
             },
             "dirty": {
               "type": "boolean"
+            },
+            "branch": {
+              "type": "string"
             }
           }
         }
@@ -111,32 +112,53 @@
         "schema": {
           "const": "devqubit.program_snapshot/1.0"
         },
-        "circuit_name": {
-          "type": "string"
-        },
-        "num_qubits": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "num_clbits": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "depth": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "gate_counts": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "integer"
+        "logical": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/program_artifact"
           }
         },
-        "fingerprint": {
+        "physical": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/program_artifact"
+          }
+        },
+        "program_hash": {
           "type": "string"
         },
-        "qasm": {
+        "num_circuits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "transpilation": {
+          "type": "object"
+        }
+      }
+    },
+    "program_artifact": {
+      "type": "object",
+      "required": [
+        "ref",
+        "role",
+        "format"
+      ],
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["logical", "physical"]
+        },
+        "format": {
           "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "index": {
+          "type": "integer"
         }
       }
     },
@@ -149,8 +171,16 @@
         "schema": {
           "const": "devqubit.device_snapshot/1.0"
         },
+        "captured_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "backend_name": {
           "type": "string"
+        },
+        "backend_type": {
+          "type": "string",
+          "enum": ["hardware", "simulator", "emulator"]
         },
         "provider": {
           "type": "string"
@@ -158,11 +188,34 @@
         "num_qubits": {
           "type": "integer"
         },
-        "simulator": {
-          "type": "boolean"
+        "connectivity": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "minItems": 2,
+            "maxItems": 2
+          }
         },
-        "fingerprint": {
-          "type": "string"
+        "native_gates": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "calibration": {
+          "type": "object"
+        },
+        "sdk_versions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "raw_properties_ref": {
+          "$ref": "#/$defs/artifact_ref"
         }
       }
     },
@@ -175,13 +228,6 @@
         "schema": {
           "const": "devqubit.execution_snapshot/1.0"
         },
-        "job_id": {
-          "type": "string"
-        },
-        "shots": {
-          "type": "integer",
-          "minimum": 1
-        },
         "submitted_at": {
           "type": "string",
           "format": "date-time"
@@ -190,11 +236,28 @@
           "type": "string",
           "format": "date-time"
         },
-        "wall_time_s": {
-          "type": "number"
+        "shots": {
+          "type": "integer",
+          "minimum": 1
         },
-        "execution_time_s": {
-          "type": "number"
+        "execution_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "job_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transpilation": {
+          "type": "object"
+        },
+        "options": {
+          "type": "object"
+        },
+        "sdk": {
+          "type": "string"
         }
       }
     },
@@ -204,7 +267,8 @@
       "required": [
         "schema",
         "success",
-        "status"
+        "status",
+        "items"
       ],
       "properties": {
         "schema": {
@@ -227,10 +291,16 @@
           "items": {
             "$ref": "#/$defs/result_item"
           },
-          "description": "Results as list"
+          "description": "Results as list (always present, may be empty)"
         },
         "error": {
           "$ref": "#/$defs/result_error"
+        },
+        "raw_result_ref": {
+          "$ref": "#/$defs/artifact_ref"
+        },
+        "metadata": {
+          "type": "object"
         }
       }
     },
@@ -370,9 +440,19 @@
     "normalized_expectation": {
       "type": "object",
       "required": [
+        "circuit_index",
+        "observable_index",
         "value"
       ],
       "properties": {
+        "circuit_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "observable_index": {
+          "type": "integer",
+          "minimum": 0
+        },
         "value": {
           "type": "number"
         },
@@ -416,25 +496,36 @@
     },
     "artifact_ref": {
       "type": "object",
+      "description": "Content-addressed artifact reference",
       "required": [
-        "role",
-        "uri"
+        "kind",
+        "digest",
+        "media_type",
+        "role"
       ],
       "properties": {
-        "role": {
-          "type": "string"
+        "kind": {
+          "type": "string",
+          "minLength": 3,
+          "description": "Artifact type identifier"
         },
-        "uri": {
-          "type": "string"
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Content digest (sha256:hex)"
         },
         "media_type": {
-          "type": "string"
+          "type": "string",
+          "minLength": 3,
+          "description": "MIME type"
         },
-        "sha256": {
-          "type": "string"
+        "role": {
+          "type": "string",
+          "description": "Logical role"
         },
-        "size_bytes": {
-          "type": "integer"
+        "meta": {
+          "type": "object",
+          "description": "Additional metadata"
         }
       }
     }
