@@ -298,7 +298,7 @@ class Run:
 
         # Initialize record structure
         self.record: dict[str, Any] = {
-            "schema": "devqubit.run/0.1",
+            "schema": "devqubit.run/1.0",
             "run_id": self._run_id,
             "created_at": utc_now_iso(),
             "project": {"name": project},
