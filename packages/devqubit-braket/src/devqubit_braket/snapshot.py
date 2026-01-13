@@ -30,7 +30,7 @@ from devqubit_braket.utils import (
     get_nested,
     obj_to_dict,
 )
-from devqubit_engine.core.snapshot import DeviceSnapshot
+from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.utils.time_utils import utc_now_iso
 
 
