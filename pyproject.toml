@@ -113,7 +113,7 @@ publish-url = "https://test.pypi.org/legacy/"
 explicit = true
 
 [tool.pytest.ini_options]
-testpaths = ["packages/*/tests"]
+testpaths = ["tests/", "packages/*/tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = ["--import-mode=importlib"]

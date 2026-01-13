@@ -10,7 +10,7 @@ a unified envelope container.
 
 Basic Usage
 -----------
->>> from devqubit.snapshot import ExecutionEnvelope
+>>> from devqubit.uec import ExecutionEnvelope
 >>> envelope = ExecutionEnvelope(
 ...     device=device_snapshot,
 ...     program=program_snapshot,
@@ -20,7 +20,7 @@ Basic Usage
 
 Validation
 ----------
->>> from devqubit.snapshot import ValidationResult
+>>> from devqubit.uec import ValidationResult
 >>> result = envelope.validate_schema()
 >>> if result.valid:
 ...     print("Schema valid")
@@ -54,7 +54,7 @@ _LAZY_IMPORTS = {
     "DeviceSnapshot": ("devqubit_engine.uec.device", "DeviceSnapshot"),
     "ProgramSnapshot": ("devqubit_engine.uec.program", "ProgramSnapshot"),
     "ExecutionSnapshot": ("devqubit_engine.uec.execution", "ExecutionSnapshot"),
-    "ResultSnapshot": ("devqubit_engine.uecresult", "ResultSnapshot"),
+    "ResultSnapshot": ("devqubit_engine.uec.result", "ResultSnapshot"),
     "ValidationResult": ("devqubit_engine.uec.types", "ValidationResult"),
 }
 
