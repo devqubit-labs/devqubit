@@ -88,6 +88,7 @@ from devqubit_qiskit_runtime.circuits import (
 )
 from devqubit_qiskit_runtime.envelope import (
     create_failure_result_snapshot,
+    detect_physical_provider,
     finalize_envelope_with_result,
 )
 from devqubit_qiskit_runtime.pubs import (
@@ -182,7 +183,7 @@ class TrackedRuntimeJob:
         This method is idempotent - calling it multiple times returns the same
         cached result and does not re-log artifacts.
 
-        P0 Compliance: If job.result() raises an exception, an envelope with
+        UEC Compliance: If job.result() raises an exception, an envelope with
         error details is still created and logged before re-raising.
 
         Returns
@@ -198,11 +199,11 @@ class TrackedRuntimeJob:
         if self._cached_result is not None:
             return self._cached_result
 
-        # P0: Wrap job.result() to ensure envelope is created even on failure
+        # Wrap job.result() to ensure envelope is created even on failure
         try:
             result = self.job.result(*args, **kwargs)
         except Exception as exc:
-            # P0: Log failure envelope before re-raising
+            # Log failure envelope before re-raising
             self._log_failure(exc)
             raise
 
@@ -270,7 +271,7 @@ class TrackedRuntimeJob:
         """
         Log failure envelope when job.result() raises an exception.
 
-        P0 Compliance: Ensures envelope is always created even on failures.
+        UEC Compliance: Ensures envelope is always created even on failures.
 
         Parameters
         ----------
@@ -763,8 +764,9 @@ class TrackedRuntimePrimitive:
                 envelope=None,
             )
 
-        # Tags
-        self.tracker.set_tag("provider", "qiskit-ibm-runtime")
+        # Tags - use physical provider, not SDK
+        physical_provider = detect_physical_provider(self.primitive)
+        self.tracker.set_tag("provider", physical_provider)
         self.tracker.set_tag("adapter", "qiskit-runtime")
         self.tracker.set_tag("backend_name", exec_name)
         self.tracker.set_tag("primitive_type", self.primitive_type)
@@ -830,7 +832,7 @@ class TrackedRuntimePrimitive:
             self.tracker.record["backend"] = {
                 "name": exec_name,
                 "type": self.primitive.__class__.__name__,
-                "provider": "qiskit-ibm-runtime",
+                "provider": physical_provider,  # Physical provider, not SDK
                 "primitive_type": self.primitive_type,
             }
 
@@ -1063,7 +1065,7 @@ class QiskitRuntimeAdapter:
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": "qiskit-ibm-runtime",
+            "provider": detect_physical_provider(executor),  # Physical provider
             "primitive_type": get_primitive_type(executor),
         }
 

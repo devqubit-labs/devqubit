@@ -37,11 +37,6 @@ def _count_kind(loaded, kind: str) -> int:
     return sum(1 for a in getattr(loaded, "artifacts", []) if a.kind == kind)
 
 
-def _get_artifacts_by_kind(loaded, kind: str) -> list:
-    """Get all artifacts of a specific kind."""
-    return [a for a in getattr(loaded, "artifacts", []) if a.kind == kind]
-
-
 class TestQiskitRuntimeAdapter:
     """Tests for adapter registration and primitive detection."""
 
@@ -76,13 +71,16 @@ class TestQiskitRuntimeAdapter:
         """Describes Sampler primitive correctly."""
         desc = QiskitRuntimeAdapter().describe_executor(fake_sampler)
 
-        # describe_executor still returns the SDK name for API compatibility
-        assert desc["provider"] == "qiskit-ibm-runtime"
+        assert desc["provider"] == "fake"
         assert desc["primitive_type"] == "sampler"
+        assert "name" in desc
+        assert "type" in desc
 
     def test_describe_estimator(self, fake_estimator):
         """Describes Estimator primitive correctly."""
         desc = QiskitRuntimeAdapter().describe_executor(fake_estimator)
+
+        assert desc["provider"] == "fake"  # For FakeEstimatorV2
         assert desc["primitive_type"] == "estimator"
 
     def test_wrap_executor_returns_tracked_primitive(

@@ -74,7 +74,7 @@ def create_failure_result_snapshot(
     Create a ResultSnapshot for a failed execution.
 
     Used when job.result() raises an exception. Ensures envelope
-    is always created even on failures (UEC P0 requirement).
+    is always created even on failures (UEC requirement).
 
     Parameters
     ----------
