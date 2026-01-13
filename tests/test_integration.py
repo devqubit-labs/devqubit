@@ -133,7 +133,6 @@ class TestCrossWorkspaceDiff:
 
         result = diff(run_id_a, run_id_b, registry=registry, store=store)
 
-        # Metrics comparison is in the result
         assert result.to_dict() is not None
 
 
@@ -163,7 +162,6 @@ class TestBundleDiff:
             registry=registry,
         )
 
-        # Compare bundle path to run_id
         result = diff(bundle_path, run_id, registry=registry, store=store)
 
         assert result.identical
@@ -183,7 +181,6 @@ class TestBundleDiff:
         bundle_a = tmp_path / "bundle_a.zip"
         bundle_b = tmp_path / "bundle_b.zip"
 
-        # Create and pack run A
         with track(project="test", capture_env=False, capture_git=False) as run_a:
             run_a.log_param("value", 100)
             run_id_a = run_a.run_id
@@ -195,7 +192,6 @@ class TestBundleDiff:
             registry=registry,
         )
 
-        # Create and pack run B with different param
         with track(project="test", capture_env=False, capture_git=False) as run_b:
             run_b.log_param("value", 200)
             run_id_b = run_b.run_id
@@ -207,7 +203,6 @@ class TestBundleDiff:
             registry=registry,
         )
 
-        # Compare bundles
         result = diff(bundle_a, bundle_b)
 
         assert result.run_id_a == run_id_a
@@ -245,7 +240,6 @@ class TestBundleReader:
         with Bundle(bundle_path) as bundle:
             assert bundle.run_id == run_id
             assert bundle.run_record is not None
-            # run_record is a dict when accessed from Bundle
             record = bundle.run_record
             if hasattr(record, "record"):
                 assert record.record["data"]["params"]["key"] == "value"
@@ -269,7 +263,6 @@ class TestArtifactRoundtrip:
         reg_dst = create_registry(f"file://{workspace_dst}")
         bundle_path = tmp_path / "bundle.zip"
 
-        # Create run with multiple artifact types
         with track(
             project="artifacts",
             store=store_src,
@@ -287,7 +280,6 @@ class TestArtifactRoundtrip:
             run.log_text(name="notes", text="Some notes", role="docs")
             run_id = run.run_id
 
-        # Pack and unpack
         pack_run(
             run_id=run_id,
             output_path=bundle_path,
@@ -300,7 +292,6 @@ class TestArtifactRoundtrip:
             dest_registry=reg_dst,
         )
 
-        # Verify all artifacts accessible
         loaded = reg_dst.load(run_id)
         assert len(loaded.artifacts) == 3
 
@@ -351,7 +342,6 @@ class TestArtifactRoundtrip:
             dest_registry=reg_dst,
         )
 
-        # Verify content
         restored_data = store_dst.get_bytes(digest)
         assert restored_data == original_data
 
@@ -371,7 +361,6 @@ class TestEndToEndScenarios:
         group_id = "sweep_shots"
         run_ids = []
 
-        # Run experiments with different shot counts
         for shots in [100, 500, 1000, 5000]:
             with track(
                 project="sweep_test",
@@ -379,15 +368,12 @@ class TestEndToEndScenarios:
                 group_name="Shot Count Sweep",
             ) as run:
                 run.log_param("shots", shots)
-                # Simulate metric that improves with more shots
                 run.log_metric("fidelity", 0.9 + (shots / 50000))
                 run_ids.append(run.run_id)
 
-        # Verify group
         runs_in_group = registry.list_runs_in_group(group_id)
         assert len(runs_in_group) == 4
 
-        # Compare first and last
         result = diff(run_ids[0], run_ids[-1], registry=registry, store=store)
 
         assert not result.params["match"]
@@ -417,3 +403,23 @@ class TestEndToEndScenarios:
         assert len(loaded.record["errors"]) == 1
         assert "RuntimeError" in loaded.record["errors"][0]["type"]
         assert "hardware error" in loaded.record["errors"][0]["message"]
+
+    def test_tags_workflow(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
+        """Tags can be added and queried."""
+        set_config(config)
+
+        with track(project="tags_test") as run:
+            run.set_tag("device", "ibm_perth")
+            run.set_tag("experiment", "calibration")
+            run_id = run.run_id
+
+        loaded = registry.load(run_id)
+        tags = loaded.record["data"]["tags"]
+        assert tags["device"] == "ibm_perth"
+        assert tags["experiment"] == "calibration"

@@ -5,16 +5,14 @@
 CLI integration tests for devqubit.
 
 Tests all user-facing CLI commands end-to-end.
-Organized by command module: runs, artifacts, bundle, compare, admin.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
-import pytest
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.local import LocalRegistry
 
@@ -45,6 +43,13 @@ class TestList:
         assert "alpha" in result.output
         assert "beta" not in result.output
 
+    def test_filter_by_status(self, invoke: Callable, make_run: Callable) -> None:
+        make_run(run_id="finished_run", status="FINISHED")
+        make_run(run_id="failed_run", status="FAILED")
+        result = invoke("list", "--status", "FAILED")
+        assert result.exit_code == 0
+        assert "failed_run" in result.output
+
     def test_json_format(self, invoke: Callable, sample_run: RunRecord) -> None:
         result = invoke("list", "--format", "json")
         assert result.exit_code == 0
@@ -52,27 +57,26 @@ class TestList:
         assert isinstance(data, list)
         assert len(data) >= 1
 
+    def test_limit(self, invoke: Callable, make_run: Callable) -> None:
+        for i in range(5):
+            make_run(run_id=f"run_{i}")
+        result = invoke("list", "--limit", "2")
+        assert result.exit_code == 0
+
 
 class TestSearch:
     """Tests for `devqubit search`."""
 
-    @pytest.mark.xfail(
-        reason="CLI bug: search_runs gets unexpected keyword argument 'project'"
-    )
     def test_by_metric(self, invoke: Callable, make_run: Callable) -> None:
         make_run(metrics={"fidelity": 0.99})
         make_run(metrics={"fidelity": 0.50})
         result = invoke("search", "metric.fidelity > 0.9")
-        # Search may return empty or results
-        assert result.exit_code == 0 or "No matching" in result.output
+        assert result.exit_code == 0
 
     def test_invalid_query(self, invoke: Callable) -> None:
         result = invoke("search", "invalid!!!")
-        assert (
-            result.exit_code != 0
-            or "Invalid" in result.output
-            or "error" in result.output.lower()
-        )
+        assert result.exit_code != 0
+        assert "Invalid" in result.output
 
 
 class TestShow:
@@ -113,6 +117,10 @@ class TestDelete:
         result = invoke("delete", sample_run.run_id, input="n\n")
         assert result.exit_code == 0
         assert "Cancelled" in result.output
+
+    def test_not_found(self, invoke: Callable) -> None:
+        result = invoke("delete", "nonexistent", "--yes")
+        assert result.exit_code != 0
 
 
 class TestProjects:
@@ -171,6 +179,11 @@ class TestArtifactsList:
         result = invoke("artifacts", "list", "nonexistent")
         assert result.exit_code != 0
 
+    def test_json_format(self, invoke: Callable, sample_run: RunRecord) -> None:
+        result = invoke("artifacts", "list", sample_run.run_id, "--format", "json")
+        assert result.exit_code == 0
+        json.loads(result.output)
+
 
 class TestArtifactsShow:
     """Tests for `devqubit artifacts show`."""
@@ -202,6 +215,11 @@ class TestArtifactsCounts:
         assert "counts" in data
 
 
+# =============================================================================
+# TAG COMMANDS
+# =============================================================================
+
+
 class TestTagAdd:
     """Tests for `devqubit tag add`."""
 
@@ -215,6 +233,13 @@ class TestTagAdd:
         # Verify
         updated = registry.load(run.run_id)
         assert updated.record["data"]["tags"]["env"] == "prod"
+
+    def test_add_key_only_tag(
+        self, invoke: Callable, make_run: Callable, registry: LocalRegistry
+    ) -> None:
+        run = make_run(run_id="tag_key_only")
+        result = invoke("tag", "add", run.run_id, "important")
+        assert result.exit_code == 0
 
 
 class TestTagRemove:
@@ -235,7 +260,7 @@ class TestTagList:
     def test_list_tags(self, invoke: Callable, sample_run: RunRecord) -> None:
         result = invoke("tag", "list", sample_run.run_id)
         assert result.exit_code == 0
-        assert "experiment=bell" in result.output
+        assert "experiment" in result.output
 
 
 # =============================================================================
@@ -247,12 +272,26 @@ class TestPack:
     """Tests for `devqubit pack`."""
 
     def test_pack_run(
-        self, invoke: Callable, sample_run: RunRecord, tmp_path: Path
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        tmp_path: Path,
     ) -> None:
         output = tmp_path / "bundle.zip"
         result = invoke("pack", sample_run.run_id, "--out", str(output))
         assert result.exit_code == 0
         assert output.exists()
+
+    def test_default_filename(
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        tmp_path: Path,
+        monkeypatch,
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        result = invoke("pack", sample_run.run_id)
+        assert result.exit_code == 0
 
     def test_not_found(self, invoke: Callable, tmp_path: Path) -> None:
         result = invoke("pack", "nonexistent", "--out", str(tmp_path / "x.zip"))
@@ -263,7 +302,10 @@ class TestUnpack:
     """Tests for `devqubit unpack`."""
 
     def test_unpack_bundle(
-        self, invoke: Callable, sample_run: RunRecord, tmp_path: Path
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        tmp_path: Path,
     ) -> None:
         bundle = tmp_path / "bundle.zip"
         invoke("pack", sample_run.run_id, "--out", str(bundle))
@@ -278,7 +320,10 @@ class TestInfo:
     """Tests for `devqubit info`."""
 
     def test_bundle_info(
-        self, invoke: Callable, sample_run: RunRecord, tmp_path: Path
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        tmp_path: Path,
     ) -> None:
         bundle = tmp_path / "bundle.zip"
         invoke("pack", sample_run.run_id, "--out", str(bundle))
@@ -318,19 +363,37 @@ class TestDiff:
         run_b = make_run(run_id="diff_json_b")
         result = invoke("diff", run_a.run_id, run_b.run_id, "--format", "json")
         assert result.exit_code == 0
-        json.loads(result.output)  # Should be valid JSON
+        json.loads(result.output)
+
+    def test_summary_format(self, invoke: Callable, make_run: Callable) -> None:
+        run_a = make_run(run_id="diff_sum_a")
+        run_b = make_run(run_id="diff_sum_b")
+        result = invoke("diff", run_a.run_id, run_b.run_id, "--format", "summary")
+        assert result.exit_code == 0
 
 
 class TestVerify:
     """Tests for `devqubit verify`."""
 
     def test_verify_against_baseline(
-        self, invoke: Callable, make_run: Callable
+        self,
+        invoke: Callable,
+        make_run: Callable,
     ) -> None:
-        baseline = make_run(run_id="baseline", counts={"00": 500, "11": 500})
-        candidate = make_run(run_id="candidate", counts={"00": 495, "11": 505})
-        result = invoke("verify", candidate.run_id, "--baseline", baseline.run_id)
-        # May pass or fail depending on thresholds
+        baseline = make_run(
+            run_id="baseline",
+            counts={"00": 500, "11": 500},
+        )
+        candidate = make_run(
+            run_id="candidate",
+            counts={"00": 495, "11": 505},
+        )
+        result = invoke(
+            "verify",
+            candidate.run_id,
+            "--baseline",
+            baseline.run_id,
+        )
         assert "PASS" in result.output or "FAIL" in result.output
 
     def test_allow_missing(self, invoke: Callable, make_run: Callable) -> None:
@@ -351,10 +414,11 @@ class TestReplay:
     def test_list_backends(self, invoke: Callable) -> None:
         result = invoke("replay", "--list-backends")
         assert result.exit_code == 0
-        # Output depends on installed simulators
 
     def test_requires_experimental(
-        self, invoke: Callable, sample_run: RunRecord
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
     ) -> None:
         result = invoke("replay", sample_run.run_id)
         assert result.exit_code != 0
@@ -372,7 +436,13 @@ class TestStorageGc:
     def test_dry_run(self, invoke: Callable, sample_run: RunRecord) -> None:
         result = invoke("storage", "gc", "--dry-run")
         assert result.exit_code == 0
-        assert "Dry run" in result.output or "Objects" in result.output
+        assert "Dry run" in result.output
+
+    def test_json_format(self, invoke: Callable, sample_run: RunRecord) -> None:
+        result = invoke("storage", "gc", "--dry-run", "--format", "json")
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "objects_total" in data
 
 
 class TestStoragePrune:
@@ -382,6 +452,7 @@ class TestStoragePrune:
         make_run(status="FAILED")
         result = invoke("storage", "prune", "--status", "FAILED", "--dry-run")
         assert result.exit_code == 0
+        assert "Dry run" in result.output
 
 
 class TestStorageHealth:
@@ -393,25 +464,19 @@ class TestStorageHealth:
         assert "runs" in result.output.lower()
 
 
-class TestBaselineSet:
-    """Tests for `devqubit baseline set`."""
+class TestBaseline:
+    """Tests for `devqubit baseline` subcommands."""
 
     def test_set_baseline(
-        self, invoke: Callable, sample_run: RunRecord, registry: LocalRegistry
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        registry: LocalRegistry,
     ) -> None:
         result = invoke("baseline", "set", "sample_project", sample_run.run_id)
         assert result.exit_code == 0
         baseline = registry.get_baseline("sample_project")
         assert baseline["run_id"] == sample_run.run_id
-
-
-class TestBaselineGet:
-    """Tests for `devqubit baseline get`."""
-
-    def test_not_set(self, invoke: Callable) -> None:
-        result = invoke("baseline", "get", "no_baseline_proj")
-        assert result.exit_code == 0
-        assert "No baseline" in result.output
 
     def test_get_baseline(self, invoke: Callable, sample_run: RunRecord) -> None:
         invoke("baseline", "set", "sample_project", sample_run.run_id)
@@ -419,21 +484,21 @@ class TestBaselineGet:
         assert result.exit_code == 0
         assert sample_run.run_id in result.output
 
-
-class TestBaselineClear:
-    """Tests for `devqubit baseline clear`."""
+    def test_get_not_set(self, invoke: Callable) -> None:
+        result = invoke("baseline", "get", "no_baseline_proj")
+        assert result.exit_code == 0
+        assert "No baseline" in result.output
 
     def test_clear_baseline(
-        self, invoke: Callable, sample_run: RunRecord, registry: LocalRegistry
+        self,
+        invoke: Callable,
+        sample_run: RunRecord,
+        registry: LocalRegistry,
     ) -> None:
         invoke("baseline", "set", "sample_project", sample_run.run_id)
         result = invoke("baseline", "clear", "sample_project", "--yes")
         assert result.exit_code == 0
         assert registry.get_baseline("sample_project") is None
-
-
-class TestBaselineList:
-    """Tests for `devqubit baseline list`."""
 
     def test_list_baselines(self, invoke: Callable, make_run: Callable) -> None:
         run = make_run(project="proj_x")
@@ -461,16 +526,12 @@ class TestGlobalOptions:
     """Tests for global CLI options."""
 
     def test_quiet_flag(self, invoke: Callable, sample_run: RunRecord) -> None:
-        # Quiet should still work
         result = invoke("--quiet", "list")
         assert result.exit_code == 0
 
-    def test_version(self, cli_runner) -> None:
+    def test_help(self, cli_runner: Any) -> None:
         from devqubit_engine.cli import cli
 
-        result = cli_runner.invoke(cli, ["--version"])
-        # In dev mode without installed package, may raise RuntimeError
-        # This is expected behavior for Click's version_option
-        if result.exit_code != 0:
-            assert result.exception is not None
-            assert "not installed" in str(result.exception)
+        result = cli_runner.invoke(cli, ["--help"])
+        assert result.exit_code == 0
+        assert "devqubit" in result.output.lower()

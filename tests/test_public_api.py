@@ -30,6 +30,7 @@ class TestModuleExports:
 
         # Comparison
         assert hasattr(devqubit, "diff")
+        assert hasattr(devqubit, "diff_runs")
         assert hasattr(devqubit, "verify")
         assert hasattr(devqubit, "verify_against_baseline")
 
@@ -46,14 +47,6 @@ class TestModuleExports:
         assert hasattr(devqubit, "Config")
         assert hasattr(devqubit, "get_config")
         assert hasattr(devqubit, "set_config")
-
-    def test_compare_submodule(self) -> None:
-        """devqubit.compare exports are correct."""
-        from devqubit import compare
-
-        assert hasattr(compare, "VerifyPolicy")
-        assert hasattr(compare, "ComparisonResult")
-        assert hasattr(compare, "VerifyResult")
 
     def test_version(self) -> None:
         """Version is accessible."""
@@ -90,7 +83,7 @@ class TestTracking:
             assert hasattr(run, "log_param")
             assert hasattr(run, "log_metric")
             assert hasattr(run, "set_tag")
-            assert hasattr(run, "log_bytes")  # artifact logging
+            assert hasattr(run, "log_bytes")
             assert hasattr(run, "wrap")
 
 
@@ -152,7 +145,6 @@ class TestBundle:
         run = make_run(run_id="bundle_test", counts={"00": 100})
         bundle_path = tmp_path / "test.zip"
 
-        # Pack
         result = pack_run(
             run_id=run.run_id,
             output_path=bundle_path,
@@ -227,7 +219,6 @@ class TestStorage:
         config = Config(root_dir=workspace)
         store = create_store(config=config)
 
-        # Store should work
         digest = store.put_bytes(b"test data")
         assert store.exists(digest)
         assert store.get_bytes(digest) == b"test data"
@@ -239,42 +230,86 @@ class TestStorage:
         config = Config(root_dir=workspace)
         registry = create_registry(config=config)
 
-        # Registry should have expected methods
         assert hasattr(registry, "save")
         assert hasattr(registry, "load")
         assert hasattr(registry, "exists")
         assert hasattr(registry, "list_runs")
 
 
-class TestSubmodules:
-    """Tests for devqubit submodules."""
+# =============================================================================
+# SUBMODULES
+# =============================================================================
 
-    def test_ci_submodule(self) -> None:
-        """devqubit.ci provides CI utilities."""
-        from devqubit import ci
 
-        assert hasattr(ci, "write_junit")
-        assert hasattr(ci, "github_annotations")
+class TestBundleSubmodule:
+    """Tests for devqubit.bundle submodule."""
 
-    def test_bundle_submodule(self) -> None:
-        """devqubit.bundle provides bundle utilities."""
+    def test_exports(self) -> None:
+        """All expected exports are available."""
         from devqubit import bundle
 
         assert hasattr(bundle, "pack_run")
         assert hasattr(bundle, "unpack_bundle")
         assert hasattr(bundle, "Bundle")
+        assert hasattr(bundle, "list_bundle_contents")
+        assert hasattr(bundle, "replay")
 
-    def test_snapshot_submodule(self) -> None:
-        """devqubit.snapshot provides UEC types."""
+
+class TestCiSubmodule:
+    """Tests for devqubit.ci submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import ci
+
+        assert hasattr(ci, "write_junit")
+        assert hasattr(ci, "result_to_junit")
+        assert hasattr(ci, "github_annotations")
+
+    def test_github_annotations_callable(self) -> None:
+        """github_annotations is callable."""
+        from devqubit import ci
+
+        assert callable(ci.github_annotations)
+
+
+class TestCompareSubmodule:
+    """Tests for devqubit.compare submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "ComparisonResult")
+        assert hasattr(compare, "VerifyResult")
+        assert hasattr(compare, "VerifyPolicy")
+
+
+class TestConfigSubmodule:
+    """Tests for devqubit.config submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import config
+
+        assert hasattr(config, "Config")
+        assert hasattr(config, "RedactionConfig")
+        assert hasattr(config, "get_config")
+        assert hasattr(config, "set_config")
+        assert hasattr(config, "reset_config")
+        assert hasattr(config, "load_config")
+
+
+class TestUECSubmodule:
+    """Tests for devqubit.uec submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
         from devqubit import uec
 
         assert hasattr(uec, "ExecutionEnvelope")
         assert hasattr(uec, "DeviceSnapshot")
         assert hasattr(uec, "ProgramSnapshot")
-
-    def test_config_submodule(self) -> None:
-        """devqubit.config provides configuration."""
-        from devqubit import config
-
-        assert hasattr(config, "Config")
-        assert hasattr(config, "RedactionConfig")
+        assert hasattr(uec, "ExecutionSnapshot")
+        assert hasattr(uec, "ResultSnapshot")
+        assert hasattr(uec, "ValidationResult")
