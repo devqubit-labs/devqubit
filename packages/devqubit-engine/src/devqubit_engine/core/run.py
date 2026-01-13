@@ -131,7 +131,10 @@ def _compute_fingerprints(run: RunRecord) -> dict[str, str]:
     if not isinstance(backend, dict):
         backend = {}
 
-    device_digests = get_artifact_digests(run, role="device_snapshot")
+    device_snapshot_digests = get_artifact_digests(run, role="device_snapshot")
+    device_raw_digests = get_artifact_digests(run, role="device_raw")
+    device_digests = sorted(set(device_snapshot_digests + device_raw_digests))
+
     fp_device = sha256_digest(
         {
             "backend": {
@@ -685,7 +688,7 @@ class Run:
         validation = envelope.validate_schema()
 
         # Log based on validation result
-        if validation.valid:
+        if validation.ok:
             # Log valid envelope
             self.log_json(
                 name="execution_envelope",
@@ -698,15 +701,15 @@ class Run:
             # Log validation error for debugging
             logger.warning(
                 "Envelope validation failed (continuing): %d errors",
-                len(validation.errors),
+                validation.error_count,
             )
 
-            # Log validation errors
+            # Log validation errors - iterate over validation.errors explicitly
             self.log_json(
                 name="envelope_validation_error",
                 obj={
-                    "errors": [str(e) for e in validation],
-                    "error_count": len(validation.errors),
+                    "errors": [str(e) for e in validation.errors],
+                    "error_count": validation.error_count,
                 },
                 role="config",
                 kind="devqubit.envelope.validation_error.json",
@@ -715,7 +718,7 @@ class Run:
             # Store summary in tracker record for visibility
             self.record["envelope_validation_error"] = {
                 "errors": [str(e) for e in validation.errors],
-                "count": len(validation.errors),
+                "count": validation.error_count,
             }
 
             # Log invalid envelope for debugging
