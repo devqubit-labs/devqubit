@@ -10,7 +10,7 @@ a unified envelope container.
 
 Basic Usage
 -----------
->>> from devqubit.snapshot import ExecutionEnvelope
+>>> from devqubit.uec import ExecutionEnvelope
 >>> envelope = ExecutionEnvelope(
 ...     device=device_snapshot,
 ...     program=program_snapshot,
@@ -20,7 +20,7 @@ Basic Usage
 
 Validation
 ----------
->>> from devqubit.snapshot import ValidationResult
+>>> from devqubit.uec import ValidationResult
 >>> result = envelope.validate_schema()
 >>> if result.valid:
 ...     print("Schema valid")
