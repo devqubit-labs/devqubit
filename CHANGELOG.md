@@ -8,6 +8,14 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.5](https://github.com/devqubit-labs/devqubit/releases/tag/vv0.1.5) - 2026-01-13
+
+#### Changed
+- Breaking: Align UEC Envelope 1.0 schemas/models and update all adapters to emit consistent producer/device/program/execution snapshots and unified artifact references. ([#14](https://github.com/devqubit-labs/devqubit/pull/14))
+
+#### Fixed
+- Fix `devqubit-ui` standalone installation by importing directly from `devqubit_engine` instead of the `devqubit` metapackage, and fixed `ArtifactRef` lazy import path. ([#10](https://github.com/devqubit-labs/devqubit/pull/10))
+
 ## [0.1.4](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.4) - 2026-01-11
 
 #### Fixed

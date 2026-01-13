@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-qiskit-runtime"
-version = "0.1.4"
+version = "0.1.5"
 description = "devqubit adapter for Qiskit Runtime"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "devqubit-engine>=0.1.4,<0.2.0",
-    "devqubit-qiskit>=0.1.4,<0.2.0",
+    "devqubit-engine>=0.1.5,<0.2.0",
+    "devqubit-qiskit>=0.1.5,<0.2.0",
     "qiskit-ibm-runtime>=0.44,<0.45",
 ]
 
