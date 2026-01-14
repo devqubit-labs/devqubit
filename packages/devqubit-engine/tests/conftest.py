@@ -99,7 +99,7 @@ def run_factory() -> Callable[..., RunRecord]:
     def _make_run_record(
         run_id: str = "TEST123456",
         project: str = "test_project",
-        adapter: str = "test_adapter",
+        adapter: str = "manual",
         backend_name: str = "test_backend",
         backend_type: str = "simulator",
         provider: str = "test_provider",

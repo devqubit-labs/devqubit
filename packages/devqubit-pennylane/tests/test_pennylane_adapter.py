@@ -108,11 +108,19 @@ class TestWrapDevice:
 
     def test_wrap_returns_same_device_patched(self, store, registry, default_qubit):
         """wrap() patches device in-place rather than returning wrapper."""
+
+        @qml.qnode(default_qubit, shots=10)
+        def simple_circuit():
+            qml.Hadamard(0)
+            return qml.counts(wires=[0])
+
         with track(project="pl", store=store, registry=registry) as run:
             wrapped = run.wrap(default_qubit)
             assert wrapped is default_qubit
             assert default_qubit._devqubit_patched is True
             assert default_qubit._devqubit_tracker is run
+            # Execute a circuit to create envelope (required for adapter runs)
+            _ = simple_circuit()
 
         loaded = registry.load(run.run_id)
         assert loaded.status == "FINISHED"

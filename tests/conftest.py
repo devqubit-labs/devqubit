@@ -91,7 +91,7 @@ def make_run(registry: LocalRegistry, store: LocalStore) -> Callable[..., RunRec
     def _create(
         run_id: str | None = None,
         project: str = "test_project",
-        adapter: str = "qiskit",
+        adapter: str = "manual",
         backend: str = "aer_simulator",
         status: str = "FINISHED",
         params: dict[str, Any] | None = None,

@@ -266,7 +266,11 @@ class TestEnvelopeStructure:
         assert "result" in envelope
 
     def test_envelope_device_section(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Envelope device section has required fields."""
         with track(project="test", store=store, registry=registry) as run:
@@ -280,7 +284,11 @@ class TestEnvelopeStructure:
         assert "captured_at" in device
 
     def test_envelope_program_section(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Envelope program section has circuit info."""
         with track(project="test", store=store, registry=registry) as run:
@@ -291,14 +299,17 @@ class TestEnvelopeStructure:
 
         program = envelope["program"]
         assert program["num_circuits"] == 1
-        assert program["program_hash"].startswith("sha256:")
+        assert program["structural_hash"].startswith("sha256:")
 
 
 class TestBatchQASM3Artifacts:
     """Multi-circuit batches must produce QASM3 artifact per circuit."""
 
     def test_batch_3_circuits_produces_3_qasm3_refs(
-        self, aer_simulator, store, registry
+        self,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Batch of 3 circuits should produce 3 QASM3 artifacts."""
         circuits = []

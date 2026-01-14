@@ -281,9 +281,10 @@ class TestBuildResultSnapshot:
 
         assert snap.status == "completed"
         assert len(snap.items) == 1
-        assert snap.items[0].counts["shots"] is None  # Probabilities don't have shots
+        # Probabilities use quasi_probability, not counts
+        assert snap.items[0].quasi_probability is not None
 
-        dist = snap.items[0].counts["counts"]
+        dist = snap.items[0].quasi_probability.distribution
         assert set(dist.keys()) == {"00", "01"}
         assert abs(dist["00"] - 0.5) < 1e-9
         assert abs(dist["01"] - 0.5) < 1e-9
@@ -306,11 +307,13 @@ class TestBuildResultSnapshot:
         assert snap.status == "completed"
         assert len(snap.items) == 2
 
-        # First circuit
-        assert abs(sum(snap.items[0].counts["counts"].values()) - 1.0) < 1e-9
+        # First circuit - uses quasi_probability
+        assert (
+            abs(sum(snap.items[0].quasi_probability.distribution.values()) - 1.0) < 1e-9
+        )
 
         # Second circuit (uniform)
-        dist1 = snap.items[1].counts["counts"]
+        dist1 = snap.items[1].quasi_probability.distribution
         assert len(dist1) == 4
         for v in dist1.values():
             assert abs(v - 0.25) < 1e-9
@@ -353,21 +356,21 @@ class TestExtractProbabilities:
         """Handles single circuit as flat 1D array."""
         probs = np.array([0.5, 0.5])
 
-        counts = _extract_probabilities(probs, num_circuits=1)
+        result = _extract_probabilities(probs, num_circuits=1)
 
-        assert len(counts) == 1
-        assert counts[0].circuit_index == 0
-        assert "0" in counts[0].counts
-        assert "1" in counts[0].counts
+        assert len(result) == 1
+        assert result[0].circuit_index == 0
+        assert "0" in result[0].distribution
+        assert "1" in result[0].distribution
 
     def test_filters_near_zero_probs(self):
         """Filters out near-zero probabilities."""
         probs = np.array([0.5, 0.5, 1e-15, 1e-15])
 
-        counts = _extract_probabilities(probs, num_circuits=1)
+        result = _extract_probabilities(probs, num_circuits=1)
 
-        assert len(counts) == 1
-        assert len(counts[0].counts) == 2  # Only non-zero probs
+        assert len(result) == 1
+        assert len(result[0].distribution) == 2  # Only non-zero probs
 
 
 class TestExtractSampleCounts:

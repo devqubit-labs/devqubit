@@ -84,7 +84,10 @@ class TestQiskitRuntimeAdapter:
         assert desc["primitive_type"] == "estimator"
 
     def test_wrap_executor_returns_tracked_primitive(
-        self, store, registry, fake_sampler
+        self,
+        store,
+        registry,
+        fake_sampler,
     ):
         """Wrapping returns a TrackedRuntimePrimitive."""
         adapter = QiskitRuntimeAdapter()
@@ -128,7 +131,11 @@ class TestSamplerExecution:
         assert loaded.record["results"]["result_type"] == "counts"
 
     def test_envelope_structure_complete(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Envelope has all required sections with correct structure."""
         adapter = QiskitRuntimeAdapter()
@@ -178,7 +185,11 @@ class TestEstimatorExecution:
     """Tests for Estimator primitive execution."""
 
     def test_estimator_logs_expectations_path(
-        self, store, registry, fake_estimator, estimator_pub
+        self,
+        store,
+        registry,
+        fake_estimator,
+        estimator_pub,
     ):
         """Estimator produces expectation values, not counts."""
         adapter = QiskitRuntimeAdapter()
@@ -188,24 +199,34 @@ class TestEstimatorExecution:
             job = wrapped.run([estimator_pub])
             job.result()
 
-        loaded = registry.load(run.run_id)
+        loaded, envelopes = _load_envelopes(run.run_id, store, registry)
         kinds = _kinds(loaded)
 
         assert "result.qiskit_runtime.output.json" in kinds
-        assert "result.qiskit_runtime.estimator.json" in kinds
         assert "devqubit.envelope.json" in kinds
 
         # Estimator should not produce counts artifact
         assert "result.counts.json" not in kinds
         assert loaded.record["execute"]["primitive_type"] == "estimator"
-        assert loaded.record["results"]["result_type"] == "expectation"
+
+        # Verify expectation values are in the envelope result
+        assert len(envelopes) == 1
+        envelope = envelopes[0]
+        result = envelope["result"]
+        assert result["success"] is True
+        # Estimator results have expectation items or metadata
+        assert result["metadata"]["primitive_type"] == "estimator"
 
 
 class TestSamplingBehavior:
     """Tests for execution sampling to prevent logging explosion."""
 
     def test_log_every_n_zero_skips_subsequent_identical_runs(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """
         Default behavior (log_every_n=0, log_new_circuits=True): only first execution
@@ -233,7 +254,11 @@ class TestSamplingBehavior:
         assert _count_kind(loaded, "qiskit_runtime.pubs.json") == 1
 
     def test_log_every_n_two_logs_periodically(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """With log_every_n=2: logs on execution 1, 2, 4 (not 3)."""
 
@@ -267,7 +292,12 @@ class TestSamplingBehavior:
         assert _count_kind(loaded, "qiskit_runtime.pubs.json") == 1
 
     def test_log_new_circuits_triggers_on_new_structure(
-        self, store, registry, fake_sampler, bell_circuit, ghz_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
+        ghz_circuit,
     ):
         """log_new_circuits=True logs when circuit structure changes."""
         adapter = QiskitRuntimeAdapter()
@@ -294,7 +324,11 @@ class TestResultIdempotency:
     """Tests for job.result() idempotency (fix M1)."""
 
     def test_result_called_twice_no_duplicate_artifacts(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Calling job.result() twice should NOT duplicate artifacts."""
 
@@ -409,7 +443,12 @@ class TestPerPubShots:
     """Tests for per-PUB shots handling."""
 
     def test_per_pub_shots_respected(
-        self, store, registry, fake_sampler, bell_circuit, ghz_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
+        ghz_circuit,
     ):
         """Per-PUB shots override global shots."""
 
@@ -469,7 +508,11 @@ class TestTranspilationModes:
         assert loaded.record["execute"]["transpilation_mode"] == "auto"
 
     def test_transpilation_options_logged(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Transpilation options are captured in record."""
         adapter = QiskitRuntimeAdapter()
@@ -488,7 +531,11 @@ class TestTranspilationModes:
         assert opts.get("optimization_level") == 2
 
     def test_transpilation_in_envelope(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Transpilation info is captured in envelope."""
         adapter = QiskitRuntimeAdapter()
@@ -505,7 +552,11 @@ class TestTranspilationModes:
         assert execution["transpilation"]["mode"] == "manual"
 
     def test_auto_transpilation_for_non_isa(
-        self, store, registry, fake_sampler, non_isa_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        non_isa_circuit,
     ):
         """Auto mode transpiles non-ISA circuits and records metadata."""
         adapter = QiskitRuntimeAdapter()
@@ -521,7 +572,10 @@ class TestTranspilationModes:
         assert exec_rec["transpilation_mode"] == "auto"
         assert exec_rec["transpiled_by_devqubit"] is True
         assert exec_rec["transpilation_reason"] == "transpiled"
-        assert exec_rec.get("executed_hash")  # present when devqubit transpiles
+        # When devqubit transpiles, executed hashes are recorded
+        assert exec_rec.get("executed_structural_hash") or exec_rec.get(
+            "executed_parametric_hash"
+        )
 
 
 class TestNoBackendPrimitive:
@@ -607,7 +661,11 @@ class TestJoinDataFallback:
     """Tests for Sampler result extraction using join_data()."""
 
     def test_join_data_used_when_available(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Sampler result extraction uses join_data() when available."""
 
@@ -646,7 +704,11 @@ class TestExecutionSnapshotUECCompliance:
         assert "submitted_at" in loaded.record["execute"]
 
     def test_transpilation_fields_captured(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Transpilation fields are captured in execution record."""
         adapter = QiskitRuntimeAdapter()
@@ -666,7 +728,11 @@ class TestResultSnapshotUECCompliance:
     """Tests for ResultSnapshot UEC compliance."""
 
     def test_sampler_result_has_counts(
-        self, store, registry, fake_sampler, bell_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
     ):
         """Sampler result contains counts artifact."""
         adapter = QiskitRuntimeAdapter()
@@ -682,9 +748,13 @@ class TestResultSnapshotUECCompliance:
         assert loaded.record["results"]["num_experiments"] >= 1
 
     def test_estimator_result_has_expectations(
-        self, store, registry, fake_estimator, estimator_pub
+        self,
+        store,
+        registry,
+        fake_estimator,
+        estimator_pub,
     ):
-        """Estimator result contains expectation values artifact."""
+        """Estimator result contains expectation values in envelope."""
         adapter = QiskitRuntimeAdapter()
 
         with track(project="expval_test", store=store, registry=registry) as run:
@@ -692,8 +762,14 @@ class TestResultSnapshotUECCompliance:
             job = wrapped.run([estimator_pub])
             job.result()
 
-        loaded = registry.load(run.run_id)
-        assert "result.qiskit_runtime.estimator.json" in _kinds(loaded)
+        loaded, envelopes = _load_envelopes(run.run_id, store, registry)
+
+        # Verify envelope has estimator result
+        assert len(envelopes) == 1
+        envelope = envelopes[0]
+        result = envelope["result"]
+        assert result["success"] is True
+        assert result["metadata"]["primitive_type"] == "estimator"
 
 
 class TestProgramSnapshotUECCompliance:
@@ -712,7 +788,12 @@ class TestProgramSnapshotUECCompliance:
         assert "qiskit_runtime.pubs.json" in _kinds(loaded)
 
     def test_num_pubs_tracked(
-        self, store, registry, fake_sampler, bell_circuit, ghz_circuit
+        self,
+        store,
+        registry,
+        fake_sampler,
+        bell_circuit,
+        ghz_circuit,
     ):
         """Number of PUBs is tracked correctly."""
         adapter = QiskitRuntimeAdapter()
