@@ -325,7 +325,7 @@ def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
     physical: list[ProgramArtifact] = []
     structural_hash = None
 
-    # Check for circuit_hash in execute metadata (legacy field)
+    # Check for circuit_hash in execute metadata (pre-UEC field)
     execute = record.record.get("execute") or {}
     if isinstance(execute, dict) and execute.get("circuit_hash"):
         structural_hash = str(execute["circuit_hash"])
@@ -422,6 +422,12 @@ def _build_result_from_run(
     -------
     ResultSnapshot
         Constructed result snapshot (always returns a valid snapshot).
+
+    Notes
+    -----
+    If the counts payload includes ``counts_format`` metadata, it is
+    preserved in the result. Otherwise, canonical format (cbit0_right)
+    is assumed and marked appropriately in metadata.
     """
     status = record.record.get("info", {}).get("status", "RUNNING")
 
@@ -459,10 +465,16 @@ def _build_result_from_run(
         kind_contains="counts",
     )
 
+    # Track whether format was assumed (for metadata)
+    format_was_assumed = False
+
     if counts_artifact:
         try:
             payload = load_json_artifact(counts_artifact, store)
             if isinstance(payload, dict):
+                # Check if payload includes counts_format metadata
+                payload_format = payload.get("counts_format")
+
                 # Handle batch format
                 experiments = payload.get("experiments")
                 if isinstance(experiments, list) and experiments:
@@ -470,8 +482,34 @@ def _build_result_from_run(
                         if isinstance(exp, dict) and exp.get("counts"):
                             counts_data = exp["counts"]
                             shots = sum(counts_data.values()) if counts_data else 0
-                            # NOTE: For manual runs, we assume cbit0_right format.
-                            # See detailed comment below in simple format case.
+
+                            # Use format from payload if available
+                            if payload_format and isinstance(payload_format, dict):
+                                format_dict = {
+                                    "source_sdk": payload_format.get(
+                                        "source_sdk",
+                                        record.record.get("adapter", "manual"),
+                                    ),
+                                    "source_key_format": payload_format.get(
+                                        "source_key_format", "run"
+                                    ),
+                                    "bit_order": payload_format.get(
+                                        "bit_order", "cbit0_right"
+                                    ),
+                                    "transformed": payload_format.get(
+                                        "transformed", False
+                                    ),
+                                }
+                            else:
+                                # Assume canonical format for manual runs
+                                format_was_assumed = True
+                                format_dict = CountsFormat(
+                                    source_sdk=record.record.get("adapter", "manual"),
+                                    source_key_format="run",
+                                    bit_order="cbit0_right",
+                                    transformed=False,
+                                ).to_dict()
+
                             items.append(
                                 ResultItem(
                                     item_index=idx,
@@ -479,14 +517,7 @@ def _build_result_from_run(
                                     counts={
                                         "counts": counts_data,
                                         "shots": shots,
-                                        "format": CountsFormat(
-                                            source_sdk=record.record.get(
-                                                "adapter", "manual"
-                                            ),
-                                            source_key_format="run",
-                                            bit_order="cbit0_right",
-                                            transformed=False,
-                                        ).to_dict(),
+                                        "format": format_dict,
                                     },
                                 )
                             )
@@ -495,12 +526,35 @@ def _build_result_from_run(
                     counts_data = payload.get("counts", {})
                     if counts_data:
                         shots = sum(counts_data.values())
-                        # NOTE: For manual runs without adapter, we assume
-                        # cbit0_right (canonical) format. This is a best-effort
-                        # assumption since manual runs don't have SDK metadata.
-                        # Compare operations will use this assumption for
-                        # canonicalization - if the actual format differs,
-                        # TVD results may be incorrect.
+
+                        # Use format from payload if available
+                        if payload_format and isinstance(payload_format, dict):
+                            format_dict = {
+                                "source_sdk": payload_format.get(
+                                    "source_sdk",
+                                    record.record.get("adapter", "manual"),
+                                ),
+                                "source_key_format": payload_format.get(
+                                    "source_key_format", "run"
+                                ),
+                                "bit_order": payload_format.get(
+                                    "bit_order", "cbit0_right"
+                                ),
+                                "transformed": payload_format.get("transformed", False),
+                            }
+                        else:
+                            # Assume canonical format for manual runs without
+                            # explicit format metadata. This is a best-effort
+                            # assumption - if the actual format differs, TVD
+                            # results may be incorrect.
+                            format_was_assumed = True
+                            format_dict = CountsFormat(
+                                source_sdk=record.record.get("adapter", "manual"),
+                                source_key_format="run",
+                                bit_order="cbit0_right",
+                                transformed=False,
+                            ).to_dict()
+
                         items.append(
                             ResultItem(
                                 item_index=0,
@@ -508,14 +562,7 @@ def _build_result_from_run(
                                 counts={
                                     "counts": counts_data,
                                     "shots": shots,
-                                    "format": CountsFormat(
-                                        source_sdk=record.record.get(
-                                            "adapter", "manual"
-                                        ),
-                                        source_key_format="run",
-                                        bit_order="cbit0_right",
-                                        transformed=False,
-                                    ).to_dict(),
+                                    "format": format_dict,
                                 },
                             )
                         )
@@ -527,12 +574,16 @@ def _build_result_from_run(
         success = True
         normalized_status = "completed"
 
+    result_metadata: dict[str, Any] = {"synthesized_from_run": True}
+    if format_was_assumed:
+        result_metadata["counts_format_assumed"] = True
+
     return ResultSnapshot(
         success=success,
         status=normalized_status,
         items=items,
         error=error,
-        metadata={"synthesized_from_run": True},
+        metadata=result_metadata,
     )
 
 
@@ -647,7 +698,6 @@ def resolve_envelope(
     store: ObjectStoreProtocol,
     *,
     include_invalid: bool = False,
-    strict: bool = True,
 ) -> ExecutionEnvelope:
     """
     Resolve ExecutionEnvelope for a run (UEC-first with strict contract).
@@ -656,11 +706,11 @@ def resolve_envelope(
     All compare/diff/verify operations should use this function rather
     than directly accessing RunRecord fields or artifacts.
 
-    Strategy:
+    Strategy
+    --------
     1. Try to load existing envelope artifact (UEC-first)
     2. If not found:
-       - **Adapter run**: Raise MissingEnvelopeError (strict mode) or
-         synthesize with warning (non-strict mode)
+       - **Adapter run**: Raise MissingEnvelopeError (adapters MUST create envelope)
        - **Manual run**: Synthesize from RunRecord and artifacts
 
     Parameters
@@ -671,9 +721,6 @@ def resolve_envelope(
         Object store for artifact retrieval.
     include_invalid : bool, default=False
         If True, include invalid envelopes in search.
-    strict : bool, default=True
-        If True, raise error for adapter runs without envelope.
-        If False, synthesize envelope with warning (for backward compat).
 
     Returns
     -------
@@ -683,35 +730,8 @@ def resolve_envelope(
     Raises
     ------
     MissingEnvelopeError
-        If strict=True and adapter run is missing envelope.
-
-    Notes
-    -----
-    For manual runs, synthesized envelope will have:
-    - ``metadata.synthesized_from_run=True``
-    - ``metadata.manual_run=True``
-    - No program hashes (compare will report "hash unavailable")
-
-    Examples
-    --------
-    Basic usage in compare/diff:
-
-    >>> from devqubit_engine.uec.resolver import resolve_envelope
-    >>>
-    >>> env_a = resolve_envelope(run_a, store_a)
-    >>> env_b = resolve_envelope(run_b, store_b)
-    >>>
-    >>> # Now compare using UEC structure
-    >>> if env_a.device and env_b.device:
-    ...     drift = compute_drift(env_a.device, env_b.device)
-
-    Checking envelope source:
-
-    >>> envelope = resolve_envelope(record, store)
-    >>> if envelope.metadata.get("synthesized_from_run"):
-    ...     print("Envelope was synthesized (manual run)")
-    >>> if envelope.metadata.get("manual_run"):
-    ...     print("This is a manual run - program hashes unavailable")
+        If adapter run is missing envelope. This is always an adapter
+        integration error - adapters are required to create envelopes.
     """
     # Try to load existing envelope
     envelope = load_envelope(
@@ -727,20 +747,12 @@ def resolve_envelope(
     is_manual = _is_manual_run(record)
     adapter = record.record.get("adapter", "manual")
 
-    if not is_manual and strict:
-        # Adapter run without envelope is an error
+    if not is_manual:
+        # Adapter run without envelope is ALWAYS an error
+        # Adapters must create envelopes - no exceptions, no fallbacks
         raise MissingEnvelopeError(record.run_id, str(adapter))
 
-    if not is_manual:
-        # Non-strict mode: log warning and proceed
-        logger.warning(
-            "Adapter run '%s' (adapter=%s) missing envelope. "
-            "Synthesizing from RunRecord. This should be fixed in adapter.",
-            record.run_id,
-            adapter,
-        )
-
-    # Build envelope for manual run (or non-strict adapter run)
+    # Build envelope for manual run only
     return build_envelope_from_run(record, store)
 
 

@@ -1214,17 +1214,21 @@ class Run:
         Ensure an envelope artifact exists before finalization.
 
         For **manual runs only**: synthesizes envelope from run record.
-        For **adapter runs**: does NOT auto-generate. Missing envelope
-        from adapter run is an integration error that must be fixed
-        in the adapter.
+        For **adapter runs**: missing envelope marks the run as FAILED with
+        a structured error. Adapters MUST create envelopes - no exceptions.
 
         Notes
         -----
         This is called automatically during _finalize(). For manual runs,
         the synthesized envelope will have:
+
         - metadata.auto_generated=True
         - metadata.manual_run=True
         - No program hashes (engine cannot compute them)
+
+        For adapter runs without envelope, the run is marked FAILED with
+        a ``MissingExecutionEnvelope`` error in the errors list. The run
+        is still persisted (for debugging) but marked as failed.
         """
         if self._has_envelope_artifact():
             logger.debug("Envelope artifact already exists, skipping auto-generation")
@@ -1233,9 +1237,24 @@ class Run:
         # Only auto-generate for manual runs
         if not self._is_manual_run():
             adapter = self.record.get("adapter", "unknown")
-            logger.warning(
+
+            # Mark run as FAILED with structured error
+            self.record["info"]["status"] = "FAILED"
+            self.record.setdefault("errors", []).append(
+                {
+                    "type": "MissingExecutionEnvelope",
+                    "message": (
+                        f"Adapter run (adapter={adapter}) completed without "
+                        f"creating execution envelope. This is an adapter "
+                        f"integration error - adapters must create envelopes."
+                    ),
+                    "adapter": adapter,
+                }
+            )
+
+            logger.error(
                 "Adapter run '%s' (adapter=%s) completing without envelope. "
-                "This is an adapter integration error - adapters must create envelope.",
+                "Run marked as FAILED. This is an adapter integration error.",
                 self._run_id,
                 adapter,
             )
@@ -1270,7 +1289,7 @@ class Run:
             )
 
         except Exception as e:
-            # Don't fail the run if envelope generation fails
+            # Don't fail the run if envelope generation fails for manual runs
             logger.warning(
                 "Failed to auto-generate envelope for run %s: %s",
                 self._run_id,
