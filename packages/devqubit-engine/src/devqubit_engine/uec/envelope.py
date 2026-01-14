@@ -274,9 +274,9 @@ class ExecutionEnvelope:
         )
 
         if is_adapter_run and self.program:
-            if not self.program.program_hash:
+            if not self.program.structural_hash:
                 warnings.append(
-                    "Adapter run missing program_hash - adapters must provide "
+                    "Adapter run missing structural_hash - adapters must provide "
                     "structural hash"
                 )
             if not self.program.parametric_hash:

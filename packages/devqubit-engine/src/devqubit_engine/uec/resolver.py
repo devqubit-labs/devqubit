@@ -315,15 +315,20 @@ def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
     -------
     ProgramSnapshot or None
         Constructed program snapshot, or None if no program artifacts.
+
+    Notes
+    -----
+    For manual runs, structural_hash and parametric_hash are not available.
+    Compare will report "hash unavailable" for these runs.
     """
     logical: list[ProgramArtifact] = []
     physical: list[ProgramArtifact] = []
-    program_hash = None
+    structural_hash = None
 
-    # Check for circuit_hash in execute metadata
+    # Check for circuit_hash in execute metadata (legacy field)
     execute = record.record.get("execute") or {}
     if isinstance(execute, dict) and execute.get("circuit_hash"):
-        program_hash = str(execute["circuit_hash"])
+        structural_hash = str(execute["circuit_hash"])
 
     # Build from program artifacts
     for artifact in record.artifacts:
@@ -355,8 +360,8 @@ def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
         logical.append(prog_artifact)
 
         # Check for circuit_hash in artifact metadata
-        if meta.get("circuit_hash") and program_hash is None:
-            program_hash = str(meta["circuit_hash"])
+        if meta.get("circuit_hash") and structural_hash is None:
+            structural_hash = str(meta["circuit_hash"])
 
     # If no program artifacts, check record["program"] anchors
     program_section = record.record.get("program") or {}
@@ -394,7 +399,7 @@ def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
     return ProgramSnapshot(
         logical=logical,
         physical=physical,
-        program_hash=program_hash,
+        structural_hash=structural_hash,
         num_circuits=len(logical) if logical else None,
     )
 
@@ -552,7 +557,7 @@ def build_envelope_from_run(
 
     - ``metadata.synthesized_from_run=True`` - marks as synthesized
     - ``metadata.manual_run=True`` - marks as manual (if no adapter)
-    - ``program.program_hash`` - None (engine cannot compute)
+    - ``program.structural_hash`` - None (engine cannot compute)
     - ``program.parametric_hash`` - None (engine cannot compute)
 
     Compare operations will report "hash unavailable" for these runs.
@@ -563,7 +568,7 @@ def build_envelope_from_run(
     >>> envelope = build_envelope_from_run(record, store)
     >>> envelope.metadata.get("synthesized_from_run")
     True
-    >>> envelope.program.program_hash  # None for manual runs
+    >>> envelope.program.structural_hash  # None for manual runs
     """
     producer = _build_producer_from_run(record)
     device = _build_device_from_run(record)
@@ -803,7 +808,7 @@ def get_shots_from_envelope(envelope: ExecutionEnvelope) -> int | None:
 
 def get_program_hash_from_envelope(envelope: ExecutionEnvelope) -> str | None:
     """
-    Extract program/circuit hash from envelope.
+    Extract structural hash from envelope.
 
     Parameters
     ----------
@@ -813,8 +818,11 @@ def get_program_hash_from_envelope(envelope: ExecutionEnvelope) -> str | None:
     Returns
     -------
     str or None
-        Program hash (structural), or None if not available.
+        Structural hash, or None if not available.
     """
     if envelope.program:
-        return envelope.program.program_hash or envelope.program.executed_hash
+        return (
+            envelope.program.structural_hash
+            or envelope.program.executed_structural_hash
+        )
     return None
