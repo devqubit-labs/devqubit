@@ -314,14 +314,50 @@ def _load_device_snapshot(
 def _extract_circuit_summary(
     record: RunRecord,
     store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
+    *,
+    which: str = "logical",
 ) -> CircuitSummary | None:
-    """Extract circuit summary from run record."""
-    circuit_data = extract_circuit(record, store)
+    """
+    Extract circuit summary from envelope or run record.
+
+    Uses UEC-first strategy: extracts circuit from envelope refs,
+    falling back to run record artifacts if envelope not available.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record for fallback extraction.
+    store : ObjectStoreProtocol
+        Object store for loading artifacts.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope.
+    which : str, default="logical"
+        Which circuit to extract: "logical" or "physical".
+
+    Returns
+    -------
+    CircuitSummary or None
+        Extracted circuit summary, or None if not found.
+    """
+    from devqubit_engine.circuit.extractors import extract_circuit_from_envelope
+
+    circuit_data = None
+
+    # Try envelope first (UEC-first)
+    if envelope is not None:
+        circuit_data = extract_circuit_from_envelope(envelope, store, which=which)
+
+    # Fallback to legacy extraction
+    if circuit_data is None:
+        circuit_data = extract_circuit(record, store)
+
     if circuit_data is not None:
         try:
             return summarize_circuit_data(circuit_data)
         except Exception as e:
             logger.debug("Failed to summarize circuit: %s", e)
+
     return None
 
 
@@ -330,14 +366,14 @@ def _extract_circuit_hash(
     envelope: ExecutionEnvelope | None = None,
 ) -> str | None:
     """
-    Extract circuit_hash from envelope or run record.
+    Extract structural hash from envelope or run record.
 
-    Uses UEC-first strategy: extracts program_hash from envelope,
+    Uses UEC-first strategy: extracts structural_hash from envelope,
     falling back to Run metadata if not in envelope.
 
-    The circuit_hash is a structural hash that ignores parameter values,
-    making it suitable for comparing parameterized circuits that were
-    executed with different parameter values.
+    The structural_hash ignores parameter values, making it suitable for
+    comparing parameterized circuits that were executed with different
+    parameter values.
 
     Parameters
     ----------
@@ -349,7 +385,7 @@ def _extract_circuit_hash(
     Returns
     -------
     str or None
-        Circuit hash if available.
+        Structural hash if available.
     """
     # Try envelope first (UEC-first)
     if envelope is not None:
@@ -357,7 +393,7 @@ def _extract_circuit_hash(
         if program_hash:
             return program_hash
 
-    # Fallback: try execute metadata
+    # Fallback: try execute metadata (legacy circuit_hash field)
     execute = record.record.get("execute", {})
     if isinstance(execute, dict) and execute.get("circuit_hash"):
         return str(execute["circuit_hash"])
@@ -381,7 +417,7 @@ def _compare_programs(
     Compare program artifacts between two runs.
 
     Uses UEC-first strategy for structural and parametric hash comparison.
-    Computes exact (digest), structural (program_hash), and parametric
+    Computes exact (digest), structural (structural_hash), and parametric
     (parametric_hash) matching.
 
     Parameters
@@ -404,10 +440,26 @@ def _compare_programs(
     digests_a = get_artifact_digests(run_a, role="program")
     digests_b = get_artifact_digests(run_b, role="program")
 
-    # Exact match on content digests
+    # Exact match: prefer envelope refs if available, else use all role=program
+    # This ensures we compare only the program artifacts referenced by envelope,
+    # not auxiliary artifacts like diagrams
+    if envelope_a and envelope_a.program:
+        logical_digests_a = [a.ref.digest for a in envelope_a.program.logical if a.ref]
+        physical_digests_a = [
+            a.ref.digest for a in envelope_a.program.physical if a.ref
+        ]
+        digests_a = sorted(set(logical_digests_a + physical_digests_a))
+
+    if envelope_b and envelope_b.program:
+        logical_digests_b = [a.ref.digest for a in envelope_b.program.logical if a.ref]
+        physical_digests_b = [
+            a.ref.digest for a in envelope_b.program.physical if a.ref
+        ]
+        digests_b = sorted(set(logical_digests_b + physical_digests_b))
+
     exact_match = digests_a == digests_b
 
-    # Extract hashes from UEC (program_hash and parametric_hash)
+    # Extract hashes from UEC (structural_hash and parametric_hash)
     hash_a = None
     hash_b = None
     param_hash_a = None
@@ -415,10 +467,10 @@ def _compare_programs(
     hash_available = True
 
     if envelope_a and envelope_a.program:
-        hash_a = envelope_a.program.program_hash
+        hash_a = envelope_a.program.structural_hash
         param_hash_a = envelope_a.program.parametric_hash
     if envelope_b and envelope_b.program:
-        hash_b = envelope_b.program.program_hash
+        hash_b = envelope_b.program.structural_hash
         param_hash_b = envelope_b.program.parametric_hash
 
     # Check if hashes are available (manual runs won't have them)
@@ -448,7 +500,7 @@ def _compare_programs(
     if structural_match and not parametric_match:
         logger.debug(
             "Programs match in structure but differ in params "
-            "(program_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
+            "(structural_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
             hash_a,
             param_hash_a,
             param_hash_b,
@@ -601,8 +653,8 @@ def diff_runs(
 
     # Circuit diff
     if include_circuit_diff:
-        summary_a = _extract_circuit_summary(run_a, store_a)
-        summary_b = _extract_circuit_summary(run_b, store_b)
+        summary_a = _extract_circuit_summary(run_a, store_a, envelope_a)
+        summary_b = _extract_circuit_summary(run_b, store_b, envelope_b)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
         elif not result.program.matches(ProgramMatchMode.EITHER):
