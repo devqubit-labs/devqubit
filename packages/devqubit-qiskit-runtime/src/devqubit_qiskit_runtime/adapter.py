@@ -845,7 +845,7 @@ class TrackedRuntimePrimitive:
 
             self._logged_execution_count += 1
 
-        # Build ProgramSnapshot (UEC v1.0 compliant)
+        # Build ProgramSnapshot
         # Compute executed hashes from transpiled circuits if available
         executed_structural_hash = (
             compute_structural_hash(transpiled_circuits)
