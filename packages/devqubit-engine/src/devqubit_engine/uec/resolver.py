@@ -5,15 +5,16 @@
 UEC Resolver - Single entry point for envelope resolution.
 
 This module provides the canonical interface for obtaining ExecutionEnvelope
-from any run record. It implements the "UEC-first + run fallback" strategy:
+from any run record. It implements the "UEC-first" strategy with strict
+contract enforcement:
 
-1. **UEC-first**: If an envelope artifact exists, load and return it
-2. **Run fallback**: If no envelope exists, synthesize one from RunRecord
-   and artifacts (best effort, deterministic)
+1. **Adapter runs**: Envelope MUST exist (created by adapter). Missing envelope
+   is an integration error and raises MissingEnvelopeError.
+2. **Manual runs**: Envelope is synthesized from RunRecord if not present.
+   This is best-effort with limited semantics (no program hashes).
 
-This ensures that all compare/diff/verify operations work through a single
-unified data model, regardless of whether the run used an adapter or was
-created manually.
+This ensures that adapters are responsible for producing complete UEC data,
+while manual runs still work (with documented limitations).
 """
 
 from __future__ import annotations
@@ -40,6 +41,24 @@ from devqubit_engine.uec.types import ArtifactRef, ProgramRole
 
 
 logger = logging.getLogger(__name__)
+
+
+class MissingEnvelopeError(Exception):
+    """
+    Raised when adapter run is missing required envelope.
+
+    Adapter runs MUST have an envelope artifact. If missing, this indicates
+    an adapter integration error that should be fixed in the adapter, not
+    papered over by the engine.
+    """
+
+    def __init__(self, run_id: str, adapter: str):
+        self.run_id = run_id
+        self.adapter = adapter
+        super().__init__(
+            f"Adapter run '{run_id}' (adapter={adapter}) is missing envelope. "
+            f"This is an adapter integration error - adapters must create envelope."
+        )
 
 
 VOLATILE_EXECUTE_KEYS = frozenset(
@@ -511,9 +530,9 @@ def build_envelope_from_run(
     """
     Build ExecutionEnvelope from RunRecord and artifacts.
 
-    This function synthesizes an envelope from data when no
-    envelope artifact exists. It maps all available information
-    from RunRecord and artifacts to the UEC schema.
+    This function synthesizes an envelope from data when no envelope
+    artifact exists. Intended for **manual runs only** - adapter runs
+    should always have envelope created by the adapter.
 
     Parameters
     ----------
@@ -525,22 +544,26 @@ def build_envelope_from_run(
     Returns
     -------
     ExecutionEnvelope
-        Synthesized envelope (best effort, always valid structure).
+        Synthesized envelope (best effort, valid structure).
 
     Notes
     -----
-    The synthesized envelope will have ``metadata.synthesized_from_run=True``
-    and may have warnings about assumed defaults (e.g., counts_format_assumed).
+    Synthesized envelopes have limitations:
+
+    - ``metadata.synthesized_from_run=True`` - marks as synthesized
+    - ``metadata.manual_run=True`` - marks as manual (if no adapter)
+    - ``program.program_hash`` - None (engine cannot compute)
+    - ``program.parametric_hash`` - None (engine cannot compute)
+
+    Compare operations will report "hash unavailable" for these runs.
 
     Examples
     --------
-    >>> # Typical usage via resolve_envelope
-    >>> envelope = resolve_envelope(record, store)
-
-    >>> # Direct usage for testing
+    >>> # Direct usage for manual runs
     >>> envelope = build_envelope_from_run(record, store)
     >>> envelope.metadata.get("synthesized_from_run")
     True
+    >>> envelope.program.program_hash  # None for manual runs
     """
     producer = _build_producer_from_run(record)
     device = _build_device_from_run(record)
@@ -548,10 +571,15 @@ def build_envelope_from_run(
     program = _build_program_from_run(record)
     result = _build_result_from_run(record, store)
 
+    is_manual = _is_manual_run(record)
+
     metadata: dict[str, Any] = {
         "synthesized_from_run": True,
         "source_run_id": record.run_id,
     }
+
+    if is_manual:
+        metadata["manual_run"] = True
 
     # Add warning if counts format was assumed
     if result.items:
@@ -572,12 +600,33 @@ def build_envelope_from_run(
     )
 
     logger.debug(
-        "Built envelope from: run=%s, envelope_id=%s",
+        "Built envelope from run: run=%s, envelope_id=%s, manual=%s",
         record.run_id,
         envelope.envelope_id,
+        is_manual,
     )
 
     return envelope
+
+
+def _is_manual_run(record: RunRecord) -> bool:
+    """
+    Check if run is a manual run (no adapter).
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record to check.
+
+    Returns
+    -------
+    bool
+        True if manual run, False if adapter run.
+    """
+    adapter = record.record.get("adapter")
+    if not adapter or adapter == "" or adapter == "manual":
+        return True
+    return False
 
 
 def resolve_envelope(
@@ -585,9 +634,10 @@ def resolve_envelope(
     store: ObjectStoreProtocol,
     *,
     include_invalid: bool = False,
+    strict: bool = True,
 ) -> ExecutionEnvelope:
     """
-    Resolve ExecutionEnvelope for a run (UEC-first + Run fallback).
+    Resolve ExecutionEnvelope for a run (UEC-first with strict contract).
 
     This is the **primary entry point** for obtaining envelope data.
     All compare/diff/verify operations should use this function rather
@@ -595,7 +645,10 @@ def resolve_envelope(
 
     Strategy:
     1. Try to load existing envelope artifact (UEC-first)
-    2. If not found, synthesize from RunRecord and artifacts
+    2. If not found:
+       - **Adapter run**: Raise MissingEnvelopeError (strict mode) or
+         synthesize with warning (non-strict mode)
+       - **Manual run**: Synthesize from RunRecord and artifacts
 
     Parameters
     ----------
@@ -605,17 +658,26 @@ def resolve_envelope(
         Object store for artifact retrieval.
     include_invalid : bool, default=False
         If True, include invalid envelopes in search.
+    strict : bool, default=True
+        If True, raise error for adapter runs without envelope.
+        If False, synthesize envelope with warning (for backward compat).
 
     Returns
     -------
     ExecutionEnvelope
-        Resolved envelope (never None).
+        Resolved envelope.
+
+    Raises
+    ------
+    MissingEnvelopeError
+        If strict=True and adapter run is missing envelope.
 
     Notes
     -----
-    This function always returns a valid envelope structure. For runs
-    without envelope artifacts, it synthesizes one deterministically.
-    The synthesized envelope will have ``metadata.synthesized_from_run=True``.
+    For manual runs, synthesized envelope will have:
+    - ``metadata.synthesized_from_run=True``
+    - ``metadata.manual_run=True``
+    - No program hashes (compare will report "hash unavailable")
 
     Examples
     --------
@@ -630,11 +692,13 @@ def resolve_envelope(
     >>> if env_a.device and env_b.device:
     ...     drift = compute_drift(env_a.device, env_b.device)
 
-    Checking if envelope was synthesized:
+    Checking envelope source:
 
     >>> envelope = resolve_envelope(record, store)
     >>> if envelope.metadata.get("synthesized_from_run"):
-    ...     print("Envelope was built from Run data")
+    ...     print("Envelope was synthesized (manual run)")
+    >>> if envelope.metadata.get("manual_run"):
+    ...     print("This is a manual run - program hashes unavailable")
     """
     # Try to load existing envelope
     envelope = load_envelope(
@@ -646,7 +710,24 @@ def resolve_envelope(
     if envelope is not None:
         return envelope
 
-    # Fallback: synthesize from Run
+    # No envelope found - check if this is allowed
+    is_manual = _is_manual_run(record)
+    adapter = record.record.get("adapter", "manual")
+
+    if not is_manual and strict:
+        # Adapter run without envelope is an error
+        raise MissingEnvelopeError(record.run_id, str(adapter))
+
+    if not is_manual:
+        # Non-strict mode: log warning and proceed
+        logger.warning(
+            "Adapter run '%s' (adapter=%s) missing envelope. "
+            "Synthesizing from RunRecord. This should be fixed in adapter.",
+            record.run_id,
+            adapter,
+        )
+
+    # Build envelope for manual run (or non-strict adapter run)
     return build_envelope_from_run(record, store)
 
 
