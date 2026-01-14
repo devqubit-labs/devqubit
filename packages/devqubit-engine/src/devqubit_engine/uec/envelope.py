@@ -284,6 +284,18 @@ class ExecutionEnvelope:
                     "Adapter run missing parametric_hash - adapters must provide "
                     "parametric hash"
                 )
+            # If physical circuits present, executed_*hash required
+            if self.program.physical:
+                if not self.program.executed_structural_hash:
+                    warnings.append(
+                        "Adapter run with physical circuits missing "
+                        "executed_structural_hash"
+                    )
+                if not self.program.executed_parametric_hash:
+                    warnings.append(
+                        "Adapter run with physical circuits missing "
+                        "executed_parametric_hash"
+                    )
 
         return warnings
 

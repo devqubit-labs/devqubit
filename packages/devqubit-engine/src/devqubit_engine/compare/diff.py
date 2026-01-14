@@ -437,18 +437,16 @@ def _compare_programs(
         Detailed comparison with status, exact_match, structural_match,
         parametric_match, and hash availability.
     """
-    digests_a = get_artifact_digests(run_a, role="program")
-    digests_b = get_artifact_digests(run_b, role="program")
-
-    # Exact match: prefer envelope refs if available, else use all role=program
-    # This ensures we compare only the program artifacts referenced by envelope,
-    # not auxiliary artifacts like diagrams
+    # Exact match: prefer envelope refs if available (ignores auxiliary artifacts
+    # like diagrams), else fall back to all role=program artifacts
     if envelope_a and envelope_a.program:
         logical_digests_a = [a.ref.digest for a in envelope_a.program.logical if a.ref]
         physical_digests_a = [
             a.ref.digest for a in envelope_a.program.physical if a.ref
         ]
         digests_a = sorted(set(logical_digests_a + physical_digests_a))
+    else:
+        digests_a = get_artifact_digests(run_a, role="program")
 
     if envelope_b and envelope_b.program:
         logical_digests_b = [a.ref.digest for a in envelope_b.program.logical if a.ref]
@@ -456,6 +454,8 @@ def _compare_programs(
             a.ref.digest for a in envelope_b.program.physical if a.ref
         ]
         digests_b = sorted(set(logical_digests_b + physical_digests_b))
+    else:
+        digests_b = get_artifact_digests(run_b, role="program")
 
     exact_match = digests_a == digests_b
 

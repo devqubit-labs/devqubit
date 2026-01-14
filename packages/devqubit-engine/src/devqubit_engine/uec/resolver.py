@@ -470,6 +470,8 @@ def _build_result_from_run(
                         if isinstance(exp, dict) and exp.get("counts"):
                             counts_data = exp["counts"]
                             shots = sum(counts_data.values()) if counts_data else 0
+                            # NOTE: For manual runs, we assume cbit0_right format.
+                            # See detailed comment below in simple format case.
                             items.append(
                                 ResultItem(
                                     item_index=idx,
@@ -493,6 +495,12 @@ def _build_result_from_run(
                     counts_data = payload.get("counts", {})
                     if counts_data:
                         shots = sum(counts_data.values())
+                        # NOTE: For manual runs without adapter, we assume
+                        # cbit0_right (canonical) format. This is a best-effort
+                        # assumption since manual runs don't have SDK metadata.
+                        # Compare operations will use this assumption for
+                        # canonicalization - if the actual format differs,
+                        # TVD results may be incorrect.
                         items.append(
                             ResultItem(
                                 item_index=0,

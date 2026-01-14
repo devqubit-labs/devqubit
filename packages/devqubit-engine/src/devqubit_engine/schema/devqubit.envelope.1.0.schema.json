@@ -68,6 +68,29 @@
         },
         "required": ["program", "execution"]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "program": {
+            "properties": {
+              "physical": {
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "required": ["physical"]
+          }
+        },
+        "required": ["program"]
+      },
+      "then": {
+        "properties": {
+          "program": {
+            "required": ["executed_structural_hash", "executed_parametric_hash"]
+          }
+        }
+      }
     }
   ],
   "$defs": {
