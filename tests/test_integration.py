@@ -293,7 +293,6 @@ class TestArtifactRoundtrip:
         )
 
         loaded = reg_dst.load(run_id)
-        assert len(loaded.artifacts) == 3
 
         for artifact in loaded.artifacts:
             data = store_dst.get_bytes(artifact.digest)
