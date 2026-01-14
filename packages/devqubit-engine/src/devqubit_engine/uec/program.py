@@ -142,19 +142,41 @@ class ProgramSnapshot:
     physical : list of ProgramArtifact
         Physical (post-transpilation) circuit artifacts.
     program_hash : str, optional
-        Structure-only hash of logical circuits.
+        Structural hash of logical circuits. Deterministic hash of circuit
+        structure (gate sequence, qubits, controls) that IGNORES parameter
+        values. Used for "same circuit template?" comparison.
+    parametric_hash : str, optional
+        Structural + parameters hash. Deterministic hash of structure PLUS
+        bound parameter values for this execution. Changes when any parameter
+        value changes. Used for "same circuit with same params?" comparison.
     executed_hash : str, optional
-        Structure-only hash of executed (physical) circuits.
+        Structural hash of executed (physical) circuits after transpilation.
+    executed_parametric_hash : str, optional
+        Structural + parameters hash of executed circuits.
     num_circuits : int, optional
         Number of circuits in the program.
     transpilation : TranspilationInfo, optional
         Transpilation metadata.
+
+    Notes
+    -----
+    Hash semantics (contract for adapters):
+
+    - ``program_hash``: Structural only. Same value means same circuit template,
+      even if parameter values differ (e.g., VQE iterations).
+    - ``parametric_hash``: Structure + bound params. Same value means identical
+      circuit for this specific execution.
+
+    For adapter runs, ``program_hash`` and ``parametric_hash`` are REQUIRED.
+    For manual runs, they are optional (compare will report "hash unavailable").
     """
 
     logical: list[ProgramArtifact] = field(default_factory=list)
     physical: list[ProgramArtifact] = field(default_factory=list)
     program_hash: str | None = None
+    parametric_hash: str | None = None
     executed_hash: str | None = None
+    executed_parametric_hash: str | None = None
     num_circuits: int | None = None
     transpilation: TranspilationInfo | None = None
 
@@ -168,8 +190,12 @@ class ProgramSnapshot:
         }
         if self.program_hash:
             d["program_hash"] = self.program_hash
+        if self.parametric_hash:
+            d["parametric_hash"] = self.parametric_hash
         if self.executed_hash:
             d["executed_hash"] = self.executed_hash
+        if self.executed_parametric_hash:
+            d["executed_parametric_hash"] = self.executed_parametric_hash
         if self.num_circuits is not None:
             d["num_circuits"] = self.num_circuits
         if self.transpilation:
@@ -196,7 +222,9 @@ class ProgramSnapshot:
             logical=logical,
             physical=physical,
             program_hash=d.get("program_hash"),
+            parametric_hash=d.get("parametric_hash"),
             executed_hash=d.get("executed_hash"),
+            executed_parametric_hash=d.get("executed_parametric_hash"),
             num_circuits=d.get("num_circuits"),
             transpilation=transpilation,
             schema_version=d.get("schema", "devqubit.program_snapshot/1.0"),

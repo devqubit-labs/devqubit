@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import pytest
@@ -16,6 +17,12 @@ from devqubit_engine.uec.calibration import (
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.program import ProgramArtifact
+from devqubit_engine.uec.resolver import (
+    build_envelope_from_run,
+    get_counts_from_envelope,
+    load_envelope,
+    resolve_envelope,
+)
 from devqubit_engine.uec.result import (
     QuasiProbability,
     ResultError,
@@ -438,3 +445,69 @@ class TestValidationResult:
         )
         assert result.valid
         assert "not available" in result.warnings[0]
+
+
+class TestResolver:
+    """Tests for UEC resolver (UEC-first + Run fallback)."""
+
+    def test_resolve_synthesizes_when_no_envelope(self, store, run_factory):
+        """resolve_envelope synthesizes envelope when no artifact exists."""
+        run = run_factory(run_id="NO_ENVELOPE", adapter="manual")
+
+        envelope = resolve_envelope(run, store)
+
+        assert envelope is not None
+        assert envelope.envelope_id is not None
+        assert envelope.metadata.get("synthesized_from_run") is True
+        assert envelope.producer.adapter == "manual"
+
+    def test_load_envelope_exact_kind_match(self, store, run_factory):
+        """load_envelope uses exact kind match, ignores validation_error."""
+
+        # Create envelope artifact
+        envelope_data = {
+            "schema_version": "devqubit.envelope/1.0",
+            "envelope_id": "TEST_ENVELOPE",
+            "created_at": "2024-01-01T00:00:00Z",
+            "producer": {"name": "devqubit", "adapter": "test"},
+            "result": {"success": True, "status": "completed", "items": []},
+        }
+        data = json.dumps(envelope_data).encode()
+        digest = store.put_bytes(data)
+
+        valid_artifact = ArtifactRef(
+            kind="devqubit.envelope.json",  # Exact match
+            digest=digest,
+            media_type="application/json",
+            role="envelope",
+        )
+        # This should NOT match - it's validation_error
+        error_artifact = ArtifactRef(
+            kind="devqubit.envelope.validation_error.json",
+            digest=digest,
+            media_type="application/json",
+            role="config",  # Different role!
+        )
+
+        run = run_factory(artifacts=[error_artifact, valid_artifact])
+        envelope = load_envelope(run, store)
+
+        assert envelope is not None
+        assert envelope.envelope_id == "TEST_ENVELOPE"
+
+    def test_build_envelope_captures_counts(
+        self, store, run_factory, counts_artifact_factory
+    ):
+        """build_envelope_from_run captures counts from Run artifact."""
+
+        counts = {"00": 500, "11": 500}
+        artifact = counts_artifact_factory(counts)
+        run = run_factory(run_id="WITH_COUNTS", artifacts=[artifact])
+
+        envelope = build_envelope_from_run(run, store)
+        extracted = get_counts_from_envelope(envelope)
+
+        assert extracted is not None
+        assert extracted["00"] == 500
+        assert extracted["11"] == 500
+        assert envelope.metadata.get("counts_format_assumed") is True

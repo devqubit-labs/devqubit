@@ -265,35 +265,98 @@ class Verdict:
 
 
 @dataclass
+class ProgramMatchStatus(str, Enum):
+    """
+    Detailed program match status.
+
+    Based on structural (program_hash) and parametric (parametric_hash) comparison.
+
+    Attributes
+    ----------
+    FULL_MATCH : str
+        Both structural and parametric hashes match (identical execution).
+    STRUCTURAL_MATCH_PARAM_MISMATCH : str
+        Same circuit structure but different parameter values (VQE iteration).
+    STRUCTURAL_MISMATCH : str
+        Different circuit structure (different program).
+    HASH_UNAVAILABLE : str
+        Cannot determine - hashes not available (manual run).
+    """
+
+    FULL_MATCH = "FULL_MATCH"
+    STRUCTURAL_MATCH_PARAM_MISMATCH = "STRUCTURAL_MATCH_PARAM_MISMATCH"
+    STRUCTURAL_MISMATCH = "STRUCTURAL_MISMATCH"
+    HASH_UNAVAILABLE = "HASH_UNAVAILABLE"
+
+
+@dataclass
 class ProgramComparison:
     """
     Detailed program comparison result.
 
-    Captures both exact (digest) and structural (circuit_hash) matching
-    to support different verification policies.
+    Captures exact (digest), structural (program_hash), and parametric
+    (parametric_hash) matching to support different verification policies.
 
     Attributes
     ----------
     exact_match : bool
         True if artifact digests are identical (byte-for-byte match).
     structural_match : bool
-        True if circuit_hash values match (same structure, possibly different params).
+        True if program_hash values match (same structure).
+    parametric_match : bool
+        True if parametric_hash values match (same structure AND params).
     digests_a : list of str
         Program artifact digests from baseline.
     digests_b : list of str
         Program artifact digests from candidate.
     circuit_hash_a : str or None
-        Circuit structure hash from baseline.
+        Structural hash (program_hash) from baseline.
     circuit_hash_b : str or None
-        Circuit structure hash from candidate.
+        Structural hash (program_hash) from candidate.
+    parametric_hash_a : str or None
+        Parametric hash from baseline.
+    parametric_hash_b : str or None
+        Parametric hash from candidate.
+    hash_available : bool
+        True if program hashes were available for comparison.
+
+    Notes
+    -----
+    Hash semantics:
+    - ``program_hash``: Structure only. Same = same circuit template.
+    - ``parametric_hash``: Structure + params. Same = identical execution.
+
+    For manual runs, hashes are unavailable and ``hash_available=False``.
     """
 
     exact_match: bool = False
     structural_match: bool = False
+    parametric_match: bool = False
     digests_a: list[str] = field(default_factory=list)
     digests_b: list[str] = field(default_factory=list)
     circuit_hash_a: str | None = None
     circuit_hash_b: str | None = None
+    parametric_hash_a: str | None = None
+    parametric_hash_b: str | None = None
+    hash_available: bool = True
+
+    @property
+    def status(self) -> ProgramMatchStatus:
+        """
+        Get detailed match status.
+
+        Returns
+        -------
+        ProgramMatchStatus
+            Detailed status based on hash comparison.
+        """
+        if not self.hash_available:
+            return ProgramMatchStatus.HASH_UNAVAILABLE
+        if self.parametric_match:
+            return ProgramMatchStatus.FULL_MATCH
+        if self.structural_match:
+            return ProgramMatchStatus.STRUCTURAL_MATCH_PARAM_MISMATCH
+        return ProgramMatchStatus.STRUCTURAL_MISMATCH
 
     def matches(self, mode: ProgramMatchMode) -> bool:
         """
@@ -326,21 +389,21 @@ class ProgramComparison:
         return {
             "exact_match": self.exact_match,
             "structural_match": self.structural_match,
+            "parametric_match": self.parametric_match,
             "structural_only_match": self.structural_only_match,
+            "status": self.status.value,
+            "hash_available": self.hash_available,
             "digests_a": self.digests_a,
             "digests_b": self.digests_b,
             "circuit_hash_a": self.circuit_hash_a,
             "circuit_hash_b": self.circuit_hash_b,
+            "parametric_hash_a": self.parametric_hash_a,
+            "parametric_hash_b": self.parametric_hash_b,
         }
 
     def __repr__(self) -> str:
         """Return string representation."""
-        if self.exact_match:
-            return "ProgramComparison(exact_match)"
-        elif self.structural_match:
-            return "ProgramComparison(structural_match)"
-        else:
-            return "ProgramComparison(no_match)"
+        return f"ProgramComparison({self.status.value})"
 
 
 def _format_header(title: str, width: int = 70, char: str = "=") -> list[str]:

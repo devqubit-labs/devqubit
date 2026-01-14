@@ -8,13 +8,17 @@ This module provides standardized types for capturing quantum experiment
 state across all supported SDKs. The UEC defines canonical snapshot types
 that every adapter must produce, plus a unified envelope container.
 
-Requirements
-------------
-- ``producer`` is REQUIRED (SDK stack tracking)
-- ``result.success`` and ``result.status`` are REQUIRED
-- ``result.items[]`` is always a list (even single executions)
-- ``counts.format`` MUST describe bit ordering
-- ``quasi_probabilities`` are first-class (IBM Runtime)
+Key Components
+--------------
+resolver
+    The primary entry point for obtaining envelope data.
+    Use ``resolve_envelope()`` to get ExecutionEnvelope from any run,
+    whether it was created with an adapter or manually.
+
+    Import directly: ``from devqubit_engine.uec.resolver import resolve_envelope``
+
+envelope
+    ExecutionEnvelope - top-level container unifying all snapshots.
 
 Snapshot Hierarchy
 ------------------
@@ -50,4 +54,21 @@ ExecutionEnvelope
 
         QuasiProbability
             Quasi-distributions from error mitigation.
+
+Requirements
+------------
+- ``producer`` is REQUIRED (SDK stack tracking)
+- ``result.success`` and ``result.status`` are REQUIRED
+- ``result.items[]`` is always a list (even single executions)
+- ``counts.format`` MUST describe bit ordering
+- ``quasi_probabilities`` are first-class (IBM Runtime)
+
+Usage
+-----
+>>> from devqubit_engine.uec.resolver import resolve_envelope
+>>> envelope = resolve_envelope(record, store)
+>>> # envelope is always ExecutionEnvelope, never None
+
+>>> from devqubit_engine.uec.envelope import ExecutionEnvelope
+>>> envelope = ExecutionEnvelope.create(producer=producer, result=result)
 """

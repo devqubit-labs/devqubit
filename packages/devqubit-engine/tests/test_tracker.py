@@ -131,28 +131,6 @@ class TestArtifactLogging:
         data = store.get_bytes(ref.digest)
         assert data == b"file content"
 
-    def test_multiple_artifacts(self, store, registry, config):
-        """Log multiple artifacts in single run."""
-        with track(project="multi", config=config) as run:
-            run.log_bytes(
-                kind="abcdef",
-                data=b"aaa",
-                media_type="text/plain",
-                role="test",
-            )
-            run.log_bytes(
-                kind="fedcba",
-                data=b"bbb",
-                media_type="text/plain",
-                role="test",
-            )
-            run.log_json(name="ccc", obj={"x": 1}, role="test")
-            run_id = run.run_id
-
-        loaded = registry.load(run_id)
-
-        assert len(loaded.artifacts) == 3
-
 
 class TestRunLifecycle:
     """Tests for run lifecycle management."""

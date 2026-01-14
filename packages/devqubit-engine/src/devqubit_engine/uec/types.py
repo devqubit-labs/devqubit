@@ -201,10 +201,36 @@ class ValidationResult:
 
     @property
     def ok(self) -> bool:
-        """Alias for valid - returns True if no errors."""
-        return self.valid
+        """
+        Alias for valid - returns True if no errors.
+
+        Returns
+        -------
+        bool
+            True if validation passed without errors.
+        """
+        return self.valid and len(self.errors) == 0
 
     @property
     def error_count(self) -> int:
-        """Return the number of validation errors."""
+        """
+        Return the number of validation errors.
+
+        Returns
+        -------
+        int
+            Count of validation errors.
+        """
         return len(self.errors)
+
+    @property
+    def warning_count(self) -> int:
+        """
+        Return the number of validation warnings.
+
+        Returns
+        -------
+        int
+            Count of validation warnings.
+        """
+        return len(self.warnings)
