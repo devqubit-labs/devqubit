@@ -731,7 +731,7 @@ def patch_device(
                 }
                 self._devqubit_logged_execution_count += 1
 
-            # Build ProgramSnapshot (UEC v1.0 compliant)
+            # Build ProgramSnapshot
             # PennyLane doesn't transpile, so executed_*_hash == *_hash
             self._devqubit_program_snapshot = ProgramSnapshot(
                 logical=program_artifacts,
@@ -843,9 +843,9 @@ def patch_device(
                     "success": execution_succeeded,
                 }
 
-                # Create and finalize ExecutionEnvelope (UEC 1.0)
+                # Create and finalize ExecutionEnvelope
                 if self._devqubit_device_snapshot is not None:
-                    # Create ProducerInfo for UEC 1.0
+                    # Create ProducerInfo
                     sdk_versions = collect_sdk_versions()
                     producer = ProducerInfo.create(
                         adapter="devqubit-pennylane",

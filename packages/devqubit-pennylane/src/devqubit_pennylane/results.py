@@ -409,7 +409,7 @@ def _extract_probabilities(
     Extract probabilities from PennyLane results as quasi-probability distributions.
 
     Handles both single circuit (1D array) and batch (list of arrays) cases.
-    Returns data suitable for QuasiProbability (UEC v1.0 compliant).
+    Returns data suitable for QuasiProbability.
 
     Parameters
     ----------
@@ -493,7 +493,7 @@ def build_result_snapshot(
     """
     Build a ResultSnapshot from PennyLane execution results.
 
-    Uses UEC 1.0 structure with items[] for per-circuit results.
+    Uses UEC structure with items[] for per-circuit results.
 
     Parameters
     ----------
@@ -515,7 +515,7 @@ def build_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot following UEC 1.0.
+        Structured result snapshot.
     """
     # Determine status
     status = "completed" if success else "failed"
@@ -528,7 +528,7 @@ def build_result_snapshot(
             message=error_info.get("message", "Unknown error"),
         )
 
-    # Build items list (UEC 1.0)
+    # Build items list
     items: list[ResultItem] = []
 
     if success and results is not None:
@@ -572,7 +572,7 @@ def build_result_snapshot(
                         )
                     )
 
-            # Handle probabilities - use quasi_probability (UEC v1.0 compliant)
+            # Handle probabilities - use quasi_probability
             elif "probability" in rt_lower or "probs" in rt_lower:
                 probs_list = _extract_probabilities(results, num_circuits)
                 for pd in probs_list:
