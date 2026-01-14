@@ -4,7 +4,7 @@
 """
 Envelope creation for Braket adapter.
 
-Creates UEC 1.0 compliant ExecutionEnvelopes with proper snapshots
+Creates UEC compliant ExecutionEnvelopes with proper snapshots
 for device, program, execution, and result data.
 
 Notes
@@ -175,7 +175,8 @@ def serialize_and_log_circuits(
 def create_program_snapshot(
     circuits: list[Any],
     artifact_refs: list[ArtifactRef],
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None = None,
 ) -> ProgramSnapshot:
     """
     Create a ProgramSnapshot from circuits and their artifact refs.
@@ -186,13 +187,15 @@ def create_program_snapshot(
         List of Braket circuits.
     artifact_refs : list of ArtifactRef
         References to logged circuit artifacts.
-    circuit_hash : str or None
-        Circuit structure hash.
+    structural_hash : str or None
+        Structural hash (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash (includes parameter values).
 
     Returns
     -------
     ProgramSnapshot
-        Program snapshot with logical artifacts.
+        Program snapshot with logical artifacts and hashes.
     """
     logical_artifacts: list[ProgramArtifact] = []
 
@@ -211,10 +214,17 @@ def create_program_snapshot(
             )
         )
 
+    # If parametric_hash not provided, use structural_hash
+    effective_parametric_hash = parametric_hash or structural_hash
+
     return ProgramSnapshot(
         logical=logical_artifacts,
         physical=[],  # Braket doesn't expose transpiled circuits
-        program_hash=circuit_hash,
+        structural_hash=structural_hash,
+        parametric_hash=effective_parametric_hash,
+        # For Braket without transpilation, executed hashes equal logical
+        executed_structural_hash=structural_hash,
+        executed_parametric_hash=effective_parametric_hash,
         num_circuits=len(circuits),
     )
 
@@ -268,7 +278,7 @@ def create_result_snapshot(
     error: Exception | None = None,
 ) -> ResultSnapshot:
     """
-    Create a ResultSnapshot from Braket result (UEC 1.0 format).
+    Create a ResultSnapshot from Braket result.
 
     Parameters
     ----------
@@ -313,7 +323,7 @@ def create_result_snapshot(
                 counts_data = exp.get("counts", {})
                 item_success = bool(counts_data)
 
-                # Build counts structure per UEC 1.0 schema
+                # Build counts structure
                 counts_obj = None
                 if counts_data:
                     counts_obj = {
@@ -370,7 +380,8 @@ def create_envelope(
     shots: int | None,
     task_ids: list[str],
     submitted_at: str,
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None = None,
     execution_index: int = 1,
     options: dict[str, Any] | None = None,
 ) -> ExecutionEnvelope:
@@ -391,8 +402,10 @@ def create_envelope(
         Task identifiers.
     submitted_at : str
         Submission timestamp.
-    circuit_hash : str or None
-        Circuit hash.
+    structural_hash : str or None
+        Structural hash (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash (includes parameter values).
     execution_index : int
         Which execution this is (1-indexed sequence number).
     options : dict, optional
@@ -444,7 +457,8 @@ def create_envelope(
     program_snapshot = create_program_snapshot(
         circuits=circuits,
         artifact_refs=artifact_refs,
-        circuit_hash=circuit_hash,
+        structural_hash=structural_hash,
+        parametric_hash=parametric_hash,
     )
 
     # Create execution snapshot
@@ -456,7 +470,7 @@ def create_envelope(
         options=options,
     )
 
-    # Create ProducerInfo for UEC 1.0
+    # Create ProducerInfo
     sdk_version = braket_version()
     producer = ProducerInfo.create(
         adapter="devqubit-braket",
@@ -466,7 +480,7 @@ def create_envelope(
         frontends=["braket-sdk"],
     )
 
-    # Create pending result (UEC 1.0 requires result field)
+    # Create pending result
     pending_result = ResultSnapshot(
         success=False,
         status="failed",  # Will be updated by finalize_envelope
@@ -597,7 +611,7 @@ def finalize_envelope(
         except Exception as e:
             logger.debug("Failed to log counts: %s", e)
 
-    # Update tracker record (UEC 1.0 fields)
+    # Update tracker record
     tracker.record["results"] = {
         "completed_at": utc_now_iso(),
         "backend_name": device_name,

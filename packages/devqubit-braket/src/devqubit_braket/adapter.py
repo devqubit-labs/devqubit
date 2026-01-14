@@ -6,7 +6,7 @@ Braket adapter for devqubit tracking system.
 
 Provides integration with Amazon Braket devices, enabling automatic tracking
 of quantum circuit execution, results, and device configurations using the
-Uniform Execution Contract (UEC) 1.0.
+Uniform Execution Contract (UEC).
 
 Example
 -------
@@ -462,14 +462,23 @@ class TrackedDevice:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash
-        circuit_hash = _compute_structural_hash(circuits_for_logging)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute hashes
+        # structural_hash: ignores parameter values (for deduplication)
+        # parametric_hash: includes parameter values from inputs (for exact match)
+        structural_hash = _compute_structural_hash(circuits_for_logging)
+
+        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
+        inputs = kwargs.get("inputs")
+        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine logging behavior
-        should_log = self._should_log(exec_count, circuit_hash, is_new_circuit)
+        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
 
         # Build execution options
         options: dict[str, Any] = {}
@@ -513,17 +522,18 @@ class TrackedDevice:
                 shots=shots,
                 task_ids=task_ids,
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 execution_index=exec_count,
                 options=options if options else None,
             )
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
             self._logged_execution_count += 1
 
-            # Set tracker tags/params (P1 fix: provider is platform, not SDK)
+            # Set tracker tags/params
             self.tracker.set_tag("backend_name", device_name)
             self.tracker.set_tag("provider", "aws_braket")
             self.tracker.set_tag("adapter", "devqubit-braket")
@@ -545,7 +555,8 @@ class TrackedDevice:
                 "sdk": "braket",
                 "num_circuits": len(circuits_for_logging),
                 "execution_count": exec_count,
-                "program_hash": circuit_hash,
+                "structural_hash": structural_hash,
+                "parametric_hash": parametric_hash,
                 "shots": shots,
                 "task_ids": task_ids,
             }
@@ -607,14 +618,21 @@ class TrackedDevice:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash
-        circuit_hash = _compute_structural_hash(circuits_for_logging)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute hashes
+        structural_hash = _compute_structural_hash(circuits_for_logging)
+
+        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
+        inputs = kwargs.get("inputs")
+        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine logging behavior
-        should_log = self._should_log(exec_count, circuit_hash, is_new_circuit)
+        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
 
         # Build execution options
         options: dict[str, Any] = {
@@ -657,17 +675,18 @@ class TrackedDevice:
                 shots=shots,
                 task_ids=[],  # Batch doesn't have a single ID upfront
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 execution_index=exec_count,
                 options=options,
             )
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
             self._logged_execution_count += 1
 
-            # Set tracker tags/params (P1 fix: provider is platform, not SDK)
+            # Set tracker tags/params
             self.tracker.set_tag("backend_name", device_name)
             self.tracker.set_tag("provider", "aws_braket")
             self.tracker.set_tag("adapter", "devqubit-braket")
@@ -691,7 +710,8 @@ class TrackedDevice:
                 "sdk": "braket",
                 "num_circuits": len(circuits_for_logging),
                 "execution_count": exec_count,
-                "program_hash": circuit_hash,
+                "structural_hash": structural_hash,
+                "parametric_hash": parametric_hash,
                 "shots": shots,
                 "batch": True,
             }
@@ -717,7 +737,7 @@ class TrackedDevice:
     def _should_log(
         self,
         exec_count: int,
-        circuit_hash: str | None,
+        structural_hash: str | None,
         is_new_circuit: bool,
     ) -> bool:
         """Determine if this execution should be logged."""
