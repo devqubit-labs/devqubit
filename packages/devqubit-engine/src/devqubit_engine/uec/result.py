@@ -25,11 +25,6 @@ from typing import Any
 from devqubit_engine.uec.types import ArtifactRef
 
 
-# =============================================================================
-# Counts Format Metadata
-# =============================================================================
-
-
 @dataclass
 class CountsFormat:
     """
@@ -89,11 +84,6 @@ class CountsFormat:
             num_clbits=d.get("num_clbits"),
             registers=d.get("registers"),
         )
-
-
-# =============================================================================
-# Quasi-Probability Distribution
-# =============================================================================
 
 
 @dataclass
@@ -196,11 +186,6 @@ class QuasiProbability:
         )
 
 
-# =============================================================================
-# Normalized Expectation Value
-# =============================================================================
-
-
 @dataclass
 class NormalizedExpectation:
     """
@@ -255,11 +240,6 @@ class NormalizedExpectation:
             std_error=d.get("std_error"),
             observable=d.get("observable"),
         )
-
-
-# =============================================================================
-# Result Error
-# =============================================================================
 
 
 @dataclass
@@ -353,11 +333,6 @@ class ResultError:
             stack_hash=stack_hash,
             retryable=retryable,
         )
-
-
-# =============================================================================
-# Result Item (per-item in batch)
-# =============================================================================
 
 
 @dataclass
@@ -482,11 +457,6 @@ class ResultItem:
             },
             raw_ref=raw_ref,
         )
-
-
-# =============================================================================
-# Result Snapshot
-# =============================================================================
 
 
 @dataclass
@@ -673,3 +643,133 @@ class ResultSnapshot:
             error=error,
             metadata=metadata or {},
         )
+
+
+def canonicalize_bitstrings(
+    distribution: dict[str, int | float],
+    *,
+    bit_order: str,
+    transformed: bool = False,
+) -> dict[str, int | float]:
+    """
+    Canonicalize bitstring keys to cbit0_right (little-endian) format.
+
+    This is the single source of truth for bit order normalization in
+    devqubit engine. All compare/diff operations use this function to
+    ensure consistent comparison regardless of source SDK.
+
+    Parameters
+    ----------
+    distribution : dict
+        Bitstring to count/probability mapping.
+    bit_order : str
+        Current bit order of the keys ("cbit0_right" or "cbit0_left").
+    transformed : bool, default=False
+        Whether the keys have already been transformed to canonical.
+
+    Returns
+    -------
+    dict
+        Distribution with canonical bitstring keys (cbit0_right).
+
+    Notes
+    -----
+    Bit order conventions:
+    - ``cbit0_right`` (canonical): LSB on right. "01" means qubit 0 = 1, qubit 1 = 0.
+      This is Qiskit's native format.
+    - ``cbit0_left``: LSB on left. "01" means qubit 0 = 0, qubit 1 = 1.
+      This is Braket/Cirq's native format.
+
+    Multi-register handling:
+    - Keys with ``|`` separator (e.g., "01|10") are reversed per segment.
+    - Whitespace is stripped from keys.
+
+    Examples
+    --------
+    >>> # Already canonical (Qiskit format)
+    >>> canonicalize_bitstrings({"00": 500, "11": 500}, bit_order="cbit0_right")
+    {'00': 500, '11': 500}
+
+    >>> # Big-endian format needs reversal
+    >>> canonicalize_bitstrings({"01": 100}, bit_order="cbit0_left")
+    {'10': 100}
+
+    >>> # Multi-register
+    >>> canonicalize_bitstrings({"01|10": 100}, bit_order="cbit0_left")
+    {'10|01': 100}
+
+    >>> # Already transformed by adapter
+    >>> canonicalize_bitstrings({"01": 100}, bit_order="cbit0_right", transformed=True)
+    {'01': 100}
+    """
+    # Already canonical or already transformed
+    if bit_order == "cbit0_right" or transformed:
+        # Just clean whitespace
+        return {k.replace(" ", ""): v for k, v in distribution.items()}
+
+    # Need to reverse: cbit0_left -> cbit0_right
+    result: dict[str, int | float] = {}
+    for key, value in distribution.items():
+        # Strip whitespace
+        clean_key = key.replace(" ", "")
+
+        # Handle multi-register format with | separator
+        if "|" in clean_key:
+            segments = clean_key.split("|")
+            reversed_segments = [seg[::-1] for seg in segments]
+            canonical_key = "|".join(reversed_segments)
+        else:
+            canonical_key = clean_key[::-1]
+
+        result[canonical_key] = value
+
+    return result
+
+
+def extract_canonical_counts(
+    result_item: ResultItem,
+) -> dict[str, int] | None:
+    """
+    Extract counts from ResultItem in canonical bit order.
+
+    Convenience function that combines count extraction and canonicalization.
+
+    Parameters
+    ----------
+    result_item : ResultItem
+        Result item containing counts.
+
+    Returns
+    -------
+    dict or None
+        Canonical counts {bitstring: int}, or None if no counts.
+
+    Examples
+    --------
+    >>> item = ResultItem(item_index=0, success=True, counts={
+    ...     "counts": {"01": 500, "10": 500},
+    ...     "shots": 1000,
+    ...     "format": {"bit_order": "cbit0_left", "transformed": False}
+    ... })
+    >>> extract_canonical_counts(item)
+    {'10': 500, '01': 500}
+    """
+    if not result_item.counts:
+        return None
+
+    raw_counts = result_item.counts.get("counts")
+    if not isinstance(raw_counts, dict):
+        return None
+
+    format_info = result_item.counts.get("format", {})
+    bit_order = format_info.get("bit_order", "cbit0_right")
+    transformed = format_info.get("transformed", False)
+
+    canonical = canonicalize_bitstrings(
+        raw_counts,
+        bit_order=bit_order,
+        transformed=transformed,
+    )
+
+    # Ensure int values for counts
+    return {k: int(v) for k, v in canonical.items()}
