@@ -52,8 +52,6 @@ from devqubit_engine.uec.program import (
     ProgramSnapshot,
     TranspilationInfo,
 )
-
-# UEC 1.0 imports
 from devqubit_engine.uec.result import (
     CountsFormat,
     ResultError,
@@ -314,7 +312,7 @@ def _create_program_snapshot(
     parametric_hash: str | None = None,
 ) -> ProgramSnapshot:
     """
-    Create a ProgramSnapshot from circuits and their artifact refs (UEC v1.0).
+    Create a ProgramSnapshot from circuits and their artifact refs.
 
     Parameters
     ----------
@@ -416,7 +414,7 @@ def _create_result_snapshot(
     error_info: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
-    Create a ResultSnapshot from Cirq result(s) using UEC 1.0 API.
+    Create a ResultSnapshot from Cirq result(s).
 
     Parameters
     ----------
@@ -435,7 +433,7 @@ def _create_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Result snapshot with normalized counts (UEC 1.0 format).
+        Result snapshot with normalized counts.
     """
     # Handle failure case (error_info provided)
     if error_info is not None:
@@ -471,7 +469,7 @@ def _create_result_snapshot(
         logger.debug("Failed to normalize counts payload: %s", e)
         counts_payload = {"experiments": [], "format": {}}
 
-    # Build UEC 1.0 items list
+    # Build items list
     items: list[ResultItem] = []
 
     # Get format from payload
@@ -520,7 +518,8 @@ def _create_and_log_envelope(
     circuits: list[Any],
     repetitions: int,
     submitted_at: str,
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None = None,
     is_sweep: bool = False,
     params: Any = None,
     options: dict[str, Any] | None = None,
@@ -540,8 +539,10 @@ def _create_and_log_envelope(
         Number of repetitions.
     submitted_at : str
         Submission timestamp.
-    circuit_hash : str or None
-        Circuit hash.
+    structural_hash : str or None
+        Structural hash (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash (includes parameter values).
     is_sweep : bool
         Whether this is a parameter sweep.
     params : Any, optional
@@ -584,7 +585,7 @@ def _create_and_log_envelope(
     # Serialize and log circuits
     artifact_refs = _serialize_and_log_circuits(tracker, circuits, simulator_name)
 
-    # UEC 1.0: Create ProducerInfo
+    # Create ProducerInfo
     sdk_version = cirq_version()
     producer = ProducerInfo.create(
         adapter="devqubit-cirq",
@@ -595,7 +596,7 @@ def _create_and_log_envelope(
     )
 
     # Create pending result (will be updated when execution completes)
-    # UEC 1.0 requires status to be one of: completed, failed, cancelled, partial
+    # requires status to be one of: completed, failed, cancelled, partial
     pending_result = ResultSnapshot(
         success=False,
         status="failed",  # Valid status - will be updated by _finalize_envelope_with_result
@@ -609,7 +610,9 @@ def _create_and_log_envelope(
         producer=producer,
         result=pending_result,  # Must be valid ResultSnapshot, not None
         device=device_snapshot,
-        program=_create_program_snapshot(circuits, artifact_refs, circuit_hash),
+        program=_create_program_snapshot(
+            circuits, artifact_refs, structural_hash, parametric_hash
+        ),
         execution=_create_execution_snapshot(
             repetitions, submitted_at, is_sweep, params, options
         ),
@@ -836,10 +839,32 @@ class TrackedSimulator:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        circuit_hash = _compute_structural_hash(circuit_list)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute both structural and parametric hashes
+        structural_hash = _compute_structural_hash(circuit_list)
+
+        # Extract resolver from params for parametric hash
+        # params can be: ParamResolver, Sweep, list of resolvers, or None
+        resolver = None
+        if params is not None:
+            # If it's a ParamResolver directly
+            if hasattr(params, "param_dict"):
+                resolver = params
+            # If it's a Sweep, try to get first resolver
+            elif hasattr(params, "__iter__"):
+                try:
+                    first_param = next(iter(params), None)
+                    if first_param is not None and hasattr(first_param, "param_dict"):
+                        resolver = first_param
+                except Exception:
+                    pass
+
+        parametric_hash = _compute_parametric_hash(circuit_list, resolver)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Check if we should log this execution
         if not (self._should_log(exec_count, is_new_circuit) and circuit_list):
@@ -859,7 +884,8 @@ class TrackedSimulator:
                 circuits=circuit_list,
                 repetitions=repetitions,
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 is_sweep=is_sweep,
                 params=params,
                 options=options if options else None,
@@ -888,8 +914,8 @@ class TrackedSimulator:
                 }
             )
 
-        if circuit_hash:
-            self._logged_circuit_hashes.add(circuit_hash)
+        if structural_hash:
+            self._logged_circuit_hashes.add(structural_hash)
         self._logged_execution_count += 1
 
         # Get physical provider from device snapshot (if available)
@@ -928,7 +954,8 @@ class TrackedSimulator:
             "sdk": "cirq",
             "num_circuits": len(circuit_list),
             "execution_count": exec_count,
-            "program_hash": circuit_hash,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
             "repetitions": repetitions,
             "sweep": is_sweep,
             "batch": is_batch,
