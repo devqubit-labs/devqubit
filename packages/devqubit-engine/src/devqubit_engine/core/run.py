@@ -659,6 +659,101 @@ class Run:
             meta={"name": name},
         )
 
+    def log_counts(
+        self,
+        counts: dict[str, int],
+        *,
+        shots: int | None = None,
+        source_sdk: str = "manual",
+        bit_order: str = "cbit0_right",
+        experiment_index: int = 0,
+        transform_to_canonical: bool = False,
+    ) -> ArtifactRef:
+        """
+        Log measurement counts as a standardized artifact.
+
+        This helper simplifies manual logging of quantum execution results
+        by ensuring counts are stored in a consistent format compatible
+        with compare/diff operations.
+
+        Parameters
+        ----------
+        counts : dict
+            Measurement counts as {bitstring: count} mapping.
+            Keys should be binary strings (e.g., "00", "01", "10", "11").
+        shots : int, optional
+            Total number of shots. If None, computed from counts.
+        source_sdk : str, default="manual"
+            SDK that produced the counts (e.g., "qiskit", "braket", "manual").
+        bit_order : str, default="cbit0_right"
+            Bit ordering convention of the counts keys.
+            - "cbit0_right": LSB on right (Qiskit convention, canonical)
+            - "cbit0_left": LSB on left (Braket/Cirq convention)
+        experiment_index : int, default=0
+            Experiment index for batch executions.
+        transform_to_canonical : bool, default=False
+            If True and bit_order is "cbit0_left", reverse bitstrings
+            to canonical "cbit0_right" format.
+
+        Returns
+        -------
+        ArtifactRef
+            Reference to the stored counts artifact.
+
+        Notes
+        -----
+        The canonical bit order for devqubit is "cbit0_right" (little-endian,
+        LSB on right), which matches Qiskit's convention. If your counts come
+        from Braket or Cirq (big-endian), set transform_to_canonical=True
+        to convert them.
+        """
+        # Compute shots if not provided
+        if shots is None:
+            shots = sum(counts.values())
+
+        # Transform to canonical bit order if requested
+        transformed = False
+        final_counts = counts
+        if transform_to_canonical and bit_order == "cbit0_left":
+            final_counts = {k[::-1]: v for k, v in counts.items()}
+            transformed = True
+            bit_order = "cbit0_right"
+
+        # Build payload in standard format
+        payload = {
+            "counts": final_counts,
+            "shots": shots,
+            "experiments": [
+                {
+                    "index": experiment_index,
+                    "counts": final_counts,
+                    "shots": shots,
+                }
+            ],
+            "counts_format": {
+                "source_sdk": source_sdk,
+                "source_key_format": f"{source_sdk}_counts",
+                "bit_order": bit_order,
+                "transformed": transformed,
+            },
+        }
+
+        ref = self.log_json(
+            name="result_counts",
+            obj=payload,
+            role="results",
+            kind="result.counts.json",
+        )
+
+        logger.debug(
+            "Logged counts: shots=%d, outcomes=%d, source_sdk=%s",
+            shots,
+            len(final_counts),
+            source_sdk,
+        )
+
+        return ref
+
     def log_envelope(self, envelope: ExecutionEnvelope) -> bool:
         """
         Validate and log execution envelope.
@@ -1037,6 +1132,75 @@ class Run:
             str(error),
         )
 
+    def _has_envelope_artifact(self) -> bool:
+        """
+        Check if an envelope artifact already exists.
+
+        Returns
+        -------
+        bool
+            True if envelope artifact exists in self._artifacts.
+        """
+        for artifact in self._artifacts:
+            if artifact.role == "envelope":
+                return True
+        return False
+
+    def _ensure_envelope(self) -> None:
+        """
+        Ensure an envelope artifact exists before finalization.
+
+        If no envelope was logged (e.g., manual run without adapter),
+        this method synthesizes one from the run record and artifacts.
+        This ensures UEC is always the source of truth, even for
+        manual runs.
+
+        Notes
+        -----
+        This is called automatically during _finalize(). The synthesized
+        envelope will have metadata.auto_generated=True.
+        """
+        if self._has_envelope_artifact():
+            logger.debug("Envelope artifact already exists, skipping auto-generation")
+            return
+
+        # Build envelope from current run state
+        try:
+            from devqubit_engine.uec.resolver import build_envelope_from_run
+
+            # Create temporary RunRecord for envelope building
+            temp_record = RunRecord(
+                record=self.record,
+                artifacts=self._artifacts,
+            )
+
+            envelope = build_envelope_from_run(temp_record, self._store)
+
+            # Mark as auto-generated
+            envelope.metadata["auto_generated"] = True
+            envelope.metadata.pop("synthesized_from_run", None)
+
+            # Log the envelope (skip validation for auto-generated)
+            self.log_json(
+                name="execution_envelope",
+                obj=envelope.to_dict(),
+                role="envelope",
+                kind="devqubit.envelope.json",
+            )
+
+            logger.debug(
+                "Auto-generated envelope for run %s",
+                self._run_id,
+            )
+
+        except Exception as e:
+            # Don't fail the run if envelope generation fails
+            logger.warning(
+                "Failed to auto-generate envelope for run %s: %s",
+                self._run_id,
+                e,
+            )
+
     def _finalize(self, success: bool = True) -> None:
         """
         Finalize the run record and persist it.
@@ -1049,6 +1213,9 @@ class Run:
         if success and self.record["info"]["status"] == "RUNNING":
             self.record["info"]["status"] = "FINISHED"
             self.record["info"]["ended_at"] = utc_now_iso()
+
+        # Ensure envelope exists (auto-generate if needed)
+        self._ensure_envelope()
 
         # Serialize artifacts
         self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
