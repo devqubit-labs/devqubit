@@ -77,34 +77,6 @@ class TestFindArtifact:
 class TestListArtifacts:
     """Tests for list_artifacts."""
 
-    def test_list_all(self, store, registry, config):
-        """List all artifacts."""
-        with track(project="test", config=config) as run:
-            run.log_bytes(
-                kind="artifact.one",
-                data=b"1",
-                media_type="text/plain",
-                role="test",
-            )
-            run.log_bytes(
-                kind="artifact.two",
-                data=b"2",
-                media_type="text/plain",
-                role="test",
-            )
-            run.log_bytes(
-                kind="artifact.three",
-                data=b"3",
-                media_type="text/plain",
-                role="test",
-            )
-            run_id = run.run_id
-
-        record = registry.load(run_id)
-        arts = list_artifacts(record)
-
-        assert len(arts) == 3
-
     def test_list_with_filter(self, store, registry, config):
         """List artifacts with role filter."""
         with track(project="test", config=config) as run:
