@@ -14,7 +14,7 @@ from devqubit_qiskit.adapter import (
     TrackedJob,
 )
 from devqubit_qiskit.circuits import (
-    compute_circuit_hash,
+    compute_structural_hash,
     materialize_circuits,
 )
 from devqubit_qiskit.serialization import (
@@ -123,7 +123,7 @@ class TestCircuitHash:
         qc2.h(0)
         qc2.cx(0, 1)
 
-        assert compute_circuit_hash([qc1]) == compute_circuit_hash([qc2])
+        assert compute_structural_hash([qc1]) == compute_structural_hash([qc2])
 
     def test_different_gates_different_hash(self):
         """Different gates produce different hash."""
@@ -133,7 +133,7 @@ class TestCircuitHash:
         qc2 = QuantumCircuit(2)
         qc2.x(0)
 
-        assert compute_circuit_hash([qc1]) != compute_circuit_hash([qc2])
+        assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
     def test_parameter_values_dont_change_hash(self):
         """Parameter values don't affect structure hash."""
@@ -144,7 +144,7 @@ class TestCircuitHash:
         bound1 = qc.assign_parameters({theta: 0.5})
         bound2 = qc.assign_parameters({theta: 1.5})
 
-        assert compute_circuit_hash([bound1]) == compute_circuit_hash([bound2])
+        assert compute_structural_hash([bound1]) == compute_structural_hash([bound2])
 
 
 class TestTrackedBackendExecution:

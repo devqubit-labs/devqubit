@@ -12,7 +12,7 @@ from devqubit_braket.adapter import (
     BraketAdapter,
     TrackedDevice,
     TrackedTaskBatch,
-    _compute_circuit_hash,
+    _compute_structural_hash,
     _is_program_set,
     _materialize_task_spec,
 )
@@ -228,7 +228,7 @@ class TestCircuitHash:
         c1 = Circuit().h(0).cnot(0, 1).measure([0, 1])
         c2 = Circuit().h(0).cnot(0, 1).measure([0, 1])
 
-        assert _compute_circuit_hash([c1]) == _compute_circuit_hash([c2])
+        assert _compute_structural_hash([c1]) == _compute_structural_hash([c2])
 
     def test_gate_or_target_changes_hash(self):
         """Different gates or targets produce different hashes."""
@@ -236,17 +236,17 @@ class TestCircuitHash:
         b = Circuit().h(1).measure(1)
         c = Circuit().x(0).measure(0)
 
-        assert _compute_circuit_hash([a]) != _compute_circuit_hash([b])
-        assert _compute_circuit_hash([a]) != _compute_circuit_hash([c])
+        assert _compute_structural_hash([a]) != _compute_structural_hash([b])
+        assert _compute_structural_hash([a]) != _compute_structural_hash([c])
 
     def test_empty_circuits_returns_none(self):
         """Empty circuit list returns None."""
-        assert _compute_circuit_hash([]) is None
+        assert _compute_structural_hash([]) is None
 
     def test_hash_format(self):
         """Hash has correct sha256 prefix format."""
         c = Circuit().h(0)
-        h = _compute_circuit_hash([c])
+        h = _compute_structural_hash([c])
 
         assert h is not None
         assert h.startswith("sha256:")
