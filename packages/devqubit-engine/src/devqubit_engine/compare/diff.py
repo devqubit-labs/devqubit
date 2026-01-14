@@ -48,7 +48,6 @@ from devqubit_engine.uec.calibration import DeviceCalibration
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.resolver import (
-    get_program_hash_from_envelope,
     resolve_envelope,
 )
 from devqubit_engine.uec.result import canonicalize_bitstrings
@@ -189,8 +188,8 @@ def _extract_counts(
     Extract counts from envelope or Run artifacts.
 
     Uses UEC-first strategy: extracts counts from ExecutionEnvelope,
-    falling back to Run counts artifact if envelope has no counts.
-    Always canonicalizes bitstrings to cbit0_right format for comparison.
+    falling back to Run counts artifact only for synthesized (manual)
+    envelopes. For adapter envelopes, missing counts is reported as None.
 
     Parameters
     ----------
@@ -210,7 +209,7 @@ def _extract_counts(
     """
     # Use provided envelope or resolve
     if envelope is None:
-        envelope = resolve_envelope(record, store, strict=False)
+        envelope = resolve_envelope(record, store)
 
     # Try to get counts from envelope (UEC-first)
     if envelope.result.items:
@@ -231,7 +230,18 @@ def _extract_counts(
                 else:
                     return {str(k): int(v) for k, v in raw_counts.items()}
 
-    # Fallback: Run counts artifact
+    # Fallback: Run counts artifact - ONLY for synthesized (manual) envelopes
+    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
+
+    if not is_synthesized:
+        # Adapter envelope without counts - this is an integration issue
+        logger.debug(
+            "Adapter envelope for run %s has no counts in result items",
+            record.run_id,
+        )
+        return None
+
+    # Manual/synthesized envelope - fallback to Run artifact is allowed
     counts_info = get_counts(record, store)
     if counts_info is None:
         return None
@@ -255,7 +265,8 @@ def _load_device_snapshot(
     Load device snapshot from envelope or run record.
 
     Uses UEC-first strategy: extracts device from ExecutionEnvelope,
-    falling back to Run record metadata if envelope has no device.
+    falling back to Run record metadata only for synthesized (manual)
+    envelopes.
 
     Parameters
     ----------
@@ -270,6 +281,12 @@ def _load_device_snapshot(
     -------
     DeviceSnapshot or None
         Device snapshot if available, None otherwise.
+
+    Notes
+    -----
+    Fallback to Run record metadata is only allowed for synthesized
+    (manual) envelopes. For adapter envelopes, if device is not present
+    in the envelope, None is returned.
     """
     # Use provided envelope or resolve
     if envelope is None:
@@ -279,7 +296,18 @@ def _load_device_snapshot(
     if envelope.device is not None:
         return envelope.device
 
-    # Fallback: construct from record metadata (Run compatibility)
+    # Fallback: construct from record metadata - ONLY for synthesized envelopes
+    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
+
+    if not is_synthesized:
+        # Adapter envelope without device - this may be intentional (no device info)
+        logger.debug(
+            "Adapter envelope for run %s has no device snapshot",
+            record.run_id,
+        )
+        return None
+
+    # Manual/synthesized envelope - fallback to Run record is allowed
     backend = record.record.get("backend") or {}
     if not isinstance(backend, dict):
         return None
@@ -314,59 +342,62 @@ def _load_device_snapshot(
 def _extract_circuit_summary(
     record: RunRecord,
     store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
+    *,
+    which: str = "logical",
 ) -> CircuitSummary | None:
-    """Extract circuit summary from run record."""
-    circuit_data = extract_circuit(record, store)
+    """
+    Extract circuit summary from envelope or run record.
+
+    Uses UEC-first strategy: extracts circuit from envelope refs, falling
+    back to run record artifacts only for synthesized (manual) envelopes.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record for fallback extraction.
+    store : ObjectStoreProtocol
+        Object store for loading artifacts.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope.
+    which : str, default="logical"
+        Which circuit to extract: "logical" or "physical".
+
+    Returns
+    -------
+    CircuitSummary or None
+        Extracted circuit summary, or None if not found.
+    """
+    from devqubit_engine.circuit.extractors import extract_circuit_from_envelope
+
+    circuit_data = None
+
+    # Try envelope first (UEC-first)
+    if envelope is not None:
+        circuit_data = extract_circuit_from_envelope(envelope, store, which=which)
+
+    # Fallback to Run artifacts - ONLY for synthesized (manual) envelopes
+    if circuit_data is None:
+        is_synthesized = envelope is not None and envelope.metadata.get(
+            "synthesized_from_run", False
+        )
+
+        if is_synthesized:
+            # Manual envelope - fallback is allowed
+            circuit_data = extract_circuit(record, store)
+        elif envelope is not None:
+            # Adapter envelope without circuit refs - log and return None
+            logger.debug(
+                "Adapter envelope for run %s has no circuit refs for '%s'",
+                record.run_id,
+                which,
+            )
+
     if circuit_data is not None:
         try:
             return summarize_circuit_data(circuit_data)
         except Exception as e:
             logger.debug("Failed to summarize circuit: %s", e)
-    return None
-
-
-def _extract_circuit_hash(
-    record: RunRecord,
-    envelope: ExecutionEnvelope | None = None,
-) -> str | None:
-    """
-    Extract circuit_hash from envelope or run record.
-
-    Uses UEC-first strategy: extracts program_hash from envelope,
-    falling back to Run metadata if not in envelope.
-
-    The circuit_hash is a structural hash that ignores parameter values,
-    making it suitable for comparing parameterized circuits that were
-    executed with different parameter values.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract from.
-    envelope : ExecutionEnvelope, optional
-        Pre-resolved envelope.
-
-    Returns
-    -------
-    str or None
-        Circuit hash if available.
-    """
-    # Try envelope first (UEC-first)
-    if envelope is not None:
-        program_hash = get_program_hash_from_envelope(envelope)
-        if program_hash:
-            return program_hash
-
-    # Fallback: try execute metadata
-    execute = record.record.get("execute", {})
-    if isinstance(execute, dict) and execute.get("circuit_hash"):
-        return str(execute["circuit_hash"])
-
-    # Fallback: try artifacts metadata
-    for artifact in record.artifacts:
-        meta = artifact.meta or {}
-        if meta.get("circuit_hash"):
-            return str(meta["circuit_hash"])
 
     return None
 
@@ -381,7 +412,7 @@ def _compare_programs(
     Compare program artifacts between two runs.
 
     Uses UEC-first strategy for structural and parametric hash comparison.
-    Computes exact (digest), structural (program_hash), and parametric
+    Computes exact (digest), structural (structural_hash), and parametric
     (parametric_hash) matching.
 
     Parameters
@@ -401,13 +432,29 @@ def _compare_programs(
         Detailed comparison with status, exact_match, structural_match,
         parametric_match, and hash availability.
     """
-    digests_a = get_artifact_digests(run_a, role="program")
-    digests_b = get_artifact_digests(run_b, role="program")
+    # Exact match: prefer envelope refs if available (ignores auxiliary artifacts
+    # like diagrams), else fall back to all role=program artifacts
+    if envelope_a and envelope_a.program:
+        logical_digests_a = [a.ref.digest for a in envelope_a.program.logical if a.ref]
+        physical_digests_a = [
+            a.ref.digest for a in envelope_a.program.physical if a.ref
+        ]
+        digests_a = sorted(set(logical_digests_a + physical_digests_a))
+    else:
+        digests_a = get_artifact_digests(run_a, role="program")
 
-    # Exact match on content digests
+    if envelope_b and envelope_b.program:
+        logical_digests_b = [a.ref.digest for a in envelope_b.program.logical if a.ref]
+        physical_digests_b = [
+            a.ref.digest for a in envelope_b.program.physical if a.ref
+        ]
+        digests_b = sorted(set(logical_digests_b + physical_digests_b))
+    else:
+        digests_b = get_artifact_digests(run_b, role="program")
+
     exact_match = digests_a == digests_b
 
-    # Extract hashes from UEC (program_hash and parametric_hash)
+    # Extract hashes from UEC (structural_hash and parametric_hash)
     hash_a = None
     hash_b = None
     param_hash_a = None
@@ -415,10 +462,10 @@ def _compare_programs(
     hash_available = True
 
     if envelope_a and envelope_a.program:
-        hash_a = envelope_a.program.program_hash
+        hash_a = envelope_a.program.structural_hash
         param_hash_a = envelope_a.program.parametric_hash
     if envelope_b and envelope_b.program:
-        hash_b = envelope_b.program.program_hash
+        hash_b = envelope_b.program.structural_hash
         param_hash_b = envelope_b.program.parametric_hash
 
     # Check if hashes are available (manual runs won't have them)
@@ -448,7 +495,7 @@ def _compare_programs(
     if structural_match and not parametric_match:
         logger.debug(
             "Programs match in structure but differ in params "
-            "(program_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
+            "(structural_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
             hash_a,
             param_hash_a,
             param_hash_b,
@@ -517,9 +564,9 @@ def diff_runs(
 
     logger.info("Comparing runs: %s vs %s", run_a.run_id, run_b.run_id)
 
-    # Resolve envelopes (UEC-first strategy, non-strict for backward compat)
-    envelope_a = resolve_envelope(run_a, store_a, strict=False)
-    envelope_b = resolve_envelope(run_b, store_b, strict=False)
+    # Resolve envelopes (UEC-first strategy, strict for adapters)
+    envelope_a = resolve_envelope(run_a, store_a)
+    envelope_b = resolve_envelope(run_b, store_b)
 
     result = ComparisonResult(
         run_id_a=run_a.run_id,
@@ -601,8 +648,8 @@ def diff_runs(
 
     # Circuit diff
     if include_circuit_diff:
-        summary_a = _extract_circuit_summary(run_a, store_a)
-        summary_b = _extract_circuit_summary(run_b, store_b)
+        summary_a = _extract_circuit_summary(run_a, store_a, envelope_a)
+        summary_b = _extract_circuit_summary(run_b, store_b, envelope_b)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
         elif not result.program.matches(ProgramMatchMode.EITHER):

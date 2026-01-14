@@ -274,9 +274,9 @@ class ExecutionEnvelope:
         )
 
         if is_adapter_run and self.program:
-            if not self.program.program_hash:
+            if not self.program.structural_hash:
                 warnings.append(
-                    "Adapter run missing program_hash - adapters must provide "
+                    "Adapter run missing structural_hash - adapters must provide "
                     "structural hash"
                 )
             if not self.program.parametric_hash:
@@ -284,6 +284,18 @@ class ExecutionEnvelope:
                     "Adapter run missing parametric_hash - adapters must provide "
                     "parametric hash"
                 )
+            # If physical circuits present, executed_*hash required
+            if self.program.physical:
+                if not self.program.executed_structural_hash:
+                    warnings.append(
+                        "Adapter run with physical circuits missing "
+                        "executed_structural_hash"
+                    )
+                if not self.program.executed_parametric_hash:
+                    warnings.append(
+                        "Adapter run with physical circuits missing "
+                        "executed_parametric_hash"
+                    )
 
         return warnings
 

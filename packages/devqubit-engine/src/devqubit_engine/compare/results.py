@@ -269,7 +269,7 @@ class ProgramMatchStatus(str, Enum):
     """
     Detailed program match status.
 
-    Based on structural (program_hash) and parametric (parametric_hash) comparison.
+    Based on structural (structural_hash) and parametric (parametric_hash) comparison.
 
     Attributes
     ----------
@@ -294,7 +294,7 @@ class ProgramComparison:
     """
     Detailed program comparison result.
 
-    Captures exact (digest), structural (program_hash), and parametric
+    Captures exact (digest), structural (structural_hash), and parametric
     (parametric_hash) matching to support different verification policies.
 
     Attributes
@@ -302,7 +302,7 @@ class ProgramComparison:
     exact_match : bool
         True if artifact digests are identical (byte-for-byte match).
     structural_match : bool
-        True if program_hash values match (same structure).
+        True if structural_hash values match (same structure).
     parametric_match : bool
         True if parametric_hash values match (same structure AND params).
     digests_a : list of str
@@ -310,9 +310,9 @@ class ProgramComparison:
     digests_b : list of str
         Program artifact digests from candidate.
     circuit_hash_a : str or None
-        Structural hash (program_hash) from baseline.
+        Structural hash (structural_hash) from baseline.
     circuit_hash_b : str or None
-        Structural hash (program_hash) from candidate.
+        Structural hash (structural_hash) from candidate.
     parametric_hash_a : str or None
         Parametric hash from baseline.
     parametric_hash_b : str or None
@@ -323,7 +323,7 @@ class ProgramComparison:
     Notes
     -----
     Hash semantics:
-    - ``program_hash``: Structure only. Same = same circuit template.
+    - ``structural_hash``: Structure only. Same = same circuit template.
     - ``parametric_hash``: Structure + params. Same = identical execution.
 
     For manual runs, hashes are unavailable and ``hash_available=False``.

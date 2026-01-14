@@ -7,7 +7,7 @@ import pennylane as qml
 from devqubit_engine.core.run import track
 from devqubit_pennylane.adapter import (
     PennyLaneAdapter,
-    _compute_circuit_hash,
+    _compute_structural_hash,
     patch_device,
 )
 
@@ -108,11 +108,19 @@ class TestWrapDevice:
 
     def test_wrap_returns_same_device_patched(self, store, registry, default_qubit):
         """wrap() patches device in-place rather than returning wrapper."""
+
+        @qml.qnode(default_qubit, shots=10)
+        def simple_circuit():
+            qml.Hadamard(0)
+            return qml.counts(wires=[0])
+
         with track(project="pl", store=store, registry=registry) as run:
             wrapped = run.wrap(default_qubit)
             assert wrapped is default_qubit
             assert default_qubit._devqubit_patched is True
             assert default_qubit._devqubit_tracker is run
+            # Execute a circuit to create envelope (required for adapter runs)
+            _ = simple_circuit()
 
         loaded = registry.load(run.run_id)
         assert loaded.status == "FINISHED"
@@ -372,8 +380,8 @@ class TestCircuitHash:
             qml.CNOT(wires=[0, 1])
             qml.expval(qml.PauliZ(0))
 
-        assert _compute_circuit_hash(t1) == _compute_circuit_hash(t2)
-        assert _compute_circuit_hash(t1) != _compute_circuit_hash(t3)
+        assert _compute_structural_hash(t1) == _compute_structural_hash(t2)
+        assert _compute_structural_hash(t1) != _compute_structural_hash(t3)
 
     def test_different_wires_different_hash(self):
         """Different wire indices produce different hashes."""
@@ -385,7 +393,7 @@ class TestCircuitHash:
             qml.Hadamard(wires=1)
             qml.expval(qml.PauliZ(1))
 
-        assert _compute_circuit_hash(t1) != _compute_circuit_hash(t2)
+        assert _compute_structural_hash(t1) != _compute_structural_hash(t2)
 
     def test_different_measurements_different_hash(self):
         """Different measurement types produce different hashes."""
@@ -399,7 +407,9 @@ class TestCircuitHash:
             qml.probs(wires=0)
         tape_probs = qml.tape.QuantumScript.from_queue(q2)
 
-        assert _compute_circuit_hash(tape_expval) != _compute_circuit_hash(tape_probs)
+        assert _compute_structural_hash(tape_expval) != _compute_structural_hash(
+            tape_probs
+        )
 
     def test_single_tape_and_list_consistent(self):
         """Single tape and list of one tape produce same hash."""
@@ -408,8 +418,8 @@ class TestCircuitHash:
             qml.expval(qml.PauliZ(0))
         tape = qml.tape.QuantumScript.from_queue(q)
 
-        h_single = _compute_circuit_hash(tape)
-        h_list = _compute_circuit_hash([tape])
+        h_single = _compute_structural_hash(tape)
+        h_list = _compute_structural_hash([tape])
 
         assert h_single == h_list
 

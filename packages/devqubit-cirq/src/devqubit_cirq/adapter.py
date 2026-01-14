@@ -52,8 +52,6 @@ from devqubit_engine.uec.program import (
     ProgramSnapshot,
     TranspilationInfo,
 )
-
-# UEC 1.0 imports
 from devqubit_engine.uec.result import (
     CountsFormat,
     ResultError,
@@ -107,9 +105,9 @@ def _materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
         return [circuits], True
 
 
-def _compute_circuit_hash(circuits: list[Any]) -> str | None:
+def _compute_structural_hash(circuits: list[Any]) -> str | None:
     """
-    Compute a content hash for Cirq circuits.
+    Compute a structural hash for Cirq circuits.
 
     Parameters
     ----------
@@ -120,6 +118,11 @@ def _compute_circuit_hash(circuits: list[Any]) -> str | None:
     -------
     str | None
         SHA256 hash with prefix, or None if circuits is empty.
+
+    Notes
+    -----
+    This is the STRUCTURAL hash - captures gate types and qubit topology,
+    but ignores parameter values. Use _compute_parametric_hash for full identity.
     """
     if not circuits:
         return None
@@ -145,6 +148,98 @@ def _compute_circuit_hash(circuits: list[Any]) -> str | None:
         try:
             moment_sigs = [
                 "::".join(_op_signature(op) for op in moment) for moment in circuit
+            ]
+            circuit_signatures.append("##".join(moment_sigs))
+        except Exception:
+            circuit_signatures.append(str(circuit)[:500])
+
+    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _compute_parametric_hash(
+    circuits: list[Any],
+    resolver: Any | None = None,
+) -> str | None:
+    """
+    Compute a parametric hash for Cirq circuits.
+
+    Unlike structural hash, this includes actual parameter values
+    from the resolver, making it suitable for identifying identical executions.
+
+    Parameters
+    ----------
+    circuits : list[Any]
+        List of Cirq Circuit objects.
+    resolver : cirq.ParamResolver or None
+        Parameter resolver with bound values.
+
+    Returns
+    -------
+    str | None
+        SHA256 hash with prefix, or None if circuits is empty.
+
+    Notes
+    -----
+    Includes:
+    - All structural information (gate types, qubit topology, measurement keys)
+    - Resolved parameter values (rounded to 10 decimal places for stability)
+    - Unresolved parameter names
+    """
+    if not circuits:
+        return None
+
+    def _format_param(p: Any) -> str:
+        """Format parameter value with stable representation."""
+        try:
+            # Check if it's a symbolic parameter
+            if hasattr(p, "name"):
+                # Try to resolve from resolver
+                if resolver is not None:
+                    try:
+                        resolved = resolver.value_of(p)
+                        return f"{float(resolved):.10f}"
+                    except Exception:
+                        pass
+                return f"<param:{p.name}>"
+            val = float(p)
+            return f"{val:.10f}"
+        except (TypeError, ValueError):
+            return str(p)[:50]
+
+    def _op_signature_with_params(op: Any) -> str:
+        gate = getattr(op, "gate", None)
+        gate_type = type(gate).__name__ if gate is not None else type(op).__name__
+
+        # Include measurement key if present
+        key = getattr(gate, "key", None)
+        key_suffix = f"|k={key}" if isinstance(key, str) and key else ""
+
+        # Get qubit signature
+        try:
+            qubits = tuple(str(q) for q in getattr(op, "qubits", ()))
+        except Exception:
+            qubits = (str(getattr(op, "qubits", "")),)
+
+        # Extract and format parameters from the gate
+        param_strs: list[str] = []
+        if gate is not None:
+            # Try common Cirq gate parameter attributes
+            for attr in ["_exponent", "exponent", "_radians", "theta", "phi", "gamma"]:
+                val = getattr(gate, attr, None)
+                if val is not None:
+                    param_strs.append(_format_param(val))
+
+        params_suffix = f"|params=[{','.join(param_strs)}]" if param_strs else ""
+
+        return f"{gate_type}{key_suffix}{params_suffix}|q{qubits}"
+
+    circuit_signatures: list[str] = []
+    for circuit in circuits:
+        try:
+            moment_sigs = [
+                "::".join(_op_signature_with_params(op) for op in moment)
+                for moment in circuit
             ]
             circuit_signatures.append("##".join(moment_sigs))
         except Exception:
@@ -213,7 +308,8 @@ def _serialize_and_log_circuits(
 def _create_program_snapshot(
     circuits: list[Any],
     artifact_refs: list[ArtifactRef],
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None = None,
 ) -> ProgramSnapshot:
     """
     Create a ProgramSnapshot from circuits and their artifact refs.
@@ -224,8 +320,10 @@ def _create_program_snapshot(
         List of Cirq circuits.
     artifact_refs : list of ArtifactRef
         References to logged circuit artifacts.
-    circuit_hash : str or None
-        Circuit structure hash.
+    structural_hash : str or None
+        Structural hash (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash (includes parameter values).
 
     Returns
     -------
@@ -247,10 +345,17 @@ def _create_program_snapshot(
         for i, ref in enumerate(artifact_refs)
     ]
 
+    # If parametric_hash not provided, use structural_hash
+    effective_parametric_hash = parametric_hash or structural_hash
+
     return ProgramSnapshot(
         logical=logical_artifacts,
         physical=[],  # Cirq doesn't expose transpiled circuits
-        program_hash=circuit_hash,
+        structural_hash=structural_hash,
+        parametric_hash=effective_parametric_hash,
+        # For Cirq without transpilation, executed hashes equal logical
+        executed_structural_hash=structural_hash,
+        executed_parametric_hash=effective_parametric_hash,
         num_circuits=len(circuits),
     )
 
@@ -309,7 +414,7 @@ def _create_result_snapshot(
     error_info: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
-    Create a ResultSnapshot from Cirq result(s) using UEC 1.0 API.
+    Create a ResultSnapshot from Cirq result(s).
 
     Parameters
     ----------
@@ -328,7 +433,7 @@ def _create_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Result snapshot with normalized counts (UEC 1.0 format).
+        Result snapshot with normalized counts.
     """
     # Handle failure case (error_info provided)
     if error_info is not None:
@@ -364,7 +469,7 @@ def _create_result_snapshot(
         logger.debug("Failed to normalize counts payload: %s", e)
         counts_payload = {"experiments": [], "format": {}}
 
-    # Build UEC 1.0 items list
+    # Build items list
     items: list[ResultItem] = []
 
     # Get format from payload
@@ -413,7 +518,8 @@ def _create_and_log_envelope(
     circuits: list[Any],
     repetitions: int,
     submitted_at: str,
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None = None,
     is_sweep: bool = False,
     params: Any = None,
     options: dict[str, Any] | None = None,
@@ -433,8 +539,10 @@ def _create_and_log_envelope(
         Number of repetitions.
     submitted_at : str
         Submission timestamp.
-    circuit_hash : str or None
-        Circuit hash.
+    structural_hash : str or None
+        Structural hash (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash (includes parameter values).
     is_sweep : bool
         Whether this is a parameter sweep.
     params : Any, optional
@@ -477,7 +585,7 @@ def _create_and_log_envelope(
     # Serialize and log circuits
     artifact_refs = _serialize_and_log_circuits(tracker, circuits, simulator_name)
 
-    # UEC 1.0: Create ProducerInfo
+    # Create ProducerInfo
     sdk_version = cirq_version()
     producer = ProducerInfo.create(
         adapter="devqubit-cirq",
@@ -488,7 +596,7 @@ def _create_and_log_envelope(
     )
 
     # Create pending result (will be updated when execution completes)
-    # UEC 1.0 requires status to be one of: completed, failed, cancelled, partial
+    # requires status to be one of: completed, failed, cancelled, partial
     pending_result = ResultSnapshot(
         success=False,
         status="failed",  # Valid status - will be updated by _finalize_envelope_with_result
@@ -502,7 +610,9 @@ def _create_and_log_envelope(
         producer=producer,
         result=pending_result,  # Must be valid ResultSnapshot, not None
         device=device_snapshot,
-        program=_create_program_snapshot(circuits, artifact_refs, circuit_hash),
+        program=_create_program_snapshot(
+            circuits, artifact_refs, structural_hash, parametric_hash
+        ),
         execution=_create_execution_snapshot(
             repetitions, submitted_at, is_sweep, params, options
         ),
@@ -729,10 +839,32 @@ class TrackedSimulator:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        circuit_hash = _compute_circuit_hash(circuit_list)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute both structural and parametric hashes
+        structural_hash = _compute_structural_hash(circuit_list)
+
+        # Extract resolver from params for parametric hash
+        # params can be: ParamResolver, Sweep, list of resolvers, or None
+        resolver = None
+        if params is not None:
+            # If it's a ParamResolver directly
+            if hasattr(params, "param_dict"):
+                resolver = params
+            # If it's a Sweep, try to get first resolver
+            elif hasattr(params, "__iter__"):
+                try:
+                    first_param = next(iter(params), None)
+                    if first_param is not None and hasattr(first_param, "param_dict"):
+                        resolver = first_param
+                except Exception:
+                    pass
+
+        parametric_hash = _compute_parametric_hash(circuit_list, resolver)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Check if we should log this execution
         if not (self._should_log(exec_count, is_new_circuit) and circuit_list):
@@ -752,7 +884,8 @@ class TrackedSimulator:
                 circuits=circuit_list,
                 repetitions=repetitions,
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 is_sweep=is_sweep,
                 params=params,
                 options=options if options else None,
@@ -781,8 +914,8 @@ class TrackedSimulator:
                 }
             )
 
-        if circuit_hash:
-            self._logged_circuit_hashes.add(circuit_hash)
+        if structural_hash:
+            self._logged_circuit_hashes.add(structural_hash)
         self._logged_execution_count += 1
 
         # Get physical provider from device snapshot (if available)
@@ -821,7 +954,8 @@ class TrackedSimulator:
             "sdk": "cirq",
             "num_circuits": len(circuit_list),
             "execution_count": exec_count,
-            "program_hash": circuit_hash,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
             "repetitions": repetitions,
             "sweep": is_sweep,
             "batch": is_batch,

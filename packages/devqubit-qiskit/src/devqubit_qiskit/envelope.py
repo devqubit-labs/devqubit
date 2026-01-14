@@ -70,30 +70,37 @@ def detect_physical_provider(backend: Any) -> str:
 
 def create_program_snapshot(
     program_artifacts: list[ProgramArtifact],
-    circuit_hash: str | None,
+    structural_hash: str | None,
+    parametric_hash: str | None,
     num_circuits: int,
 ) -> ProgramSnapshot:
     """
-    Create a ProgramSnapshot from logged artifacts.
+    Create a ProgramSnapshot from logged artifacts (UEC v1.0 compliant).
 
     Parameters
     ----------
     program_artifacts : list of ProgramArtifact
         References to logged circuit artifacts.
-    circuit_hash : str or None
-        Circuit structure hash.
+    structural_hash : str or None
+        Structural hash of circuits (ignores parameter values).
+    parametric_hash : str or None
+        Parametric hash of circuits (includes parameter values).
     num_circuits : int
         Number of circuits in the program.
 
     Returns
     -------
     ProgramSnapshot
-        Program snapshot with artifact references.
+        Program snapshot with artifact references and hashes.
     """
     return ProgramSnapshot(
         logical=program_artifacts,
         physical=[],  # Base Qiskit adapter doesn't transpile
-        program_hash=circuit_hash,
+        structural_hash=structural_hash,
+        parametric_hash=parametric_hash,
+        # For base Qiskit without transpilation, executed hashes equal logical
+        executed_structural_hash=structural_hash,
+        executed_parametric_hash=parametric_hash,
         num_circuits=num_circuits,
     )
 

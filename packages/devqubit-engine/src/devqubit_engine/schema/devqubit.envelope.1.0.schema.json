@@ -47,6 +47,52 @@
       "description": "Additional metadata (extensible)"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "producer": {
+            "properties": {
+              "adapter": {
+                "not": { "const": "manual" }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "program": {
+            "required": ["structural_hash", "parametric_hash"]
+          }
+        },
+        "required": ["program", "execution"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "program": {
+            "properties": {
+              "physical": {
+                "type": "array",
+                "minItems": 1
+              }
+            },
+            "required": ["physical"]
+          }
+        },
+        "required": ["program"]
+      },
+      "then": {
+        "properties": {
+          "program": {
+            "required": ["executed_structural_hash", "executed_parametric_hash"]
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "producer_info": {
       "type": "object",
@@ -66,7 +112,7 @@
         },
         "adapter": {
           "type": "string",
-          "description": "Adapter package name (devqubit-qiskit, devqubit-braket, etc.)"
+          "description": "Adapter package name (devqubit-qiskit, devqubit-braket, etc.) or 'manual'"
         },
         "adapter_version": {
           "type": "string"
@@ -116,16 +162,31 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/program_artifact"
-          }
+          },
+          "description": "Logical (pre-transpilation) circuit artifacts"
         },
         "physical": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/program_artifact"
-          }
+          },
+          "description": "Physical (post-transpilation) circuit artifacts"
         },
-        "program_hash": {
-          "type": "string"
+        "structural_hash": {
+          "type": "string",
+          "description": "Hash of circuit structure (gates, qubits) ignoring parameter values"
+        },
+        "parametric_hash": {
+          "type": "string",
+          "description": "Hash of structure + bound parameter values"
+        },
+        "executed_structural_hash": {
+          "type": "string",
+          "description": "Structural hash of executed (physical) circuits"
+        },
+        "executed_parametric_hash": {
+          "type": "string",
+          "description": "Parametric hash of executed (physical) circuits"
         },
         "num_circuits": {
           "type": "integer",
@@ -362,10 +423,12 @@
     },
     "counts_format": {
       "type": "object",
-      "description": "Metadata about how counts are formatted",
+      "description": "Metadata about how counts are formatted - all fields required for production",
       "required": [
         "source_sdk",
-        "bit_order"
+        "source_key_format",
+        "bit_order",
+        "transformed"
       ],
       "properties": {
         "source_sdk": {
@@ -374,7 +437,7 @@
         },
         "source_key_format": {
           "type": "string",
-          "description": "Original format identifier"
+          "description": "Original format identifier (e.g., 'qiskit_little_endian', 'braket_big_endian', 'unknown')"
         },
         "bit_order": {
           "type": "string",
@@ -386,7 +449,7 @@
         },
         "transformed": {
           "type": "boolean",
-          "description": "Whether adapter remapped keys"
+          "description": "Whether adapter remapped keys to canonical format"
         },
         "num_clbits": {
           "type": "integer",

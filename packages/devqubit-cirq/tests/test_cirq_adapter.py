@@ -12,7 +12,7 @@ import pytest
 import sympy
 from devqubit_cirq.adapter import (
     CirqAdapter,
-    _compute_circuit_hash,
+    _compute_structural_hash,
     _materialize_circuits,
 )
 from devqubit_engine.core.run import track
@@ -413,8 +413,8 @@ class TestCircuitHash:
     def test_deterministic_and_parameter_invariant(self, parameterized_circuit):
         """Hash is deterministic and parameter-invariant."""
         circuits, _ = _materialize_circuits(parameterized_circuit)
-        h1 = _compute_circuit_hash(circuits)
-        h2 = _compute_circuit_hash(circuits)
+        h1 = _compute_structural_hash(circuits)
+        h2 = _compute_structural_hash(circuits)
         assert h1 == h2
         assert isinstance(h1, str) and h1.startswith("sha256:")
 
@@ -424,7 +424,7 @@ class TestCircuitHash:
         b = sympy.Symbol("b")
         c1 = cirq.Circuit(cirq.rx(a)(q0), cirq.measure(q0, key="m"))
         c2 = cirq.Circuit(cirq.rx(b)(q0), cirq.measure(q0, key="m"))
-        assert _compute_circuit_hash([c1]) == _compute_circuit_hash([c2])
+        assert _compute_structural_hash([c1]) == _compute_structural_hash([c2])
 
     @pytest.mark.parametrize(
         "variant_builder",
@@ -460,7 +460,7 @@ class TestCircuitHash:
         )
         variant = variant_builder(q0, q1)
 
-        assert _compute_circuit_hash([base]) != _compute_circuit_hash([variant])
+        assert _compute_structural_hash([base]) != _compute_structural_hash([variant])
 
 
 class TestBackendTypeCompliance:

@@ -6,7 +6,7 @@ Braket adapter for devqubit tracking system.
 
 Provides integration with Amazon Braket devices, enabling automatic tracking
 of quantum circuit execution, results, and device configurations using the
-Uniform Execution Contract (UEC) 1.0.
+Uniform Execution Contract (UEC).
 
 Example
 -------
@@ -203,7 +203,7 @@ def _materialize_task_spec(
 # ============================================================================
 
 
-def _compute_circuit_hash(circuits: list[Any]) -> str | None:
+def _compute_structural_hash(circuits: list[Any]) -> str | None:
     """
     Compute a content hash for circuits.
 
@@ -265,6 +265,109 @@ def _compute_circuit_hash(circuits: list[Any]) -> str | None:
                     targets = ()
 
                 op_sigs.append(f"{op_name}|p{arity}|t{targets}")
+
+            circuit_signatures.append("||".join(op_sigs))
+
+        except Exception:
+            circuit_signatures.append(str(circuit)[:500])
+
+    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
+    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+
+
+def _compute_parametric_hash(
+    circuits: list[Any],
+    inputs: dict[str, float] | None = None,
+) -> str | None:
+    """
+    Compute a parametric hash for Braket circuits.
+
+    Unlike structural hash, this includes actual parameter values,
+    making it suitable for identifying identical circuit executions.
+
+    Parameters
+    ----------
+    circuits : list[Any]
+        List of Braket Circuit objects.
+    inputs : dict[str, float] or None
+        Parameter bindings for FreeParameters.
+
+    Returns
+    -------
+    str | None
+        SHA256 hash with prefix, or None if circuits is empty.
+
+    Notes
+    -----
+    Includes:
+    - All structural information (gate types, qubit topology)
+    - Resolved parameter values from inputs dict
+    - Unresolved FreeParameter names
+    """
+    if not circuits:
+        return None
+
+    circuit_signatures: list[str] = []
+
+    for circuit in circuits:
+        try:
+            instrs = getattr(circuit, "instructions", None)
+            if instrs is None:
+                circuit_signatures.append(str(circuit)[:500])
+                continue
+
+            op_sigs: list[str] = []
+            for instr in instrs:
+                op = getattr(instr, "operator", None)
+                # Gate name
+                if op is not None:
+                    op_name = getattr(op, "name", None)
+                    op_name = (
+                        op_name
+                        if isinstance(op_name, str) and op_name
+                        else type(op).__name__
+                    )
+                else:
+                    op_name = type(instr).__name__
+
+                # Get actual parameter values
+                param_strs: list[str] = []
+                if op is not None:
+                    for attr in ("parameters", "params", "angles"):
+                        val = getattr(op, attr, None)
+                        if isinstance(val, (list, tuple)):
+                            for p in val:
+                                try:
+                                    # Check if it's a FreeParameter
+                                    if hasattr(p, "name"):
+                                        if inputs and p.name in inputs:
+                                            param_strs.append(
+                                                f"{float(inputs[p.name]):.10f}"
+                                            )
+                                        else:
+                                            param_strs.append(f"<param:{p.name}>")
+                                    else:
+                                        param_strs.append(f"{float(p):.10f}")
+                                except (TypeError, ValueError):
+                                    param_strs.append(str(p)[:50])
+                            break
+
+                # Target qubits
+                tgt = getattr(instr, "target", None)
+                if tgt is not None:
+                    try:
+                        targets = tuple(
+                            str(getattr(q, "index", None) or q) for q in tgt
+                        )
+                    except Exception:
+                        targets = (str(tgt),)
+                else:
+                    targets = ()
+
+                params_suffix = (
+                    f"|params=[{','.join(param_strs)}]" if param_strs else ""
+                )
+                op_sigs.append(f"{op_name}{params_suffix}|t{targets}")
 
             circuit_signatures.append("||".join(op_sigs))
 
@@ -359,14 +462,23 @@ class TrackedDevice:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash
-        circuit_hash = _compute_circuit_hash(circuits_for_logging)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute hashes
+        # structural_hash: ignores parameter values (for deduplication)
+        # parametric_hash: includes parameter values from inputs (for exact match)
+        structural_hash = _compute_structural_hash(circuits_for_logging)
+
+        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
+        inputs = kwargs.get("inputs")
+        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine logging behavior
-        should_log = self._should_log(exec_count, circuit_hash, is_new_circuit)
+        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
 
         # Build execution options
         options: dict[str, Any] = {}
@@ -410,17 +522,18 @@ class TrackedDevice:
                 shots=shots,
                 task_ids=task_ids,
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 execution_index=exec_count,
                 options=options if options else None,
             )
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
             self._logged_execution_count += 1
 
-            # Set tracker tags/params (P1 fix: provider is platform, not SDK)
+            # Set tracker tags/params
             self.tracker.set_tag("backend_name", device_name)
             self.tracker.set_tag("provider", "aws_braket")
             self.tracker.set_tag("adapter", "devqubit-braket")
@@ -442,7 +555,8 @@ class TrackedDevice:
                 "sdk": "braket",
                 "num_circuits": len(circuits_for_logging),
                 "execution_count": exec_count,
-                "program_hash": circuit_hash,
+                "structural_hash": structural_hash,
+                "parametric_hash": parametric_hash,
                 "shots": shots,
                 "task_ids": task_ids,
             }
@@ -504,14 +618,21 @@ class TrackedDevice:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash
-        circuit_hash = _compute_circuit_hash(circuits_for_logging)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute hashes
+        structural_hash = _compute_structural_hash(circuits_for_logging)
+
+        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
+        inputs = kwargs.get("inputs")
+        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine logging behavior
-        should_log = self._should_log(exec_count, circuit_hash, is_new_circuit)
+        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
 
         # Build execution options
         options: dict[str, Any] = {
@@ -554,17 +675,18 @@ class TrackedDevice:
                 shots=shots,
                 task_ids=[],  # Batch doesn't have a single ID upfront
                 submitted_at=submitted_at,
-                circuit_hash=circuit_hash,
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
                 execution_index=exec_count,
                 options=options,
             )
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
             self._logged_execution_count += 1
 
-            # Set tracker tags/params (P1 fix: provider is platform, not SDK)
+            # Set tracker tags/params
             self.tracker.set_tag("backend_name", device_name)
             self.tracker.set_tag("provider", "aws_braket")
             self.tracker.set_tag("adapter", "devqubit-braket")
@@ -588,7 +710,8 @@ class TrackedDevice:
                 "sdk": "braket",
                 "num_circuits": len(circuits_for_logging),
                 "execution_count": exec_count,
-                "program_hash": circuit_hash,
+                "structural_hash": structural_hash,
+                "parametric_hash": parametric_hash,
                 "shots": shots,
                 "batch": True,
             }
@@ -614,7 +737,7 @@ class TrackedDevice:
     def _should_log(
         self,
         exec_count: int,
-        circuit_hash: str | None,
+        structural_hash: str | None,
         is_new_circuit: bool,
     ) -> bool:
         """Determine if this execution should be logged."""

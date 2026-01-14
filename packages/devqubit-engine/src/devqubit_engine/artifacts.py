@@ -97,7 +97,7 @@ def load_json_artifact(
 
 
 def get_artifact_digests(
-    record: RunRecord | dict[str, Any],
+    record: RunRecord,
     role: str,
     *,
     kind_contains: str | None = None,
@@ -107,9 +107,8 @@ def get_artifact_digests(
 
     Parameters
     ----------
-    record : RunRecord or dict
-        Run record containing artifacts. Accepts dict for
-        backward compatibility with raw record dictionaries.
+    record : RunRecord
+        Run record containing artifacts.
     role : str
         Filter by artifact role (e.g., "program", "results").
     kind_contains : str, optional
@@ -120,20 +119,8 @@ def get_artifact_digests(
     list of str
         Sorted list of artifact digests matching filters.
     """
-    # Handle both RunRecord and dict for backward compatibility
-    if isinstance(record, RunRecord):
-        artifacts = record.artifacts
-    else:
-        artifacts = []
-        for artifact_dict in record.get("artifacts", []) or []:
-            if isinstance(artifact_dict, dict):
-                try:
-                    artifacts.append(ArtifactRef.from_dict(artifact_dict))
-                except (KeyError, ValueError):
-                    continue
-
     digests: list[str] = []
-    for artifact in artifacts:
+    for artifact in record.artifacts:
         if artifact.role != role:
             continue
 

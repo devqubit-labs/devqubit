@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from devqubit_engine.uec.result import (
     CountsFormat,
+    NormalizedExpectation,
     ResultError,
     ResultItem,
     ResultSnapshot,
@@ -362,8 +363,8 @@ def build_estimator_result_snapshot(
     """
     Build a ResultSnapshot from an Estimator result.
 
-    Uses UEC 1.0 structure. Since ResultItem is designed for counts,
-    estimator expectations are stored in ResultSnapshot.metadata.
+    Uses UEC 1.0 structure with ResultItem.expectation for each
+    expectation value (one ResultItem per circuit per observable).
 
     Parameters
     ----------
@@ -377,7 +378,7 @@ def build_estimator_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot with expectations in metadata.
+        Structured result snapshot with expectations in items[].
     """
     if result is None:
         return ResultSnapshot(
@@ -394,8 +395,10 @@ def build_estimator_result_snapshot(
 
     est_data = extract_estimator_results(result)
 
-    # Build experiments list for metadata (estimator doesn't use ResultItem.counts)
-    experiments_data = []
+    # Build ResultItem list with NormalizedExpectation (UEC v1.0 compliant)
+    items: list[ResultItem] = []
+    num_experiments = 0
+
     if est_data:
         for exp in est_data.get("experiments", []):
             item_index = exp.get("index", 0)
@@ -408,36 +411,36 @@ def build_estimator_result_snapshot(
             if not isinstance(stds, list):
                 stds = [stds] if stds else []
 
-            # Build expectations list
-            expectations = []
+            # Create ResultItem for each observable
             for obs_idx, ev in enumerate(evs):
                 std = stds[obs_idx] if obs_idx < len(stds) else None
-                expectations.append(
-                    {
-                        "observable_index": obs_idx,
-                        "value": float(ev) if ev is not None else 0.0,
-                        "std_error": float(std) if std is not None else None,
-                    }
+
+                expectation = NormalizedExpectation(
+                    circuit_index=item_index,
+                    observable_index=obs_idx,
+                    value=float(ev) if ev is not None else 0.0,
+                    std_error=float(std) if std is not None else None,
                 )
 
-            experiments_data.append(
-                {
-                    "index": item_index,
-                    "expectations": expectations,
-                    "num_observables": len(expectations),
-                }
-            )
+                items.append(
+                    ResultItem(
+                        item_index=item_index,
+                        success=True,
+                        expectation=expectation,
+                    )
+                )
+
+            num_experiments += 1
 
     return ResultSnapshot(
         success=True,
         status="completed",
-        items=[],  # Estimator doesn't produce counts-based items
+        items=items,
         raw_result_ref=raw_result_ref,
         metadata={
             "backend_name": backend_name,
             "primitive_type": "estimator",
-            "num_experiments": len(experiments_data),
-            "experiments": experiments_data,  # Store expectations here
+            "num_experiments": num_experiments,
         },
     )
 

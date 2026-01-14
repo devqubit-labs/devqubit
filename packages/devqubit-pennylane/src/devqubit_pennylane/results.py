@@ -18,6 +18,7 @@ import numpy as np
 from devqubit_engine.uec.result import (
     CountsFormat,
     NormalizedExpectation,
+    QuasiProbability,
     ResultError,
     ResultItem,
     ResultSnapshot,
@@ -392,14 +393,23 @@ def _extract_sample_counts(
     return counts_list
 
 
+@dataclass
+class _ProbabilityData:
+    """Internal representation for extracted probability distribution."""
+
+    circuit_index: int
+    distribution: dict[str, float]
+
+
 def _extract_probabilities(
     results: Any,
     num_circuits: int = 1,
-) -> list[_CountsData]:
+) -> list[_ProbabilityData]:
     """
-    Extract probabilities from PennyLane results as pseudo-counts.
+    Extract probabilities from PennyLane results as quasi-probability distributions.
 
     Handles both single circuit (1D array) and batch (list of arrays) cases.
+    Returns data suitable for QuasiProbability.
 
     Parameters
     ----------
@@ -410,13 +420,18 @@ def _extract_probabilities(
 
     Returns
     -------
-    list of _CountsData
-        Normalized probabilities as counts (values sum to ~1).
+    list of _ProbabilityData
+        Probability distributions with float values.
+
+    Notes
+    -----
+    PennyLane qml.probs() returns computational basis state probabilities.
+    Bitstring format is wire[0] as leftmost bit (cbit0_left in UEC terms).
     """
     if results is None:
         return []
 
-    counts_list: list[_CountsData] = []
+    prob_list: list[_ProbabilityData] = []
 
     try:
         arr = _to_numpy(results)
@@ -425,20 +440,19 @@ def _extract_probabilities(
         if num_circuits == 1 and arr is not None and arr.ndim == 1:
             probs = arr.tolist()
             num_bits = max(1, (len(probs) - 1).bit_length()) if probs else 0
-            counts_dict = {
+            distribution = {
                 format(j, f"0{num_bits}b"): float(p)
                 for j, p in enumerate(probs)
                 if p > 1e-10  # Filter near-zero probabilities
             }
-            if counts_dict:
-                counts_list.append(
-                    _CountsData(
+            if distribution:
+                prob_list.append(
+                    _ProbabilityData(
                         circuit_index=0,
-                        counts=counts_dict,
-                        shots=None,  # Probabilities don't have shots
+                        distribution=distribution,
                     )
                 )
-            return counts_list
+            return prob_list
 
         # Batch case: iterable of probability arrays
         if hasattr(results, "__iter__") and not isinstance(results, (str, dict)):
@@ -447,24 +461,23 @@ def _extract_probabilities(
                 if res_arr is not None and res_arr.ndim >= 1:
                     probs = res_arr.flatten().tolist()
                     num_bits = max(1, (len(probs) - 1).bit_length()) if probs else 0
-                    counts_dict = {
+                    distribution = {
                         format(j, f"0{num_bits}b"): float(p)
                         for j, p in enumerate(probs)
                         if p > 1e-10
                     }
-                    if counts_dict:
-                        counts_list.append(
-                            _CountsData(
+                    if distribution:
+                        prob_list.append(
+                            _ProbabilityData(
                                 circuit_index=i,
-                                counts=counts_dict,
-                                shots=None,
+                                distribution=distribution,
                             )
                         )
 
     except (TypeError, ValueError) as e:
         logger.debug("Failed to extract probabilities: %s", e)
 
-    return counts_list
+    return prob_list
 
 
 def build_result_snapshot(
@@ -480,7 +493,7 @@ def build_result_snapshot(
     """
     Build a ResultSnapshot from PennyLane execution results.
 
-    Uses UEC 1.0 structure with items[] for per-circuit results.
+    Uses UEC structure with items[] for per-circuit results.
 
     Parameters
     ----------
@@ -502,7 +515,7 @@ def build_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot following UEC 1.0.
+        Structured result snapshot.
     """
     # Determine status
     status = "completed" if success else "failed"
@@ -515,7 +528,7 @@ def build_result_snapshot(
             message=error_info.get("message", "Unknown error"),
         )
 
-    # Build items list (UEC 1.0)
+    # Build items list
     items: list[ResultItem] = []
 
     if success and results is not None:
@@ -538,10 +551,12 @@ def build_result_snapshot(
             elif "counts" in rt_lower or "sample" in rt_lower:
                 counts_list = _extract_sample_counts(results, num_circuits)
                 # PennyLane counts format
+                # NOTE: PennyLane uses wire[0] as leftmost bit in bitstrings
+                # This is cbit0_left (big-endian) in UEC terminology
                 counts_format = CountsFormat(
                     source_sdk="pennylane",
                     source_key_format="pennylane_bitstring",
-                    bit_order="cbit0_right",  # Canonical UEC format
+                    bit_order="cbit0_left",  # PennyLane native: wire[0] = leftmost
                     transformed=False,
                 )
                 for cd in counts_list:
@@ -557,22 +572,23 @@ def build_result_snapshot(
                         )
                     )
 
-            # Handle probabilities
+            # Handle probabilities - use quasi_probability
             elif "probability" in rt_lower or "probs" in rt_lower:
                 probs_list = _extract_probabilities(results, num_circuits)
-                for cd in probs_list:
+                for pd in probs_list:
+                    # Create QuasiProbability with computed stats
+                    probs_values = list(pd.distribution.values())
+                    quasi = QuasiProbability(
+                        distribution=pd.distribution,
+                        sum_probs=sum(probs_values) if probs_values else None,
+                        min_prob=min(probs_values) if probs_values else None,
+                        max_prob=max(probs_values) if probs_values else None,
+                    )
                     items.append(
                         ResultItem(
-                            item_index=cd.circuit_index,
+                            item_index=pd.circuit_index,
                             success=True,
-                            counts={
-                                "counts": cd.counts,
-                                "shots": None,  # Probabilities don't have shots
-                                "format": {
-                                    "source_sdk": "pennylane",
-                                    "source_key_format": "probability_distribution",
-                                },
-                            },
+                            quasi_probability=quasi,
                         )
                     )
 

@@ -60,6 +60,33 @@ from ulid import ULID
 logger = logging.getLogger(__name__)
 
 
+class EnvelopeValidationError(Exception):
+    """
+    Raised when adapter run produces invalid envelope.
+
+    Adapter runs MUST produce valid envelopes. Invalid envelopes indicate
+    an adapter integration error that must be fixed in the adapter code.
+
+    Parameters
+    ----------
+    adapter : str
+        Adapter name that produced invalid envelope.
+    errors : list of str
+        Validation error messages.
+    """
+
+    def __init__(self, adapter: str, errors: list[str]):
+        self.adapter = adapter
+        self.errors = errors
+        error_summary = "; ".join(errors[:3])
+        if len(errors) > 3:
+            error_summary += f" ... and {len(errors) - 3} more"
+        super().__init__(
+            f"Adapter '{adapter}' produced invalid envelope: {error_summary}. "
+            f"This is an adapter bug - adapters must produce valid envelopes."
+        )
+
+
 def _strip_volatile_keys(obj: Any, *, volatile_keys: set[str]) -> Any:
     """
     Remove known volatile keys from nested mappings.
@@ -758,8 +785,11 @@ class Run:
         """
         Validate and log execution envelope.
 
-        This is the cannonical validation function that all adapters shall use.
+        This is the canonical validation function that all adapters shall use.
         It ensures identical validation behavior across all SDKs.
+
+        For adapter runs, invalid envelope raises EnvelopeValidationError.
+        For manual runs, invalid envelope is logged but execution continues.
 
         Parameters
         ----------
@@ -771,16 +801,20 @@ class Run:
         bool
             True if envelope was valid, False otherwise.
 
-        Examples
-        --------
-        >>> # In adapter's _finalize_envelope_with_result:
-        >>> envelope.result = result_snapshot
-        >>> if envelope.execution:
-        ...     envelope.execution.completed_at = utc_now_iso()
-        >>> tracker.log_envelope_with_validation(envelope)
+        Raises
+        ------
+        EnvelopeValidationError
+            If adapter run produces invalid envelope (strict enforcement).
         """
         # Validate envelope
         validation = envelope.validate_schema()
+
+        # Check if this is an adapter run (strict mode)
+        is_adapter_run = (
+            envelope.producer.adapter
+            and envelope.producer.adapter != "manual"
+            and envelope.producer.adapter != ""
+        )
 
         # Log based on validation result
         if validation.ok:
@@ -793,13 +827,21 @@ class Run:
             )
             logger.debug("Logged valid execution envelope")
         else:
-            # Log validation error for debugging
+            # For adapter runs: strict enforcement - raise error
+            if is_adapter_run:
+                error_details = [str(e) for e in validation.errors]
+                raise EnvelopeValidationError(
+                    adapter=envelope.producer.adapter,
+                    errors=error_details,
+                )
+
+            # For manual runs: log warning and continue
             logger.warning(
-                "Envelope validation failed (continuing): %d errors",
+                "Envelope validation failed (manual run, continuing): %d errors",
                 validation.error_count,
             )
 
-            # Log validation errors - iterate over validation.errors explicitly
+            # Log validation errors for debugging
             self.log_json(
                 name="envelope_validation_error",
                 obj={
@@ -1134,15 +1176,22 @@ class Run:
 
     def _has_envelope_artifact(self) -> bool:
         """
-        Check if an envelope artifact already exists.
+        Check if a valid envelope artifact exists.
+
+        Only returns True if there is a valid envelope (kind="devqubit.envelope.json").
+        Invalid envelopes (kind="devqubit.envelope.invalid.json") are ignored,
+        allowing auto-generation to proceed.
 
         Returns
         -------
         bool
-            True if envelope artifact exists in self._artifacts.
+            True if valid envelope artifact exists in self._artifacts.
         """
         for artifact in self._artifacts:
-            if artifact.role == "envelope":
+            if (
+                artifact.role == "envelope"
+                and artifact.kind == "devqubit.envelope.json"
+            ):
                 return True
         return False
 
@@ -1165,17 +1214,21 @@ class Run:
         Ensure an envelope artifact exists before finalization.
 
         For **manual runs only**: synthesizes envelope from run record.
-        For **adapter runs**: does NOT auto-generate. Missing envelope
-        from adapter run is an integration error that must be fixed
-        in the adapter.
+        For **adapter runs**: missing envelope marks the run as FAILED with
+        a structured error. Adapters MUST create envelopes - no exceptions.
 
         Notes
         -----
         This is called automatically during _finalize(). For manual runs,
         the synthesized envelope will have:
+
         - metadata.auto_generated=True
         - metadata.manual_run=True
         - No program hashes (engine cannot compute them)
+
+        For adapter runs without envelope, the run is marked FAILED with
+        a ``MissingExecutionEnvelope`` error in the errors list. The run
+        is still persisted (for debugging) but marked as failed.
         """
         if self._has_envelope_artifact():
             logger.debug("Envelope artifact already exists, skipping auto-generation")
@@ -1184,9 +1237,24 @@ class Run:
         # Only auto-generate for manual runs
         if not self._is_manual_run():
             adapter = self.record.get("adapter", "unknown")
-            logger.warning(
+
+            # Mark run as FAILED with structured error
+            self.record["info"]["status"] = "FAILED"
+            self.record.setdefault("errors", []).append(
+                {
+                    "type": "MissingExecutionEnvelope",
+                    "message": (
+                        f"Adapter run (adapter={adapter}) completed without "
+                        f"creating execution envelope. This is an adapter "
+                        f"integration error - adapters must create envelopes."
+                    ),
+                    "adapter": adapter,
+                }
+            )
+
+            logger.error(
                 "Adapter run '%s' (adapter=%s) completing without envelope. "
-                "This is an adapter integration error - adapters must create envelope.",
+                "Run marked as FAILED. This is an adapter integration error.",
                 self._run_id,
                 adapter,
             )
@@ -1221,7 +1289,7 @@ class Run:
             )
 
         except Exception as e:
-            # Don't fail the run if envelope generation fails
+            # Don't fail the run if envelope generation fails for manual runs
             logger.warning(
                 "Failed to auto-generate envelope for run %s: %s",
                 self._run_id,
