@@ -84,7 +84,8 @@ from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.serialization import QiskitCircuitSerializer
 from devqubit_qiskit_runtime.circuits import (
     circuits_to_text,
-    compute_circuit_hash,
+    compute_parametric_hash,
+    compute_structural_hash,
 )
 from devqubit_qiskit_runtime.envelope import (
     create_failure_result_snapshot,
@@ -524,7 +525,7 @@ class TrackedRuntimePrimitive:
         self,
         circuits: list[Any],
         backend_name: str,
-        circuit_hash: str | None,
+        structural_hash: str | None,
     ) -> list[ProgramArtifact]:
         """Log circuits and return program artifacts."""
         artifacts: list[ProgramArtifact] = []
@@ -532,7 +533,7 @@ class TrackedRuntimePrimitive:
         meta = {
             "backend_name": backend_name,
             "qiskit_version": sdk_versions.get("qiskit", "unknown"),
-            "circuit_hash": circuit_hash,
+            "structural_hash": structural_hash,
         }
 
         # Serialize QPY
@@ -702,18 +703,21 @@ class TrackedRuntimePrimitive:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash
-        circuit_hash = compute_circuit_hash(circuits)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute structural hash (for deduplication) and parametric hash (for exact match)
+        structural_hash = compute_structural_hash(circuits)
+        parametric_hash = compute_parametric_hash(circuits)
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine what to log
         should_log_structure = False
         should_log_results = False
 
         if self.log_every_n == -1:
-            should_log_structure = circuit_hash not in self._logged_circuit_hashes
+            should_log_structure = structural_hash not in self._logged_circuit_hashes
             should_log_results = True
         elif exec_count == 1:
             should_log_structure = True
@@ -787,13 +791,16 @@ class TrackedRuntimePrimitive:
             # Log original circuits/pubs
             if circuits:
                 program_artifacts = self._log_circuits(
-                    circuits, exec_name, circuit_hash
+                    circuits, exec_name, structural_hash
                 )
             self._log_pubs_structure(pubs_list)
 
             # If devqubit transpiled, log transpiled circuits as physical
             if transpiled_circuits:
-                transpiled_hash = compute_circuit_hash(transpiled_circuits)
+                transpiled_structural_hash = compute_structural_hash(
+                    transpiled_circuits
+                )
+                _ = compute_parametric_hash(transpiled_circuits)
                 try:
                     qpy_data = _serializer.serialize(
                         (
@@ -811,7 +818,7 @@ class TrackedRuntimePrimitive:
                         meta={
                             "backend_name": exec_name,
                             "transpiled_by": "devqubit",
-                            "circuit_hash": transpiled_hash,
+                            "structural_hash": transpiled_structural_hash,
                         },
                     )
                     physical_artifacts.append(
@@ -826,8 +833,8 @@ class TrackedRuntimePrimitive:
                 except Exception:
                     pass
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
             self.tracker.record["backend"] = {
                 "name": exec_name,
@@ -838,16 +845,26 @@ class TrackedRuntimePrimitive:
 
             self._logged_execution_count += 1
 
-        # Build ProgramSnapshot
-        executed_hash = (
-            compute_circuit_hash(transpiled_circuits) if transpiled_circuits else None
+        # Build ProgramSnapshot (UEC v1.0 compliant)
+        # Compute executed hashes from transpiled circuits if available
+        executed_structural_hash = (
+            compute_structural_hash(transpiled_circuits)
+            if transpiled_circuits
+            else structural_hash
+        )
+        executed_parametric_hash = (
+            compute_parametric_hash(transpiled_circuits)
+            if transpiled_circuits
+            else parametric_hash
         )
 
         self.program_snapshot = ProgramSnapshot(
             logical=program_artifacts,
             physical=physical_artifacts,
-            program_hash=circuit_hash,
-            executed_hash=executed_hash,
+            structural_hash=structural_hash,
+            parametric_hash=parametric_hash,
+            executed_structural_hash=executed_structural_hash,
+            executed_parametric_hash=executed_parametric_hash,
             num_circuits=len(circuits),
         )
 
@@ -892,8 +909,10 @@ class TrackedRuntimePrimitive:
             "primitive_type": self.primitive_type,
             "num_pubs": len(pubs_list),
             "execution_count": exec_count,
-            "program_hash": circuit_hash,
-            "executed_hash": executed_hash,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
+            "executed_structural_hash": executed_structural_hash,
+            "executed_parametric_hash": executed_parametric_hash,
             "args": to_jsonable(list(args)),
             "kwargs": to_jsonable(kwargs),
         }
