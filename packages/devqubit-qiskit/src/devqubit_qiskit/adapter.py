@@ -57,7 +57,8 @@ from devqubit_engine.uec.result import ResultSnapshot
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.circuits import (
-    compute_circuit_hash,
+    compute_parametric_hash,
+    compute_structural_hash,
     materialize_circuits,
     serialize_and_log_circuits,
 )
@@ -374,11 +375,14 @@ class TrackedBackend:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hash for structure detection
-        circuit_hash = compute_circuit_hash(circuit_list)
-        is_new_circuit = circuit_hash and circuit_hash not in self._seen_circuit_hashes
-        if circuit_hash:
-            self._seen_circuit_hashes.add(circuit_hash)
+        # Compute hashes for structure detection and exact match
+        structural_hash = compute_structural_hash(circuit_list)
+        parametric_hash = compute_parametric_hash(circuit_list)
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
 
         # Determine what to log based on settings
         should_log_structure = False
@@ -386,7 +390,7 @@ class TrackedBackend:
 
         if self.log_every_n == -1:
             # Log all: structure if not logged, results always
-            should_log_structure = circuit_hash not in self._logged_circuit_hashes
+            should_log_structure = structural_hash not in self._logged_circuit_hashes
             should_log_results = True
         elif exec_count == 1:
             # First execution: log everything
@@ -453,22 +457,23 @@ class TrackedBackend:
                 self.tracker,
                 circuit_list,
                 backend_name,
-                circuit_hash,
+                structural_hash,
             )
 
-            if circuit_hash:
-                self._logged_circuit_hashes.add(circuit_hash)
+            if structural_hash:
+                self._logged_circuit_hashes.add(structural_hash)
 
-            # Create program snapshot
+            # Create program snapshot (UEC v1.0)
             program_snapshot = create_program_snapshot(
                 program_artifacts,
-                circuit_hash,
+                structural_hash,
+                parametric_hash,
                 len(circuit_list),
             )
 
             # Cache program snapshot for reuse in results-only logging
-            if circuit_hash:
-                self._program_snapshot_cache[circuit_hash] = program_snapshot
+            if structural_hash:
+                self._program_snapshot_cache[structural_hash] = program_snapshot
 
             # Update tracker record (used by fingerprint computation)
             self.tracker.record["backend"] = {
@@ -481,8 +486,8 @@ class TrackedBackend:
             self._logged_execution_count += 1
 
         # Reuse cached program snapshot when only logging results
-        elif should_log_results and circuit_hash in self._program_snapshot_cache:
-            program_snapshot = self._program_snapshot_cache[circuit_hash]
+        elif should_log_results and structural_hash in self._program_snapshot_cache:
+            program_snapshot = self._program_snapshot_cache[structural_hash]
 
         # Build ExecutionSnapshot
         shots = kwargs.get("shots")
@@ -504,7 +509,8 @@ class TrackedBackend:
             "backend_name": backend_name,
             "num_circuits": len(circuit_list),
             "execution_count": exec_count,
-            "program_hash": circuit_hash,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
             "args": to_jsonable(list(args)),
             "kwargs": to_jsonable(kwargs),
         }
@@ -533,7 +539,8 @@ class TrackedBackend:
                 program_snapshot = ProgramSnapshot(
                     logical=[],
                     physical=[],
-                    program_hash=circuit_hash,
+                    structural_hash=structural_hash,
+                    parametric_hash=parametric_hash,
                     num_circuits=len(circuit_list),
                 )
 
