@@ -20,10 +20,8 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from devqubit_engine.artifacts import (
-    find_artifact,
     get_artifact_digests,
     get_counts,
-    load_json_artifact,
 )
 from devqubit_engine.bundle.reader import Bundle, is_bundle_path
 from devqubit_engine.circuit.extractors import extract_circuit
@@ -48,6 +46,12 @@ from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
 from devqubit_engine.uec.calibration import DeviceCalibration
 from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.resolver import (
+    get_counts_from_envelope,
+    get_program_hash_from_envelope,
+    resolve_envelope,
+)
 from devqubit_engine.uec.types import ArtifactRef
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
@@ -177,8 +181,38 @@ def _extract_metrics(record: RunRecord) -> dict[str, Any]:
 def _extract_counts(
     record: RunRecord,
     store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
 ) -> dict[str, int] | None:
-    """Extract counts from run record using artifacts module."""
+    """
+    Extract counts from envelope or Run artifacts.
+
+    Uses UEC-first strategy: extracts counts from ExecutionEnvelope,
+    falling back to Run counts artifact if envelope has no counts.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+    store : ObjectStoreProtocol
+        Object store.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope. If None, will be resolved internally.
+
+    Returns
+    -------
+    dict or None
+        Counts as {bitstring: count}, or None if not available.
+    """
+    # Use provided envelope or resolve
+    if envelope is None:
+        envelope = resolve_envelope(record, store)
+
+    # Try to get counts from envelope (UEC-first)
+    counts = get_counts_from_envelope(envelope)
+    if counts is not None:
+        return counts
+
+    # Fallback: Run counts artifact
     counts_info = get_counts(record, store)
     if counts_info is None:
         return None
@@ -188,12 +222,13 @@ def _extract_counts(
 def _load_device_snapshot(
     record: RunRecord,
     store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
 ) -> DeviceSnapshot | None:
     """
-    Load device snapshot from run record.
+    Load device snapshot from envelope or run record.
 
-    Loads DeviceSnapshot from ExecutionEnvelope artifact, falling back
-    to record metadata if envelope is not available.
+    Uses UEC-first strategy: extracts device from ExecutionEnvelope,
+    falling back to Run record metadata if envelope has no device.
 
     Parameters
     ----------
@@ -201,32 +236,30 @@ def _load_device_snapshot(
         Run record to extract device snapshot from.
     store : ObjectStoreProtocol
         Object store for loading artifacts.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope. If None, will be resolved internally.
 
     Returns
     -------
     DeviceSnapshot or None
         Device snapshot if available, None otherwise.
     """
-    # Load from ExecutionEnvelope
-    envelope_artifact = find_artifact(record, kind_contains="envelope")
-    if envelope_artifact:
-        try:
-            envelope_data = load_json_artifact(envelope_artifact, store)
-            if isinstance(envelope_data, dict) and "device" in envelope_data:
-                device_data = envelope_data["device"]
-                if isinstance(device_data, dict):
-                    return DeviceSnapshot.from_dict(device_data)
-        except Exception as e:
-            logger.debug("Failed to load device from envelope: %s", e)
+    # Use provided envelope or resolve
+    if envelope is None:
+        envelope = resolve_envelope(record, store)
 
-    # Fallback: construct from record metadata
+    # Get device from envelope (UEC-first)
+    if envelope.device is not None:
+        return envelope.device
+
+    # Fallback: construct from record metadata (Run compatibility)
     backend = record.record.get("backend") or {}
     if not isinstance(backend, dict):
         return None
 
     snapshot_summary = record.record.get("device_snapshot") or {}
     if not isinstance(snapshot_summary, dict):
-        return None
+        snapshot_summary = {}
 
     calibration = None
     cal_data = snapshot_summary.get("calibration")
@@ -265,9 +298,15 @@ def _extract_circuit_summary(
     return None
 
 
-def _extract_circuit_hash(record: RunRecord) -> str | None:
+def _extract_circuit_hash(
+    record: RunRecord,
+    envelope: ExecutionEnvelope | None = None,
+) -> str | None:
     """
-    Extract circuit_hash from run record or artifact metadata.
+    Extract circuit_hash from envelope or run record.
+
+    Uses UEC-first strategy: extracts program_hash from envelope,
+    falling back to Run metadata if not in envelope.
 
     The circuit_hash is a structural hash that ignores parameter values,
     making it suitable for comparing parameterized circuits that were
@@ -277,18 +316,26 @@ def _extract_circuit_hash(record: RunRecord) -> str | None:
     ----------
     record : RunRecord
         Run record to extract from.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope.
 
     Returns
     -------
     str or None
         Circuit hash if available.
     """
-    # Try execute metadata
+    # Try envelope first (UEC-first)
+    if envelope is not None:
+        program_hash = get_program_hash_from_envelope(envelope)
+        if program_hash:
+            return program_hash
+
+    # Fallback: try execute metadata
     execute = record.record.get("execute", {})
     if isinstance(execute, dict) and execute.get("circuit_hash"):
         return str(execute["circuit_hash"])
 
-    # Try artifacts metadata
+    # Fallback: try artifacts metadata
     for artifact in record.artifacts:
         meta = artifact.meta or {}
         if meta.get("circuit_hash"):
@@ -300,11 +347,14 @@ def _extract_circuit_hash(record: RunRecord) -> str | None:
 def _compare_programs(
     run_a: RunRecord,
     run_b: RunRecord,
+    envelope_a: ExecutionEnvelope | None = None,
+    envelope_b: ExecutionEnvelope | None = None,
 ) -> ProgramComparison:
     """
     Compare program artifacts between two runs.
 
-    Computes both exact (digest) and structural (structural/circuit_hash)
+    Uses UEC-first strategy for structural hash comparison.
+    Computes both exact (digest) and structural (circuit_hash)
     matching to support different verification policies.
 
     Parameters
@@ -313,6 +363,10 @@ def _compare_programs(
         Baseline run.
     run_b : RunRecord
         Candidate run.
+    envelope_a : ExecutionEnvelope, optional
+        Pre-resolved envelope for run_a.
+    envelope_b : ExecutionEnvelope, optional
+        Pre-resolved envelope for run_b.
 
     Returns
     -------
@@ -325,9 +379,9 @@ def _compare_programs(
     # Exact match on content digests
     exact_match = digests_a == digests_b
 
-    # Extract circuit hashes for structural comparison
-    hash_a = _extract_circuit_hash(run_a)
-    hash_b = _extract_circuit_hash(run_b)
+    # Extract circuit hashes for structural comparison (UEC-first)
+    hash_a = _extract_circuit_hash(run_a, envelope_a)
+    hash_b = _extract_circuit_hash(run_b, envelope_b)
 
     # Template match: same circuit structure (ignores parameter values)
     structural_match = False
@@ -366,6 +420,11 @@ def diff_runs(
     """
     Compare two run records comprehensively.
 
+    Uses UEC-first strategy: resolves ExecutionEnvelope for each run
+    and performs comparisons through the unified envelope structure.
+    This ensures consistent behavior whether runs were created with
+    adapters or manually.
+
     Performs multi-dimensional comparison including metadata, parameters,
     metrics, program artifacts, device calibration drift, and result
     distributions.
@@ -397,6 +456,10 @@ def diff_runs(
 
     logger.info("Comparing runs: %s vs %s", run_a.run_id, run_b.run_id)
 
+    # Resolve envelopes (UEC-first strategy)
+    envelope_a = resolve_envelope(run_a, store_a)
+    envelope_b = resolve_envelope(run_b, store_b)
+
     result = ComparisonResult(
         run_id_a=run_a.run_id,
         run_id_b=run_b.run_id,
@@ -412,6 +475,12 @@ def diff_runs(
         "project_b": run_b.project,
         "backend_a": run_a.backend_name,
         "backend_b": run_b.backend_name,
+        "envelope_a_synthesized": envelope_a.metadata.get(
+            "synthesized_from_run", False
+        ),
+        "envelope_b_synthesized": envelope_b.metadata.get(
+            "synthesized_from_run", False
+        ),
     }
 
     # Parameter comparison
@@ -424,8 +493,8 @@ def diff_runs(
     metrics_b = _extract_metrics(run_b)
     result.metrics = _diff_dict(metrics_a, metrics_b)
 
-    # Program comparison (both exact and structural)
-    result.program = _compare_programs(run_a, run_b)
+    # Program comparison (both exact and structural) - uses envelope
+    result.program = _compare_programs(run_a, run_b, envelope_a, envelope_b)
 
     if result.program.structural_only_match:
         result.warnings.append(
@@ -441,9 +510,9 @@ def diff_runs(
         result.program.structural_match,
     )
 
-    # Device drift analysis
-    snapshot_a = _load_device_snapshot(run_a, store_a)
-    snapshot_b = _load_device_snapshot(run_b, store_b)
+    # Device drift analysis - uses envelope
+    snapshot_a = _load_device_snapshot(run_a, store_a, envelope_a)
+    snapshot_b = _load_device_snapshot(run_b, store_b, envelope_b)
 
     if snapshot_a and snapshot_b:
         result.device_drift = compute_drift(snapshot_a, snapshot_b, thresholds)
@@ -453,9 +522,9 @@ def diff_runs(
                 "Results may not be directly comparable."
             )
 
-    # Results comparison (TVD)
-    result.counts_a = _extract_counts(run_a, store_a)
-    result.counts_b = _extract_counts(run_b, store_b)
+    # Results comparison (TVD) - uses envelope
+    result.counts_a = _extract_counts(run_a, store_a, envelope_a)
+    result.counts_b = _extract_counts(run_b, store_b, envelope_b)
 
     if result.counts_a is not None and result.counts_b is not None:
         probs_a = normalize_counts(result.counts_a)
