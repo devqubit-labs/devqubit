@@ -1146,25 +1146,53 @@ class Run:
                 return True
         return False
 
+    def _is_manual_run(self) -> bool:
+        """
+        Check if this is a manual run (no adapter).
+
+        Returns
+        -------
+        bool
+            True if manual run, False if adapter run.
+        """
+        adapter = self.record.get("adapter")
+        if not adapter or adapter == "" or adapter == "manual":
+            return True
+        return False
+
     def _ensure_envelope(self) -> None:
         """
         Ensure an envelope artifact exists before finalization.
 
-        If no envelope was logged (e.g., manual run without adapter),
-        this method synthesizes one from the run record and artifacts.
-        This ensures UEC is always the source of truth, even for
-        manual runs.
+        For **manual runs only**: synthesizes envelope from run record.
+        For **adapter runs**: does NOT auto-generate. Missing envelope
+        from adapter run is an integration error that must be fixed
+        in the adapter.
 
         Notes
         -----
-        This is called automatically during _finalize(). The synthesized
-        envelope will have metadata.auto_generated=True.
+        This is called automatically during _finalize(). For manual runs,
+        the synthesized envelope will have:
+        - metadata.auto_generated=True
+        - metadata.manual_run=True
+        - No program hashes (engine cannot compute them)
         """
         if self._has_envelope_artifact():
             logger.debug("Envelope artifact already exists, skipping auto-generation")
             return
 
-        # Build envelope from current run state
+        # Only auto-generate for manual runs
+        if not self._is_manual_run():
+            adapter = self.record.get("adapter", "unknown")
+            logger.warning(
+                "Adapter run '%s' (adapter=%s) completing without envelope. "
+                "This is an adapter integration error - adapters must create envelope.",
+                self._run_id,
+                adapter,
+            )
+            return
+
+        # Build envelope for manual run
         try:
             from devqubit_engine.uec.resolver import build_envelope_from_run
 
@@ -1176,9 +1204,8 @@ class Run:
 
             envelope = build_envelope_from_run(temp_record, self._store)
 
-            # Mark as auto-generated
+            # Mark as auto-generated (keep manual_run from build_envelope_from_run)
             envelope.metadata["auto_generated"] = True
-            envelope.metadata.pop("synthesized_from_run", None)
 
             # Log the envelope (skip validation for auto-generated)
             self.log_json(
@@ -1189,7 +1216,7 @@ class Run:
             )
 
             logger.debug(
-                "Auto-generated envelope for run %s",
+                "Auto-generated envelope for manual run %s",
                 self._run_id,
             )
 
