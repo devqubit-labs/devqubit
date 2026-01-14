@@ -48,10 +48,10 @@ from devqubit_engine.uec.calibration import DeviceCalibration
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.resolver import (
-    get_counts_from_envelope,
     get_program_hash_from_envelope,
     resolve_envelope,
 )
+from devqubit_engine.uec.result import canonicalize_bitstrings
 from devqubit_engine.uec.types import ArtifactRef
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
@@ -182,12 +182,15 @@ def _extract_counts(
     record: RunRecord,
     store: ObjectStoreProtocol,
     envelope: ExecutionEnvelope | None = None,
+    *,
+    canonicalize: bool = True,
 ) -> dict[str, int] | None:
     """
     Extract counts from envelope or Run artifacts.
 
     Uses UEC-first strategy: extracts counts from ExecutionEnvelope,
     falling back to Run counts artifact if envelope has no counts.
+    Always canonicalizes bitstrings to cbit0_right format for comparison.
 
     Parameters
     ----------
@@ -197,25 +200,49 @@ def _extract_counts(
         Object store.
     envelope : ExecutionEnvelope, optional
         Pre-resolved envelope. If None, will be resolved internally.
+    canonicalize : bool, default=True
+        Whether to canonicalize bitstrings to cbit0_right format.
 
     Returns
     -------
     dict or None
-        Counts as {bitstring: count}, or None if not available.
+        Counts as {bitstring: count} in canonical format, or None if not available.
     """
     # Use provided envelope or resolve
     if envelope is None:
-        envelope = resolve_envelope(record, store)
+        envelope = resolve_envelope(record, store, strict=False)
 
     # Try to get counts from envelope (UEC-first)
-    counts = get_counts_from_envelope(envelope)
-    if counts is not None:
-        return counts
+    if envelope.result.items:
+        item = envelope.result.items[0]
+        if item.counts:
+            raw_counts = item.counts.get("counts")
+            if isinstance(raw_counts, dict):
+                if canonicalize:
+                    format_info = item.counts.get("format", {})
+                    bit_order = format_info.get("bit_order", "cbit0_right")
+                    transformed = format_info.get("transformed", False)
+                    canonical = canonicalize_bitstrings(
+                        raw_counts,
+                        bit_order=bit_order,
+                        transformed=transformed,
+                    )
+                    return {k: int(v) for k, v in canonical.items()}
+                else:
+                    return {str(k): int(v) for k, v in raw_counts.items()}
 
     # Fallback: Run counts artifact
     counts_info = get_counts(record, store)
     if counts_info is None:
         return None
+
+    # Canonicalize fallback counts (assume cbit0_right if not specified)
+    if canonicalize:
+        return canonicalize_bitstrings(
+            counts_info.counts,
+            bit_order="cbit0_right",
+            transformed=False,
+        )
     return counts_info.counts
 
 
@@ -353,9 +380,9 @@ def _compare_programs(
     """
     Compare program artifacts between two runs.
 
-    Uses UEC-first strategy for structural hash comparison.
-    Computes both exact (digest) and structural (circuit_hash)
-    matching to support different verification policies.
+    Uses UEC-first strategy for structural and parametric hash comparison.
+    Computes exact (digest), structural (program_hash), and parametric
+    (parametric_hash) matching.
 
     Parameters
     ----------
@@ -371,7 +398,8 @@ def _compare_programs(
     Returns
     -------
     ProgramComparison
-        Detailed comparison with exact_match, structural_match, and metadata.
+        Detailed comparison with status, exact_match, structural_match,
+        parametric_match, and hash availability.
     """
     digests_a = get_artifact_digests(run_a, role="program")
     digests_b = get_artifact_digests(run_b, role="program")
@@ -379,11 +407,29 @@ def _compare_programs(
     # Exact match on content digests
     exact_match = digests_a == digests_b
 
-    # Extract circuit hashes for structural comparison (UEC-first)
-    hash_a = _extract_circuit_hash(run_a, envelope_a)
-    hash_b = _extract_circuit_hash(run_b, envelope_b)
+    # Extract hashes from UEC (program_hash and parametric_hash)
+    hash_a = None
+    hash_b = None
+    param_hash_a = None
+    param_hash_b = None
+    hash_available = True
 
-    # Template match: same circuit structure (ignores parameter values)
+    if envelope_a and envelope_a.program:
+        hash_a = envelope_a.program.program_hash
+        param_hash_a = envelope_a.program.parametric_hash
+    if envelope_b and envelope_b.program:
+        hash_b = envelope_b.program.program_hash
+        param_hash_b = envelope_b.program.parametric_hash
+
+    # Check if hashes are available (manual runs won't have them)
+    if (envelope_a and envelope_a.metadata.get("manual_run")) or (
+        envelope_b and envelope_b.metadata.get("manual_run")
+    ):
+        # At least one is manual run
+        if not hash_a or not hash_b:
+            hash_available = False
+
+    # Structural match: same circuit structure (ignores parameter values)
     structural_match = False
     if hash_a and hash_b:
         structural_match = hash_a == hash_b
@@ -391,19 +437,34 @@ def _compare_programs(
         # If exact match, structural also matches
         structural_match = True
 
-    if structural_match and not exact_match:
+    # Parametric match: same structure AND same parameter values
+    parametric_match = False
+    if param_hash_a and param_hash_b:
+        parametric_match = param_hash_a == param_hash_b
+    elif exact_match:
+        # If exact match, parametric also matches
+        parametric_match = True
+
+    if structural_match and not parametric_match:
         logger.debug(
-            "Programs differ in content but match in structure (circuit_hash=%s)",
+            "Programs match in structure but differ in params "
+            "(program_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
             hash_a,
+            param_hash_a,
+            param_hash_b,
         )
 
     return ProgramComparison(
         exact_match=exact_match,
         structural_match=structural_match,
+        parametric_match=parametric_match,
         digests_a=digests_a,
         digests_b=digests_b,
         circuit_hash_a=hash_a,
         circuit_hash_b=hash_b,
+        parametric_hash_a=param_hash_a,
+        parametric_hash_b=param_hash_b,
+        hash_available=hash_available,
     )
 
 
@@ -456,9 +517,9 @@ def diff_runs(
 
     logger.info("Comparing runs: %s vs %s", run_a.run_id, run_b.run_id)
 
-    # Resolve envelopes (UEC-first strategy)
-    envelope_a = resolve_envelope(run_a, store_a)
-    envelope_b = resolve_envelope(run_b, store_b)
+    # Resolve envelopes (UEC-first strategy, non-strict for backward compat)
+    envelope_a = resolve_envelope(run_a, store_a, strict=False)
+    envelope_b = resolve_envelope(run_b, store_b, strict=False)
 
     result = ComparisonResult(
         run_id_a=run_a.run_id,
