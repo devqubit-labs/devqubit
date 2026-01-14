@@ -233,6 +233,11 @@ class ExecutionEnvelope:
         Returns a list of warnings for missing or incomplete data.
         This is NOT schema validation - use validate_schema() for that.
 
+        Notes
+        -----
+        For adapter runs (producer.adapter != "manual"), program hashes
+        are expected. Missing hashes will generate warnings.
+
         Returns
         -------
         list of str
@@ -260,6 +265,25 @@ class ExecutionEnvelope:
 
         if self.result.success is False and self.result.error is None:
             warnings.append("Failed result missing error details")
+
+        # For adapter runs, validate program hashes (contract enforcement)
+        is_adapter_run = (
+            self.producer.adapter
+            and self.producer.adapter != "manual"
+            and not self.metadata.get("manual_run")
+        )
+
+        if is_adapter_run and self.program:
+            if not self.program.program_hash:
+                warnings.append(
+                    "Adapter run missing program_hash - adapters must provide "
+                    "structural hash"
+                )
+            if not self.program.parametric_hash:
+                warnings.append(
+                    "Adapter run missing parametric_hash - adapters must provide "
+                    "parametric hash"
+                )
 
         return warnings
 
