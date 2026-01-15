@@ -47,44 +47,15 @@ from devqubit_engine.core.record import RunRecord
 from devqubit_engine.schema.validation import validate_run_record
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
-from devqubit_engine.uec.envelope import ExecutionEnvelope
-from devqubit_engine.uec.types import ArtifactRef
+from devqubit_engine.uec import ArtifactRef, EnvelopeValidationError, ExecutionEnvelope
+from devqubit_engine.utils.common import sha256_digest, utc_now_iso
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
-from devqubit_engine.utils.hashing import sha256_digest
 from devqubit_engine.utils.qasm3 import canonicalize_qasm3, coerce_openqasm3_sources
 from devqubit_engine.utils.serialization import safe_json_dumps, to_jsonable
-from devqubit_engine.utils.time_utils import utc_now_iso
 from ulid import ULID
 
 
 logger = logging.getLogger(__name__)
-
-
-class EnvelopeValidationError(Exception):
-    """
-    Raised when adapter run produces invalid envelope.
-
-    Adapter runs MUST produce valid envelopes. Invalid envelopes indicate
-    an adapter integration error that must be fixed in the adapter code.
-
-    Parameters
-    ----------
-    adapter : str
-        Adapter name that produced invalid envelope.
-    errors : list of str
-        Validation error messages.
-    """
-
-    def __init__(self, adapter: str, errors: list[str]):
-        self.adapter = adapter
-        self.errors = errors
-        error_summary = "; ".join(errors[:3])
-        if len(errors) > 3:
-            error_summary += f" ... and {len(errors) - 3} more"
-        super().__init__(
-            f"Adapter '{adapter}' produced invalid envelope: {error_summary}. "
-            f"This is an adapter bug - adapters must produce valid envelopes."
-        )
 
 
 def _strip_volatile_keys(obj: Any, *, volatile_keys: set[str]) -> Any:
@@ -1204,10 +1175,9 @@ class Run:
         bool
             True if manual run, False if adapter run.
         """
-        adapter = self.record.get("adapter")
-        if not adapter or adapter == "" or adapter == "manual":
-            return True
-        return False
+        from devqubit_engine.utils.common import is_manual_run_record
+
+        return is_manual_run_record(self.record)
 
     def _ensure_envelope(self) -> None:
         """
@@ -1262,7 +1232,9 @@ class Run:
 
         # Build envelope for manual run
         try:
-            from devqubit_engine.uec.resolver import build_envelope_from_run
+            from devqubit_engine.uec.resolution.synthesize import (
+                synthesize_envelope,
+            )
 
             # Create temporary RunRecord for envelope building
             temp_record = RunRecord(
@@ -1270,9 +1242,9 @@ class Run:
                 artifacts=self._artifacts,
             )
 
-            envelope = build_envelope_from_run(temp_record, self._store)
+            envelope = synthesize_envelope(temp_record, self._store)
 
-            # Mark as auto-generated (keep manual_run from build_envelope_from_run)
+            # Mark as auto-generated (keep manual_run from synthesize_envelope)
             envelope.metadata["auto_generated"] = True
 
             # Log the envelope (skip validation for auto-generated)

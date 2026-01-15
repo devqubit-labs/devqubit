@@ -159,10 +159,10 @@ def resolve_counts(
     Fallback to Run counts artifact is only allowed for synthesized (manual)
     envelopes. For adapter envelopes, missing counts returns None.
     """
+    from devqubit_engine.artifacts import get_counts
     from devqubit_engine.uec.resolution.resolve import (
         resolve_envelope as _resolve_envelope,
     )
-    from devqubit_engine.utils.artifacts import get_counts
 
     # Use provided envelope or resolve
     if envelope is None:

@@ -10,27 +10,6 @@ This module defines constants and exceptions used across the UEC subsystem.
 from __future__ import annotations
 
 
-# Keys in execute section that are volatile (change between runs)
-# and should be stripped when computing fingerprints or comparing
-VOLATILE_EXECUTE_KEYS: frozenset[str] = frozenset(
-    {
-        "submitted_at",
-        "job_id",
-        "job_ids",
-        "completed_at",
-        "session_id",
-        "task_id",
-        "task_ids",
-    }
-)
-
-# Schema version for envelope
-ENVELOPE_SCHEMA_VERSION = "devqubit.envelope/1.0"
-
-# Schema version for result snapshot
-RESULT_SCHEMA_VERSION = "devqubit.result_snapshot/1.0"
-
-
 class MissingEnvelopeError(Exception):
     """
     Raised when adapter run is missing required envelope.

@@ -18,10 +18,10 @@ from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.program import ProgramArtifact
 from devqubit_engine.uec.resolver import (
-    build_envelope_from_run,
     get_counts_from_envelope,
     load_envelope,
     resolve_envelope,
+    synthesize_envelope,
 )
 from devqubit_engine.uec.result import (
     QuasiProbability,
@@ -498,13 +498,13 @@ class TestResolver:
     def test_build_envelope_captures_counts(
         self, store, run_factory, counts_artifact_factory
     ):
-        """build_envelope_from_run captures counts from Run artifact."""
+        """synthesize_envelope captures counts from Run artifact."""
 
         counts = {"00": 500, "11": 500}
         artifact = counts_artifact_factory(counts)
         run = run_factory(run_id="WITH_COUNTS", artifacts=[artifact])
 
-        envelope = build_envelope_from_run(run, store)
+        envelope = synthesize_envelope(run, store)
         extracted = get_counts_from_envelope(envelope)
 
         assert extracted is not None

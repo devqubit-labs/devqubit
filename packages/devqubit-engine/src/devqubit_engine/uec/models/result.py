@@ -20,9 +20,41 @@ from __future__ import annotations
 import hashlib
 import traceback
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
-from devqubit_engine.uec.models.types import ArtifactRef
+from devqubit_engine.core.types import ArtifactRef
+
+
+class ResultType(str, Enum):
+    """
+    Type of quantum execution result.
+
+    Attributes
+    ----------
+    COUNTS
+        Measurement counts (bitstring histograms).
+    QUASI_DIST
+        Quasi-probability distributions.
+    EXPECTATION
+        Expectation values from estimator primitives.
+    SAMPLES
+        Raw measurement samples/shots.
+    STATEVECTOR
+        Full statevector (simulator only).
+    DENSITY_MATRIX
+        Full density matrix (simulator only).
+    OTHER
+        Other undefined result type.
+    """
+
+    COUNTS = "counts"
+    QUASI_DIST = "quasi_dist"
+    EXPECTATION = "expectation"
+    SAMPLES = "samples"
+    STATEVECTOR = "statevector"
+    DENSITY_MATRIX = "density_matrix"
+    OTHER = "other"
 
 
 @dataclass

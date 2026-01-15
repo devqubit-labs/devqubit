@@ -19,6 +19,20 @@ from typing import Any
 # Regex pattern for validating SHA-256 digest format
 _DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
+# Keys in execute section that are volatile (change between runs)
+# and should be stripped when computing fingerprints or comparing
+VOLATILE_EXECUTE_KEYS: frozenset[str] = frozenset(
+    {
+        "submitted_at",
+        "job_id",
+        "job_ids",
+        "completed_at",
+        "session_id",
+        "task_id",
+        "task_ids",
+    }
+)
+
 
 def _norm_gate(name: str) -> str:
     """

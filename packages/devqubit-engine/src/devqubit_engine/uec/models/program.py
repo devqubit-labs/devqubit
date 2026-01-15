@@ -11,9 +11,45 @@ circuit representations along with transpilation metadata.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
-from devqubit_engine.uec.models.types import ArtifactRef, ProgramRole, TranspilationMode
+from devqubit_engine.core.types import ArtifactRef
+
+
+class ProgramRole(str, Enum):
+    """
+    Role of a program artifact in the execution pipeline.
+
+    Attributes
+    ----------
+    LOGICAL
+        User-provided circuit before any transpilation.
+    PHYSICAL
+        Circuit after transpilation, conforming to backend ISA.
+    """
+
+    LOGICAL = "logical"
+    PHYSICAL = "physical"
+
+
+class TranspilationMode(str, Enum):
+    """
+    Transpilation handling mode for circuit submission.
+
+    Attributes
+    ----------
+    AUTO
+        Adapter transpiles if needed (checks ISA compatibility).
+    MANUAL
+        User handles transpilation; adapter logs as-is.
+    MANAGED
+        Provider/runtime handles transpilation server-side.
+    """
+
+    AUTO = "auto"
+    MANUAL = "manual"
+    MANAGED = "managed"
 
 
 @dataclass

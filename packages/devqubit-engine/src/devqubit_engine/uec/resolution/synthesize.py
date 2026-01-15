@@ -22,24 +22,27 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.uec.errors import VOLATILE_EXECUTE_KEYS
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
-from devqubit_engine.uec.models.program import ProgramArtifact, ProgramSnapshot
+from devqubit_engine.uec.models.program import (
+    ProgramArtifact,
+    ProgramRole,
+    ProgramSnapshot,
+)
 from devqubit_engine.uec.models.result import (
     CountsFormat,
     ResultError,
     ResultItem,
     ResultSnapshot,
 )
-from devqubit_engine.uec.models.types import ArtifactRef, ProgramRole
 from devqubit_engine.utils.common import is_manual_run_record
 
 
 if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
+    from devqubit_engine.core.types import VOLATILE_EXECUTE_KEYS, ArtifactRef
     from devqubit_engine.storage.protocols import ObjectStoreProtocol
 
 
@@ -315,7 +318,7 @@ def _build_result(
     is assumed and marked appropriately in metadata.
     """
     # Lazy import to avoid circular dependencies
-    from devqubit_engine.utils.artifacts import find_artifact, load_artifact_json
+    from devqubit_engine.artifacts import find_artifact, load_artifact_json
 
     status = record.record.get("info", {}).get("status", "RUNNING")
 
@@ -554,7 +557,3 @@ def synthesize_envelope(
     )
 
     return envelope
-
-
-# Alias for backward compatibility
-build_envelope_from_run = synthesize_envelope

@@ -31,8 +31,7 @@ from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
 from devqubit_engine.uec.models.program import ProgramSnapshot
 from devqubit_engine.uec.models.result import ResultSnapshot
-from devqubit_engine.uec.models.types import ValidationResult
-from devqubit_engine.utils.common import utc_now_iso
+from devqubit_engine.utils.time_utils import utc_now_iso
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +44,74 @@ def _generate_envelope_id() -> str:
     Returns a UUID4 without hyphens (26 chars, matches schema pattern).
     """
     return uuid.uuid4().hex[:26]
+
+
+@dataclass
+class ValidationResult:
+    """
+    Result of schema validation.
+
+    Parameters
+    ----------
+    valid : bool
+        True if validation passed.
+    errors : list
+        List of validation errors (empty if valid).
+    warnings : list
+        List of validation warnings.
+    """
+
+    valid: bool
+    errors: list[Any] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        """Return True if validation passed."""
+        return self.valid
+
+    def __iter__(self):
+        """Iterate over validation errors."""
+        return iter(self.errors)
+
+    def __len__(self) -> int:
+        """Return number of validation errors."""
+        return len(self.errors)
+
+    @property
+    def ok(self) -> bool:
+        """
+        Alias for valid - returns True if no errors.
+
+        Returns
+        -------
+        bool
+            True if validation passed without errors.
+        """
+        return self.valid and len(self.errors) == 0
+
+    @property
+    def error_count(self) -> int:
+        """
+        Return the number of validation errors.
+
+        Returns
+        -------
+        int
+            Count of validation errors.
+        """
+        return len(self.errors)
+
+    @property
+    def warning_count(self) -> int:
+        """
+        Return the number of validation warnings.
+
+        Returns
+        -------
+        int
+            Count of validation warnings.
+        """
+        return len(self.warnings)
 
 
 @dataclass
