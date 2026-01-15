@@ -22,7 +22,7 @@ from devqubit_engine.uec.calibration import (
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 from devqubit_qiskit.utils import (
     as_int_tuple,
     convert_duration_to_ns,

@@ -28,7 +28,7 @@ from devqubit_engine.storage.protocols import (
     RunSummary,
 )
 from devqubit_engine.uec.types import ArtifactRef
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 class GCSStore:

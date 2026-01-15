@@ -31,7 +31,7 @@ from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
 from devqubit_engine.uec.models.program import ProgramSnapshot
 from devqubit_engine.uec.models.result import ResultSnapshot
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 logger = logging.getLogger(__name__)

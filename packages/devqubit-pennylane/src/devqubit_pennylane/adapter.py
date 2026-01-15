@@ -66,8 +66,8 @@ from devqubit_engine.uec.types import (
     ProgramRole,
     TranspilationMode,
 )
+from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
-from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_pennylane.results import build_result_snapshot, extract_result_type
 from devqubit_pennylane.serialization import PennyLaneCircuitSerializer, tapes_to_text
 from devqubit_pennylane.snapshot import (

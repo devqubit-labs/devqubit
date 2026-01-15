@@ -30,7 +30,7 @@ from devqubit_engine.uec.calibration import (
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 def _parse_qubit_key(qubits_key: str) -> list[int]:

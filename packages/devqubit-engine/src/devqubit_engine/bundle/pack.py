@@ -43,7 +43,7 @@ from typing import Any
 
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 logger = logging.getLogger(__name__)

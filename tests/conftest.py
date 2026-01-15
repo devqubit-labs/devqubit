@@ -22,7 +22,7 @@ from devqubit_engine.core.config import Config
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.local import LocalRegistry, LocalStore
 from devqubit_engine.uec.types import ArtifactRef
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 @pytest.fixture

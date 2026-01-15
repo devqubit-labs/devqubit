@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from devqubit_cirq.utils import cirq_version, get_backend_name
 from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 if TYPE_CHECKING:

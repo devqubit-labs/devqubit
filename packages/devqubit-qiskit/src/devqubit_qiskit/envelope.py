@@ -29,8 +29,8 @@ from devqubit_engine.uec.result import (
     ResultSnapshot,
 )
 from devqubit_engine.uec.types import ArtifactRef, TranspilationMode
+from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
-from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.results import extract_result_metadata, normalize_result_counts
 from devqubit_qiskit.snapshot import create_device_snapshot
 from devqubit_qiskit.utils import get_backend_name, qiskit_version

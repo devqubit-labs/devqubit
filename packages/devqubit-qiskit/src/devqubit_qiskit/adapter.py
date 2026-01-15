@@ -54,8 +54,8 @@ from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.producer import ProducerInfo
 from devqubit_engine.uec.program import ProgramSnapshot
 from devqubit_engine.uec.result import ResultSnapshot
+from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
-from devqubit_engine.utils.time_utils import utc_now_iso
 from devqubit_qiskit.circuits import (
     compute_parametric_hash,
     compute_structural_hash,
