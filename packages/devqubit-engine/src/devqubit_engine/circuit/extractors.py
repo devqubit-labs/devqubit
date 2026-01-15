@@ -197,50 +197,6 @@ def _try_openqasm_formats(
     return None
 
 
-def extract_openqasm_source(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-) -> str | None:
-    """
-    Extract OpenQASM source text from a run record.
-
-    Searches for OpenQASM artifacts and returns the source as text.
-    Does not attempt to load native format artifacts.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to search.
-    store : ObjectStoreProtocol
-        Object store to load artifact data from.
-
-    Returns
-    -------
-    str or None
-        OpenQASM source text, or None if not found.
-    """
-    for kind_pattern in ("openqasm3", "openqasm", "qasm"):
-        artifact = find_artifact(
-            record,
-            role="program",
-            kind_contains=kind_pattern,
-        )
-        if not artifact:
-            continue
-
-        data = load_artifact_bytes(artifact, store)
-        if data is None:
-            continue
-
-        try:
-            return data.decode("utf-8")
-        except UnicodeDecodeError:
-            logger.debug("Failed to decode OpenQASM artifact as UTF-8")
-            continue
-
-    return None
-
-
 def extract_circuit_from_refs(
     refs: list[ArtifactRef],
     store: ObjectStoreProtocol,

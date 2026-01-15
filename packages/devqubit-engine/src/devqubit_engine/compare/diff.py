@@ -36,7 +36,7 @@ from devqubit_engine.compare.results import (
     ProgramComparison,
     ProgramMatchMode,
 )
-from devqubit_engine.core.config import Config, get_config
+from devqubit_engine.config import Config, get_config
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.artifacts.counts import get_counts
 from devqubit_engine.storage.artifacts.lookup import get_artifact_digests
@@ -46,11 +46,11 @@ from devqubit_engine.storage.types import (
     ObjectStoreProtocol,
     RegistryProtocol,
 )
+from devqubit_engine.uec.api.resolve import resolve_envelope
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.result import canonicalize_bitstrings
-from devqubit_engine.uec.resolution.resolve import resolve_envelope
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
     normalize_counts,

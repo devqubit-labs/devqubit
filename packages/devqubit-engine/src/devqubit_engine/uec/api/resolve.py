@@ -25,8 +25,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from devqubit_engine.uec.api.synthesize import synthesize_envelope
 from devqubit_engine.uec.errors import MissingEnvelopeError
-from devqubit_engine.uec.resolution.synthesize import synthesize_envelope
 from devqubit_engine.utils.common import is_manual_run_record
 
 

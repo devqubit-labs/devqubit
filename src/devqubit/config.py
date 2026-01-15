@@ -57,7 +57,7 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.config import (
+    from devqubit_engine.config import (
         Config,
         RedactionConfig,
         get_config,

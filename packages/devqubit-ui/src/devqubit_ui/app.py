@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import AsyncGenerator
 
 import uvicorn
-from devqubit_engine.core.config import Config
+from devqubit_engine.config import Config
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 from devqubit_ui.filters import register_filters

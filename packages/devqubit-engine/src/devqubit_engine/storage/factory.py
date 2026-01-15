@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
-from devqubit_engine.core.config import Config, get_config
+from devqubit_engine.config import Config, get_config
 from devqubit_engine.storage.backends.local import (
     LocalRegistry,
     LocalStore,

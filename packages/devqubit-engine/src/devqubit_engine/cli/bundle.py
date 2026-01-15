@@ -55,7 +55,7 @@ def pack_run_cmd(
         devqubit pack abc123 -o experiment.zip --force
     """
     from devqubit_engine.bundle.pack import pack_run
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
@@ -115,7 +115,7 @@ def unpack_bundle_cmd(
         devqubit unpack experiment.zip --force --no-verify
     """
     from devqubit_engine.bundle.pack import unpack_bundle
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)

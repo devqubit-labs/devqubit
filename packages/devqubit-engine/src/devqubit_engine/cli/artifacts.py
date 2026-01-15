@@ -78,7 +78,7 @@ def _format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:
 
 def _load_run(ctx: click.Context, run_id: str):
     """Load run record and storage components."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 

@@ -18,7 +18,7 @@ from typing import Any, Callable
 import pytest
 from click.testing import CliRunner
 from devqubit_engine.cli import cli
-from devqubit_engine.core.config import Config
+from devqubit_engine.config import Config
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.backends.local import LocalRegistry, LocalStore
 from devqubit_engine.storage.types import ArtifactRef

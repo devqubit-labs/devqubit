@@ -159,10 +159,8 @@ def resolve_counts(
     Fallback to Run counts artifact is only allowed for synthesized (manual)
     envelopes. For adapter envelopes, missing counts returns None.
     """
-    from devqubit_engine.artifacts import get_counts
-    from devqubit_engine.uec.resolution.resolve import (
-        resolve_envelope as _resolve_envelope,
-    )
+    from devqubit_engine.storage.artifacts.counts import get_counts
+    from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
     # Use provided envelope or resolve
     if envelope is None:
@@ -245,11 +243,9 @@ def resolve_device_snapshot(
     (manual) envelopes. For adapter envelopes, if device is not present
     in the envelope, None is returned.
     """
+    from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
     from devqubit_engine.uec.models.calibration import DeviceCalibration
     from devqubit_engine.uec.models.device import DeviceSnapshot
-    from devqubit_engine.uec.resolution.resolve import (
-        resolve_envelope as _resolve_envelope,
-    )
 
     # Use provided envelope or resolve
     if envelope is None:
@@ -337,9 +333,7 @@ def resolve_circuit_summary(
         extract_circuit_from_envelope,
     )
     from devqubit_engine.circuit.summary import summarize_circuit_data
-    from devqubit_engine.uec.resolution.resolve import (
-        resolve_envelope as _resolve_envelope,
-    )
+    from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
     # Resolve envelope if not provided
     if envelope is None:

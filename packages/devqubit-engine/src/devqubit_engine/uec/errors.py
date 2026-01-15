@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-UEC constants and exceptions.
-
-This module defines constants and exceptions used across the UEC subsystem.
-"""
+"""UEC exceptions."""
 
 from __future__ import annotations
 

@@ -73,7 +73,7 @@ def diff_cmd(
         devqubit diff abc123 def456 --format json -o report.json
     """
     from devqubit_engine.compare.diff import diff
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
@@ -194,7 +194,7 @@ def verify_cmd(
         verify,
         verify_against_baseline,
     )
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
