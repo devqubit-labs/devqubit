@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-CLI integration tests for devqubit.
-
-Tests all user-facing CLI commands end-to-end.
-"""
+"""CLI integration tests for devqubit."""
 
 from __future__ import annotations
 

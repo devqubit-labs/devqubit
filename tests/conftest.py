@@ -1,12 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-Test fixtures for devqubit public API and CLI tests.
-
-Provides isolated workspace fixtures for testing without affecting
-real user data.
-"""
+"""Test fixtures for devqubit public API and CLI tests."""
 
 from __future__ import annotations
 
