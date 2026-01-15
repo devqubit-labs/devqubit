@@ -14,7 +14,7 @@ from devqubit_engine.compare.results import (
     ProgramComparison,
     ProgramMatchMode,
 )
-from devqubit_engine.uec.calibration import DeviceCalibration
+from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
     counts_to_arrays,

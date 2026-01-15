@@ -17,7 +17,7 @@ from datetime import datetime
 from statistics import median
 from typing import Any
 
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,

@@ -16,8 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from devqubit_engine.compare.results import DriftResult, MetricDrift
-from devqubit_engine.uec.calibration import DeviceCalibration
-from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.models.calibration import DeviceCalibration
+from devqubit_engine.uec.models.device import DeviceSnapshot
 
 
 logger = logging.getLogger(__name__)

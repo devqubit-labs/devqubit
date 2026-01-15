@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.uec.calibration import DeviceCalibration
-from devqubit_engine.uec.device import DeviceSnapshot
+from devqubit_engine.uec.models.calibration import DeviceCalibration
+from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_qiskit.calibration import extract_calibration_from_properties

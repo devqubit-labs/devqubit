@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import (
+    TYPE_CHECKING,
     Any,
     Iterator,
     Protocol,
@@ -20,7 +21,9 @@ from typing import (
     runtime_checkable,
 )
 
-from devqubit_engine.tracking.record import RunRecord
+
+if TYPE_CHECKING:
+    from devqubit_engine.tracking.record import RunRecord
 
 
 # Regex pattern for validating SHA-256 digest format

@@ -9,30 +9,23 @@ import json
 from unittest.mock import patch
 
 import pytest
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.uec.api.extract import get_counts_from_envelope
+from devqubit_engine.uec.api.resolve import load_envelope, resolve_envelope
+from devqubit_engine.uec.api.synthesize import synthesize_envelope
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.uec.envelope import ExecutionEnvelope
-from devqubit_engine.uec.program import ProgramArtifact
-from devqubit_engine.uec.resolver import (
-    get_counts_from_envelope,
-    load_envelope,
-    resolve_envelope,
-    synthesize_envelope,
-)
-from devqubit_engine.uec.result import (
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.uec.models.envelope import ExecutionEnvelope, ValidationResult
+from devqubit_engine.uec.models.program import ProgramArtifact, ProgramRole
+from devqubit_engine.uec.models.result import (
     QuasiProbability,
     ResultError,
     ResultItem,
     ResultSnapshot,
-)
-from devqubit_engine.uec.types import (
-    ArtifactRef,
-    ProgramRole,
-    ValidationResult,
 )
 
 
