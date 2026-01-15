@@ -10,6 +10,7 @@ snapshots (device, program, execution, result) into a single record.
 Schema Requirements (devqubit.envelope/1.0)
 -------------------------------------------
 REQUIRED fields:
+
 - schema: "devqubit.envelope/1.0"
 - envelope_id: ULID or UUID
 - created_at: RFC3339 timestamp
@@ -26,13 +27,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.uec.execution import ExecutionSnapshot
-from devqubit_engine.uec.producer import ProducerInfo
-from devqubit_engine.uec.program import ProgramSnapshot
-from devqubit_engine.uec.result import ResultSnapshot
-from devqubit_engine.uec.types import ValidationResult
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
+from devqubit_engine.uec.models.program import ProgramSnapshot
+from devqubit_engine.uec.models.result import ResultSnapshot
+from devqubit_engine.uec.models.types import ValidationResult
+from devqubit_engine.utils.common import utc_now_iso
 
 
 logger = logging.getLogger(__name__)
@@ -233,15 +233,15 @@ class ExecutionEnvelope:
         Returns a list of warnings for missing or incomplete data.
         This is NOT schema validation - use validate_schema() for that.
 
-        Notes
-        -----
-        For adapter runs (producer.adapter != "manual"), program hashes
-        are expected. Missing hashes will generate warnings.
-
         Returns
         -------
         list of str
             Warning messages for missing data.
+
+        Notes
+        -----
+        For adapter runs (producer.adapter != "manual"), program hashes
+        are expected. Missing hashes will generate warnings.
         """
         warnings: list[str] = []
 
@@ -334,80 +334,3 @@ class ExecutionEnvelope:
         except Exception as e:
             logger.warning("Schema validation failed unexpectedly: %s", e)
             return ValidationResult(valid=False, errors=[e], warnings=[])
-
-
-def resolve_physical_backend(executor: Any) -> dict[str, Any] | None:
-    """
-    Resolve the physical backend from a high-level executor.
-
-    This is the universal backend resolution helper that all adapters
-    should use to extract the underlying physical backend from wrapped
-    or multi-layer executors.
-
-    Parameters
-    ----------
-    executor : Any
-        Executor, primitive, device, or backend object from any SDK.
-
-    Returns
-    -------
-    dict or None
-        Dictionary with resolved backend information:
-        - provider: Physical provider name
-        - backend_name: Backend identifier
-        - backend_id: Stable unique ID (if available)
-        - backend_type: Type (hardware/simulator)
-        - backend_obj: The actual backend object
-
-        Returns None if resolution fails.
-    """
-    if executor is None:
-        return None
-
-    result: dict[str, Any] = {
-        "provider": "unknown",
-        "backend_name": "unknown",
-        "backend_id": None,
-        "backend_type": "simulator",
-        "backend_obj": executor,
-    }
-
-    executor_type = type(executor).__name__
-
-    # Check for name attribute (common across SDKs)
-    if hasattr(executor, "name"):
-        name = getattr(executor, "name", None)
-        if callable(name):
-            try:
-                name = name()
-            except Exception:
-                name = None
-        if name:
-            result["backend_name"] = str(name)
-
-    # Detect simulator vs hardware from name/type
-    name_lower = result["backend_name"].lower()
-    type_lower = executor_type.lower()
-
-    if any(
-        s in name_lower
-        for s in (
-            "ibm_",
-            "ionq",
-            "rigetti",
-            "oqc",
-            "aspen",
-        )
-    ):
-        result["backend_type"] = "hardware"
-    elif any(
-        s in name_lower or s in type_lower
-        for s in (
-            "sim",
-            "emulator",
-            "fake",
-        )
-    ):
-        result["backend_type"] = "simulator"
-
-    return result

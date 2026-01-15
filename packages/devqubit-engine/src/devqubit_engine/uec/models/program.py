@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.uec.types import ArtifactRef, ProgramRole, TranspilationMode
+from devqubit_engine.uec.models.types import ArtifactRef, ProgramRole, TranspilationMode
 
 
 @dataclass

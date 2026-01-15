@@ -13,8 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.uec.calibration import DeviceCalibration
-from devqubit_engine.uec.types import ArtifactRef
+from devqubit_engine.uec.models.calibration import DeviceCalibration
+from devqubit_engine.uec.models.types import ArtifactRef
 
 
 @dataclass

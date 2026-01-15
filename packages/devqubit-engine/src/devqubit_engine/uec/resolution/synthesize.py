@@ -2,166 +2,51 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-UEC Resolver - Single entry point for envelope resolution.
+UEC envelope synthesis from RunRecord.
 
-This module provides the canonical interface for obtaining ExecutionEnvelope
-from any run record. It implements the "UEC-first" strategy with strict
-contract enforcement:
+This module provides functions for synthesizing ExecutionEnvelope from
+RunRecord data when no envelope artifact exists. This is intended for
+**manual runs only** - adapter runs should always have envelope created
+by the adapter.
 
-1. **Adapter runs**: Envelope MUST exist (created by adapter). Missing envelope
-   is an integration error and raises MissingEnvelopeError.
-2. **Manual runs**: Envelope is synthesized from RunRecord if not present.
-   This is best-effort with limited semantics (no program hashes).
+Synthesized envelopes have limitations:
 
-This ensures that adapters are responsible for producing complete UEC data,
-while manual runs still work (with documented limitations).
+- ``metadata.synthesized_from_run=True`` marks as synthesized
+- ``metadata.manual_run=True`` marks as manual (if no adapter)
+- ``program.structural_hash`` is None (engine cannot compute)
+- ``program.parametric_hash`` is None (engine cannot compute)
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.artifacts import find_artifact, load_json_artifact
-from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.protocols import ObjectStoreProtocol
-from devqubit_engine.uec.calibration import DeviceCalibration
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.uec.envelope import ExecutionEnvelope
-from devqubit_engine.uec.execution import ExecutionSnapshot
-from devqubit_engine.uec.producer import ProducerInfo
-from devqubit_engine.uec.program import ProgramArtifact, ProgramSnapshot
-from devqubit_engine.uec.result import (
+from devqubit_engine.uec.errors import VOLATILE_EXECUTE_KEYS
+from devqubit_engine.uec.models.calibration import DeviceCalibration
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.uec.models.envelope import ExecutionEnvelope
+from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
+from devqubit_engine.uec.models.program import ProgramArtifact, ProgramSnapshot
+from devqubit_engine.uec.models.result import (
     CountsFormat,
     ResultError,
     ResultItem,
     ResultSnapshot,
 )
-from devqubit_engine.uec.types import ArtifactRef, ProgramRole
+from devqubit_engine.uec.models.types import ArtifactRef, ProgramRole
+from devqubit_engine.utils.common import is_manual_run_record
+
+
+if TYPE_CHECKING:
+    from devqubit_engine.core.record import RunRecord
+    from devqubit_engine.storage.protocols import ObjectStoreProtocol
 
 
 logger = logging.getLogger(__name__)
 
 
-class MissingEnvelopeError(Exception):
-    """
-    Raised when adapter run is missing required envelope.
-
-    Adapter runs MUST have an envelope artifact. If missing, this indicates
-    an adapter integration error that should be fixed in the adapter, not
-    papered over by the engine.
-    """
-
-    def __init__(self, run_id: str, adapter: str):
-        self.run_id = run_id
-        self.adapter = adapter
-        super().__init__(
-            f"Adapter run '{run_id}' (adapter={adapter}) is missing envelope. "
-            f"This is an adapter integration error - adapters must create envelope."
-        )
-
-
-VOLATILE_EXECUTE_KEYS = frozenset(
-    {
-        "submitted_at",
-        "job_id",
-        "job_ids",
-        "completed_at",
-        "session_id",
-        "task_id",
-        "task_ids",
-    }
-)
-
-
-def load_envelope(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-    *,
-    include_invalid: bool = False,
-) -> ExecutionEnvelope | None:
-    """
-    Load ExecutionEnvelope from stored artifact.
-
-    This function attempts to load an existing envelope artifact from
-    the run record. It prefers valid envelopes but can optionally
-    return invalid ones for debugging purposes.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to load envelope from.
-    store : ObjectStoreProtocol
-        Object store for artifact retrieval.
-    include_invalid : bool, default=False
-        If True, also return invalid envelopes (kind contains "invalid").
-        If False, only return valid envelopes.
-
-    Returns
-    -------
-    ExecutionEnvelope or None
-        Loaded envelope if found, None otherwise.
-
-    Notes
-    -----
-    Selection priority:
-    1. role="envelope", kind="devqubit.envelope.json" (valid)
-    2. role="envelope", kind="devqubit.envelope.invalid.json" (if include_invalid)
-    """
-    # Search for envelope artifact with exact kind match
-    valid_artifact = None
-    invalid_artifact = None
-
-    for artifact in record.artifacts:
-        if artifact.role != "envelope":
-            continue
-
-        # Exact match for valid envelope
-        if artifact.kind == "devqubit.envelope.json":
-            valid_artifact = artifact
-            break  # Found valid, stop searching
-
-        # Track invalid envelope as fallback
-        if artifact.kind == "devqubit.envelope.invalid.json":
-            invalid_artifact = artifact
-
-    # Use valid envelope if found
-    if valid_artifact is not None:
-        target_artifact = valid_artifact
-    elif include_invalid and invalid_artifact is not None:
-        target_artifact = invalid_artifact
-    else:
-        logger.debug("No envelope artifact found for run %s", record.run_id)
-        return None
-
-    # Load and parse envelope
-    try:
-        envelope_data = load_json_artifact(target_artifact, store)
-        if not isinstance(envelope_data, dict):
-            logger.warning(
-                "Envelope artifact is not a dict for run %s",
-                record.run_id,
-            )
-            return None
-
-        envelope = ExecutionEnvelope.from_dict(envelope_data)
-        logger.debug(
-            "Loaded envelope from artifact: run=%s, envelope_id=%s",
-            record.run_id,
-            envelope.envelope_id,
-        )
-        return envelope
-
-    except Exception as e:
-        logger.warning(
-            "Failed to parse envelope for run %s: %s",
-            record.run_id,
-            e,
-        )
-        return None
-
-
-def _build_producer_from_run(record: RunRecord) -> ProducerInfo:
+def _build_producer(record: "RunRecord") -> ProducerInfo:
     """
     Build ProducerInfo from RunRecord.
 
@@ -202,7 +87,7 @@ def _build_producer_from_run(record: RunRecord) -> ProducerInfo:
     )
 
 
-def _build_device_from_run(record: RunRecord) -> DeviceSnapshot | None:
+def _build_device(record: "RunRecord") -> DeviceSnapshot | None:
     """
     Build DeviceSnapshot from RunRecord.
 
@@ -255,7 +140,7 @@ def _build_device_from_run(record: RunRecord) -> DeviceSnapshot | None:
     )
 
 
-def _build_execution_from_run(record: RunRecord) -> ExecutionSnapshot | None:
+def _build_execution(record: "RunRecord") -> ExecutionSnapshot | None:
     """
     Build ExecutionSnapshot from RunRecord.
 
@@ -302,7 +187,7 @@ def _build_execution_from_run(record: RunRecord) -> ExecutionSnapshot | None:
     )
 
 
-def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
+def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
     """
     Build ProgramSnapshot from RunRecord and artifacts.
 
@@ -404,9 +289,9 @@ def _build_program_from_run(record: RunRecord) -> ProgramSnapshot | None:
     )
 
 
-def _build_result_from_run(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
+def _build_result(
+    record: "RunRecord",
+    store: "ObjectStoreProtocol",
 ) -> ResultSnapshot:
     """
     Build ResultSnapshot from RunRecord and artifacts.
@@ -429,6 +314,9 @@ def _build_result_from_run(
     preserved in the result. Otherwise, canonical format (cbit0_right)
     is assumed and marked appropriately in metadata.
     """
+    # Lazy import to avoid circular dependencies
+    from devqubit_engine.utils.artifacts import find_artifact, load_artifact_json
+
     status = record.record.get("info", {}).get("status", "RUNNING")
 
     # Determine success and normalized status
@@ -470,7 +358,7 @@ def _build_result_from_run(
 
     if counts_artifact:
         try:
-            payload = load_json_artifact(counts_artifact, store)
+            payload = load_artifact_json(counts_artifact, store)
             if isinstance(payload, dict):
                 # Check if payload includes counts_format metadata
                 payload_format = payload.get("counts_format")
@@ -543,10 +431,6 @@ def _build_result_from_run(
                                 "transformed": payload_format.get("transformed", False),
                             }
                         else:
-                            # Assume canonical format for manual runs without
-                            # explicit format metadata. This is a best-effort
-                            # assumption - if the actual format differs, TVD
-                            # results may be incorrect.
                             format_was_assumed = True
                             format_dict = CountsFormat(
                                 source_sdk=record.record.get("adapter", "manual"),
@@ -587,12 +471,12 @@ def _build_result_from_run(
     )
 
 
-def build_envelope_from_run(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
+def synthesize_envelope(
+    record: "RunRecord",
+    store: "ObjectStoreProtocol",
 ) -> ExecutionEnvelope:
     """
-    Build ExecutionEnvelope from RunRecord and artifacts.
+    Synthesize ExecutionEnvelope from RunRecord and artifacts.
 
     This function synthesizes an envelope from data when no envelope
     artifact exists. Intended for **manual runs only** - adapter runs
@@ -614,28 +498,27 @@ def build_envelope_from_run(
     -----
     Synthesized envelopes have limitations:
 
-    - ``metadata.synthesized_from_run=True`` - marks as synthesized
-    - ``metadata.manual_run=True`` - marks as manual (if no adapter)
-    - ``program.structural_hash`` - None (engine cannot compute)
-    - ``program.parametric_hash`` - None (engine cannot compute)
+    - ``metadata.synthesized_from_run=True`` marks as synthesized
+    - ``metadata.manual_run=True`` marks as manual (if no adapter)
+    - ``program.structural_hash`` is None (engine cannot compute)
+    - ``program.parametric_hash`` is None (engine cannot compute)
 
     Compare operations will report "hash unavailable" for these runs.
 
     Examples
     --------
-    >>> # Direct usage for manual runs
-    >>> envelope = build_envelope_from_run(record, store)
+    >>> envelope = synthesize_envelope(record, store)
     >>> envelope.metadata.get("synthesized_from_run")
     True
     >>> envelope.program.structural_hash  # None for manual runs
     """
-    producer = _build_producer_from_run(record)
-    device = _build_device_from_run(record)
-    execution = _build_execution_from_run(record)
-    program = _build_program_from_run(record)
-    result = _build_result_from_run(record, store)
+    producer = _build_producer(record)
+    device = _build_device(record)
+    execution = _build_execution(record)
+    program = _build_program(record)
+    result = _build_result(record, store)
 
-    is_manual = _is_manual_run(record)
+    is_manual = is_manual_run_record(record.record)
 
     metadata: dict[str, Any] = {
         "synthesized_from_run": True,
@@ -664,7 +547,7 @@ def build_envelope_from_run(
     )
 
     logger.debug(
-        "Built envelope from run: run=%s, envelope_id=%s, manual=%s",
+        "Synthesized envelope from run: run=%s, envelope_id=%s, manual=%s",
         record.run_id,
         envelope.envelope_id,
         is_manual,
@@ -673,176 +556,5 @@ def build_envelope_from_run(
     return envelope
 
 
-def _is_manual_run(record: RunRecord) -> bool:
-    """
-    Check if run is a manual run (no adapter).
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to check.
-
-    Returns
-    -------
-    bool
-        True if manual run, False if adapter run.
-    """
-    adapter = record.record.get("adapter")
-    if not adapter or adapter == "" or adapter == "manual":
-        return True
-    return False
-
-
-def resolve_envelope(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-    *,
-    include_invalid: bool = False,
-) -> ExecutionEnvelope:
-    """
-    Resolve ExecutionEnvelope for a run (UEC-first with strict contract).
-
-    This is the **primary entry point** for obtaining envelope data.
-    All compare/diff/verify operations should use this function rather
-    than directly accessing RunRecord fields or artifacts.
-
-    Strategy
-    --------
-    1. Try to load existing envelope artifact (UEC-first)
-    2. If not found:
-       - **Adapter run**: Raise MissingEnvelopeError (adapters MUST create envelope)
-       - **Manual run**: Synthesize from RunRecord and artifacts
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to resolve envelope for.
-    store : ObjectStoreProtocol
-        Object store for artifact retrieval.
-    include_invalid : bool, default=False
-        If True, include invalid envelopes in search.
-
-    Returns
-    -------
-    ExecutionEnvelope
-        Resolved envelope.
-
-    Raises
-    ------
-    MissingEnvelopeError
-        If adapter run is missing envelope. This is always an adapter
-        integration error - adapters are required to create envelopes.
-    """
-    # Try to load existing envelope
-    envelope = load_envelope(
-        record,
-        store,
-        include_invalid=include_invalid,
-    )
-
-    if envelope is not None:
-        return envelope
-
-    # No envelope found - check if this is allowed
-    is_manual = _is_manual_run(record)
-    adapter = record.record.get("adapter", "manual")
-
-    if not is_manual:
-        # Adapter run without envelope is ALWAYS an error
-        # Adapters must create envelopes - no exceptions, no fallbacks
-        raise MissingEnvelopeError(record.run_id, str(adapter))
-
-    # Build envelope for manual run only
-    return build_envelope_from_run(record, store)
-
-
-def get_counts_from_envelope(
-    envelope: ExecutionEnvelope,
-    *,
-    item_index: int = 0,
-) -> dict[str, int] | None:
-    """
-    Extract measurement counts from envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Envelope to extract counts from.
-    item_index : int, default=0
-        Index of result item (for batch executions).
-
-    Returns
-    -------
-    dict or None
-        Counts as {bitstring: count}, or None if not available.
-
-    Examples
-    --------
-    >>> envelope = resolve_envelope(record, store)
-    >>> counts = get_counts_from_envelope(envelope)
-    >>> if counts:
-    ...     print(f"Got {sum(counts.values())} total shots")
-    """
-    if not envelope.result.items:
-        return None
-
-    if item_index >= len(envelope.result.items):
-        return None
-
-    item = envelope.result.items[item_index]
-    if not item.counts:
-        return None
-
-    counts_data = item.counts.get("counts")
-    if isinstance(counts_data, dict):
-        return {str(k): int(v) for k, v in counts_data.items()}
-
-    return None
-
-
-def get_shots_from_envelope(envelope: ExecutionEnvelope) -> int | None:
-    """
-    Extract shot count from envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Envelope to extract shots from.
-
-    Returns
-    -------
-    int or None
-        Number of shots, or None if not available.
-    """
-    # Try execution snapshot first
-    if envelope.execution and envelope.execution.shots:
-        return envelope.execution.shots
-
-    # Fall back to counts
-    counts = get_counts_from_envelope(envelope)
-    if counts:
-        return sum(counts.values())
-
-    return None
-
-
-def get_program_hash_from_envelope(envelope: ExecutionEnvelope) -> str | None:
-    """
-    Extract structural hash from envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Envelope to extract hash from.
-
-    Returns
-    -------
-    str or None
-        Structural hash, or None if not available.
-    """
-    if envelope.program:
-        return (
-            envelope.program.structural_hash
-            or envelope.program.executed_structural_hash
-        )
-    return None
+# Alias for backward compatibility
+build_envelope_from_run = synthesize_envelope
