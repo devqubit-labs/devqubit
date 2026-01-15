@@ -8,15 +8,15 @@
 
 **Local-first experiment tracking for quantum computing.** Capture circuits, backend context, and configuration so runs are reproducible, comparable, and easy to share.
 
-> **Status:** Alpha — APIs and bundle formats may evolve in `0.x` releases.
+> **Status:** Alpha – APIs may evolve in `0.x` releases.
 
 ## Why devqubit?
 
-General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads often need *extra structure* that isn’t first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
+General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads often need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
 
 | Challenge | MLflow / W&B / DVC | devqubit |
 |-----------|-------------------|----------|
-| **Circuit artifacts** | Generic file logging | Autormatic OpenQASM 3, and SDK-native formats (first-class) |
+| **Circuit artifacts** | Generic file logging | Automatic OpenQASM 3, and SDK-native formats (first-class) |
 | **Device context** | Must be done manually | Automatic backend snapshots, calibration/noise context (first-class) |
 | **Reproducibility** | Depends on what you choose to log | Automatic program + device + execution fingerprints to detect what changed |
 | **Result comparison** | Metric/table-oriented comparisons | Distribution/structural/drift-aware diffs |
@@ -27,13 +27,13 @@ General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great fo
 
 ## Features
 
-- **Automatic circuit capture** — QPY, OpenQASM 3, and native SDK formats
-- **SDK adapters** — Qiskit, Qiskit Runtime, Amazon Braket, Cirq, PennyLane
-- **Content-addressable storage** — deduplicated artifacts with SHA-256 digests
-- **Reproducibility fingerprints** — detect changes in program, device, or configuration
-- **Run comparison** — TVD analysis, structural diff, drift detection
-- **CI/CD verification** — verify runs against baselines with configurable policies
-- **Portable bundles** — export/import runs as self-contained ZIPs
+- **Automatic circuit capture** – QPY, OpenQASM 3, and native SDK formats
+- **SDK adapters** – Qiskit, Qiskit Runtime, Amazon Braket, Cirq, PennyLane
+- **Content-addressable storage** – deduplicated artifacts with SHA-256 digests
+- **Reproducibility fingerprints** – detect changes in program, device, or configuration
+- **Run comparison** – TVD analysis, structural diff, drift detection
+- **CI/CD verification** – verify runs against baselines with configurable policies
+- **Portable bundles** – export/import runs as self-contained ZIPs
 
 ## Documentation
 
@@ -108,7 +108,7 @@ devqubit diff 01JD7X... 01JD8Y...
 Verify that a run matches an established baseline:
 
 ```python
-from devqubit import verify_against_baseline
+from devqubit import verify_baseline
 from devqubit.compare import VerifyPolicy
 
 policy = VerifyPolicy(
@@ -116,7 +116,7 @@ policy = VerifyPolicy(
     require_same_device=False,
 )
 
-result = verify_against_baseline(
+result = verify_baseline(
     candidate_run_id,
     project="vqe-hydrogen",
     policy=policy,
@@ -199,4 +199,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 – see [LICENSE](LICENSE).

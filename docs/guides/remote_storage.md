@@ -37,7 +37,7 @@ export DEVQUBIT_REGISTRY_URL="s3://my-bucket/devqubit"
 
 **Programmatic:**
 ```python
-from devqubit import create_store, create_registry
+from devqubit.storage import create_store, create_registry
 
 store = create_store("s3://my-bucket/devqubit/objects")
 registry = create_registry("s3://my-bucket/devqubit")
@@ -95,6 +95,8 @@ export AWS_DEFAULT_REGION="us-east-1"
 Use the `endpoint_url` parameter for S3-compatible services:
 
 ```python
+from devqubit.storage import create_store
+
 # MinIO
 store = create_store(
     "s3://my-bucket/devqubit/objects",
@@ -140,7 +142,7 @@ export DEVQUBIT_REGISTRY_URL="gs://my-bucket/devqubit"
 
 **Programmatic:**
 ```python
-from devqubit import create_store, create_registry
+from devqubit.storage import create_store, create_registry
 
 store = create_store("gs://my-bucket/devqubit/objects")
 registry = create_registry("gs://my-bucket/devqubit")
@@ -169,8 +171,8 @@ export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 
 Assign one of these roles to your service account or user:
 
-- `roles/storage.objectAdmin` — Full control of objects
-- `roles/storage.objectCreator` + `roles/storage.objectViewer` — Create and read objects
+- `roles/storage.objectAdmin` – Full control of objects
+- `roles/storage.objectCreator` + `roles/storage.objectViewer` – Create and read objects
 
 Or create a custom role with these permissions:
 - `storage.objects.create`
@@ -206,7 +208,7 @@ Both S3 and GCS use the same object layout:
 You can use different backends for store and registry:
 
 ```python
-from devqubit import create_store, create_registry
+from devqubit.storage import create_store, create_registry
 
 # Objects in S3, metadata locally (faster queries)
 store = create_store("s3://my-bucket/objects")
