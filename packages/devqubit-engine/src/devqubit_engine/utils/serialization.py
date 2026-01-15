@@ -14,18 +14,6 @@ Key guarantees for production use:
 - **Stable separators**: Consistent across Python versions
 - **Float normalization**: Controllable precision for reproducibility
 - **Set/frozenset handling**: Converted to sorted lists
-
-Examples
---------
-Basic serialization:
-
->>> safe_json_dumps({"b": 2, "a": 1})
-'{\\n  "a": 1,\\n  "b": 2\\n}'
-
-Canonical format for hashing:
-
->>> canonical_json_dumps({"b": 2.123456789, "a": 1})
-'{"a":1,"b":2.12345678900000}'
 """
 
 from __future__ import annotations
@@ -285,74 +273,43 @@ def _default_serializer(obj: Any) -> Any:
     return str(obj)
 
 
-def safe_json_dumps(
+def json_dumps(
     obj: Any,
     *,
-    indent: int | None = 2,
-    sort_keys: bool = True,
-) -> str:
-    """
-    Serialize to JSON with deterministic output and robust fallback.
-
-    Combines :func:`to_jsonable` conversion with ``json.dumps``,
-    providing deterministic ordering via ``sort_keys=True`` and stable
-    separators.
-
-    Parameters
-    ----------
-    obj : Any
-        Object to serialize.
-    indent : int or None, optional
-        Indentation level for pretty-printing. Default is 2.
-        Use None for compact output.
-    sort_keys : bool, optional
-        Whether to sort dictionary keys. Default is True for
-        deterministic output.
-    """
-    return json.dumps(
-        to_jsonable(obj),
-        indent=indent,
-        sort_keys=sort_keys,
-        separators=(",", ":") if indent is None else (",", ": "),
-        default=_default_serializer,
-    )
-
-
-def canonical_json_dumps(
-    obj: Any,
-    *,
+    compact: bool = False,
+    normalize_floats: bool = False,
     float_precision: int = _DEFAULT_FLOAT_PRECISION,
+    indent: int | None = None,
 ) -> str:
     """
-    Serialize to canonical JSON format suitable for hashing/fingerprinting.
-
-    Produces the most compact, deterministic JSON representation:
-
-    - No whitespace (compact)
-    - Sorted keys
-    - Normalized floats (configurable precision)
-    - Sets converted to sorted lists
+    Serialize to deterministic JSON.
 
     Parameters
     ----------
     obj : Any
         Object to serialize.
-    float_precision : int, optional
-        Number of significant digits for float normalization.
-        Default is 15 (full double precision).
-
-    Returns
-    -------
-    str
-        Canonical JSON string suitable for hashing.
+    compact : bool, default=False
+        If True, produce minimal output for hashing/fingerprinting.
+        Implies normalize_floats=True and no indentation.
+    normalize_floats : bool, default=False
+        Normalize floats to specific precision.
+    float_precision : int, default=15
+        Significant digits for float normalization.
+    indent : int or None, optional
+        Indentation. Default is 2 unless compact=True.
     """
+    if compact:
+        normalize_floats = True
+        indent = None
+
     return json.dumps(
         to_jsonable(
             obj,
-            normalize_floats=True,
+            normalize_floats=normalize_floats,
             float_precision=float_precision,
         ),
+        indent=indent,
         sort_keys=True,
-        separators=(",", ":"),  # Most compact: no spaces
+        separators=(",", ":") if indent is None else (",", ": "),
         default=_default_serializer,
     )

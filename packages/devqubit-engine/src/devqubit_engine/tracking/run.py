@@ -56,7 +56,7 @@ from devqubit_engine.uec.models.execution import ExecutionEnvelope
 from devqubit_engine.utils.common import sha256_digest, utc_now_iso
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
 from devqubit_engine.utils.qasm3 import canonicalize_qasm3, coerce_openqasm3_sources
-from devqubit_engine.utils.serialization import safe_json_dumps, to_jsonable
+from devqubit_engine.utils.serialization import json_dumps, to_jsonable
 from ulid import ULID
 
 
@@ -653,7 +653,7 @@ class Run:
         ArtifactRef
             Reference to the stored artifact.
         """
-        data = safe_json_dumps(obj).encode("utf-8")
+        data = json_dumps(obj, normalize_floats=True).encode("utf-8")
         return self.log_bytes(
             kind=kind or f"json.{name}",
             data=data,
