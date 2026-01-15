@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.local import LocalRegistry
+from devqubit_engine.storage.backends.local import LocalRegistry
 
 
 # =============================================================================
