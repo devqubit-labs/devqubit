@@ -4,21 +4,19 @@
 """
 Artifact and tag CLI commands.
 
-This module provides commands for browsing run artifacts, viewing their
-contents, and managing run tags.
-
-Command Groups
---------------
-artifacts
-    List, show, and inspect artifacts in runs.
-tag
-    Add, remove, and list tags on runs.
+Commands for browsing run artifacts, viewing their contents, and managing tags.
 """
 
 from __future__ import annotations
 
 import click
-from devqubit_engine.cli._utils import echo, print_json, print_table, root_from_ctx
+from devqubit_engine.cli._utils import (
+    echo,
+    format_artifacts_table,
+    format_counts_table,
+    print_json,
+    root_from_ctx,
+)
 
 
 def register(cli: click.Group) -> None:
@@ -27,35 +25,11 @@ def register(cli: click.Group) -> None:
     cli.add_command(tag_group)
 
 
-# =============================================================================
-# Artifacts commands
-# =============================================================================
-
-
-@click.group("artifacts")
-def artifacts_group() -> None:
-    """Browse run artifacts."""
-    pass
-
-
-@artifacts_group.command("list")
-@click.argument("run_id")
-@click.option(
-    "--role", "-r", default=None, help="Filter by role (program, results, etc)."
-)
-@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
-@click.pass_context
-def artifacts_list(
-    ctx: click.Context,
-    run_id: str,
-    role: str | None,
-    fmt: str,
-) -> None:
-    """List artifacts in a run."""
-    from devqubit_engine.artifacts import list_artifacts
-    from devqubit_engine.core.config import Config
+def _load_run(ctx: click.Context, run_id: str):
+    """Load run record and storage components."""
+    from devqubit_engine.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -67,22 +41,48 @@ def artifacts_list(
     except RunNotFoundError as e:
         raise click.ClickException(f"Run not found: {run_id}") from e
 
+    return run_record, registry, store
+
+
+def _parse_selector(selector: str) -> str | int:
+    """Parse selector string, converting to int if numeric."""
+    try:
+        return int(selector)
+    except ValueError:
+        return selector
+
+
+# =============================================================================
+# Artifacts commands
+# =============================================================================
+
+
+@click.group("artifacts")
+def artifacts_group() -> None:
+    """Browse run artifacts."""
+
+
+@artifacts_group.command("list")
+@click.argument("run_id")
+@click.option("--role", "-r", help="Filter by role (program, results, etc).")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.pass_context
+def artifacts_list(
+    ctx: click.Context,
+    run_id: str,
+    role: str | None,
+    fmt: str,
+) -> None:
+    """List artifacts in a run."""
+    from devqubit_engine.storage.artifacts.lookup import list_artifacts
+
+    run_record, _, store = _load_run(ctx, run_id)
     artifacts = list_artifacts(run_record, role=role, store=store)
 
     if fmt == "json":
         print_json([a.to_dict() for a in artifacts])
-        return
-
-    if not artifacts:
-        echo("No artifacts found.")
-        return
-
-    headers = ["#", "Role", "Kind", "Size"]
-    rows = [
-        [a.index, a.role, a.kind[:30], f"{a.size:,}" if a.size else "-"]
-        for a in artifacts
-    ]
-    print_table(headers, rows, f"Artifacts ({len(artifacts)})")
+    else:
+        echo(format_artifacts_table(artifacts))
 
 
 @artifacts_group.command("show")
@@ -101,36 +101,21 @@ def artifacts_show(
 
     SELECTOR can be: index (0, 1, ...), kind substring, or role:kind pattern.
 
+    \b
     Examples:
         devqubit artifacts show abc123 0
         devqubit artifacts show abc123 counts
         devqubit artifacts show abc123 program:openqasm3
         devqubit artifacts show abc123 results --raw > output.json
     """
-    from devqubit_engine.artifacts import (
+    from devqubit_engine.storage.artifacts.lookup import (
         get_artifact,
         get_artifact_bytes,
         get_artifact_text,
     )
-    from devqubit_engine.core.config import Config
-    from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
-    root = root_from_ctx(ctx)
-    config = Config(root_dir=root)
-    registry = create_registry(config=config)
-    store = create_store(config=config)
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
-    # Parse selector as int if possible
-    try:
-        selector_val: str | int = int(selector)
-    except ValueError:
-        selector_val = selector
+    run_record, _, store = _load_run(ctx, run_id)
+    selector_val = _parse_selector(selector)
 
     art = get_artifact(run_record, selector_val)
     if not art:
@@ -165,22 +150,11 @@ def artifacts_counts(
     fmt: str,
 ) -> None:
     """Show measurement counts from a run."""
-    from devqubit_engine.artifacts import format_counts_table, get_counts
-    from devqubit_engine.core.config import Config
-    from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
+    from devqubit_engine.storage.artifacts.counts import get_counts
 
-    root = root_from_ctx(ctx)
-    config = Config(root_dir=root)
-    registry = create_registry(config=config)
-    store = create_store(config=config)
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
+    run_record, _, store = _load_run(ctx, run_id)
     counts = get_counts(run_record, store)
+
     if not counts:
         raise click.ClickException("No counts found in run.")
 
@@ -193,9 +167,8 @@ def artifacts_counts(
                 "probabilities": counts.probabilities,
             }
         )
-        return
-
-    echo(format_counts_table(counts, top_k=top))
+    else:
+        echo(format_counts_table(counts, top_k=top))
 
 
 # =============================================================================
@@ -206,7 +179,6 @@ def artifacts_counts(
 @click.group("tag")
 def tag_group() -> None:
     """Manage run tags."""
-    pass
 
 
 @tag_group.command("add")
@@ -217,26 +189,14 @@ def tag_add(ctx: click.Context, run_id: str, tags: tuple[str, ...]) -> None:
     """
     Add tags to a run.
 
-    Tags can be specified as key=value pairs or just keys (value defaults to "true").
+    Tags can be key=value pairs or just keys (value defaults to "true").
 
-
+    \b
     Examples:
         devqubit tag add abc123 experiment=bell
         devqubit tag add abc123 validated production
     """
-    from devqubit_engine.core.config import Config
-    from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
-
-    root = root_from_ctx(ctx)
-    config = Config(root_dir=root)
-    registry = create_registry(config=config)
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
+    run_record, registry, _ = _load_run(ctx, run_id)
     record = run_record.record
     run_tags = record.get("data", {}).get("tags", {})
 
@@ -260,26 +220,15 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
     """
     Remove tags from a run.
 
-
+    \b
     Examples:
         devqubit tag remove abc123 experiment
         devqubit tag remove abc123 temp debug
     """
-    from devqubit_engine.core.config import Config
-    from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
-
-    root = root_from_ctx(ctx)
-    config = Config(root_dir=root)
-    registry = create_registry(config=config)
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
+    run_record, registry, _ = _load_run(ctx, run_id)
     record = run_record.record
     run_tags = record.get("data", {}).get("tags", {})
+
     removed = sum(1 for key in keys if run_tags.pop(key, None) is not None)
 
     record.setdefault("data", {})["tags"] = run_tags
@@ -292,19 +241,7 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
 @click.pass_context
 def tag_list(ctx: click.Context, run_id: str) -> None:
     """List tags on a run."""
-    from devqubit_engine.core.config import Config
-    from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
-
-    root = root_from_ctx(ctx)
-    config = Config(root_dir=root)
-    registry = create_registry(config=config)
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
+    run_record, _, _ = _load_run(ctx, run_id)
     run_tags = run_record.record.get("data", {}).get("tags", {})
 
     if not run_tags:

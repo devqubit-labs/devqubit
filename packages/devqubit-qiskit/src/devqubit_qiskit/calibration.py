@@ -17,12 +17,12 @@ from datetime import datetime
 from statistics import median
 from typing import Any
 
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 from devqubit_qiskit.utils import (
     as_int_tuple,
     convert_duration_to_ns,

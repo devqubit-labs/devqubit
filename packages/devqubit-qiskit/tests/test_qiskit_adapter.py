@@ -7,7 +7,7 @@ import json
 import logging
 from unittest.mock import patch
 
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 from devqubit_qiskit.adapter import (
     QiskitAdapter,
     TrackedBackend,

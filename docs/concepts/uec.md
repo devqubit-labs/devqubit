@@ -135,7 +135,7 @@ The adapter creates the ExecutionEnvelope and logs it as an artifact. Summary in
 
 ```python
 import json
-from devqubit import create_store, create_registry
+from devqubit.storage import create_store, create_registry
 
 store = create_store()
 registry = create_registry()

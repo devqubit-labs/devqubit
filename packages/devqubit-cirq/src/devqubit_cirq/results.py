@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 
 # Use CountsFormat from UEC for format metadata
-from devqubit_engine.uec.result import CountsFormat
+from devqubit_engine.uec.models.result import CountsFormat
 
 
 def _get_cirq_counts_format() -> dict[str, Any]:

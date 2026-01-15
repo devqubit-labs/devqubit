@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 from devqubit_qiskit_runtime.adapter import QiskitRuntimeAdapter
 
 

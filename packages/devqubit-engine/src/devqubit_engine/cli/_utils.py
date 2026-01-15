@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import click
+from devqubit_engine.storage.artifacts.counts import CountsInfo
+from devqubit_engine.storage.artifacts.lookup import ArtifactInfo
 
 
 def echo(msg: str, *, err: bool = False) -> None:
@@ -106,3 +108,43 @@ def root_from_ctx(ctx: click.Context) -> Path:
     root: Path = ctx.obj["root"]
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:
+    """Format measurement counts as ASCII table."""
+    lines = [
+        f"Total shots: {counts.total_shots:,}",
+        f"Unique outcomes: {counts.num_outcomes}",
+        "",
+        f"{'Outcome':<20} {'Count':>10} {'Prob':>10}",
+        "-" * 42,
+    ]
+
+    for bitstring, count, prob in counts.top_k(top_k):
+        lines.append(f"{bitstring:<20} {count:>10,} {prob:>10.4f}")
+
+    if counts.num_outcomes > top_k:
+        lines.append(f"... and {counts.num_outcomes - top_k} more outcomes")
+
+    return "\n".join(lines)
+
+
+def format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:
+    """Format artifact list as ASCII table."""
+    if not artifacts:
+        return "No artifacts found."
+
+    lines = [
+        f"{'#':<4} {'Role':<16} {'Kind':<30} {'Size':>10}",
+        "-" * 62,
+    ]
+
+    for a in artifacts:
+        size_str = f"{a.size:,}" if a.size else "-"
+        kind_display = a.kind[:30] if len(a.kind) <= 30 else a.kind[:27] + "..."
+        lines.append(f"{a.index:<4} {a.role:<16} {kind_display:<30} {size_str:>10}")
+
+    lines.append("")
+    lines.append(f"Total: {len(artifacts)} artifact(s)")
+
+    return "\n".join(lines)

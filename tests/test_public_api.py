@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-Tests for devqubit public Python API.
-
-Tests the user-facing API exposed through the devqubit package.
-"""
+"""Tests for devqubit public Python API."""
 
 from __future__ import annotations
 
@@ -13,37 +9,36 @@ from pathlib import Path
 from typing import Callable
 
 
-class TestModuleExports:
+class TestTopLevelExports:
     """Tests that public API exports are correct."""
 
-    def test_top_level_exports(self) -> None:
-        """All documented exports are accessible."""
+    def test_core_tracking(self) -> None:
+        """Core tracking API is accessible."""
         import devqubit
 
-        # Core tracking
         assert hasattr(devqubit, "track")
         assert hasattr(devqubit, "Run")
+        assert hasattr(devqubit, "wrap_backend")
 
-        # Models
-        assert hasattr(devqubit, "RunRecord")
-        assert hasattr(devqubit, "ArtifactRef")
+    def test_comparison(self) -> None:
+        """Comparison API is accessible."""
+        import devqubit
 
-        # Comparison
         assert hasattr(devqubit, "diff")
-        assert hasattr(devqubit, "diff_runs")
-        assert hasattr(devqubit, "verify")
-        assert hasattr(devqubit, "verify_against_baseline")
+        assert hasattr(devqubit, "verify_baseline")
 
-        # Bundle
+    def test_bundle(self) -> None:
+        """Bundle API is accessible."""
+        import devqubit
+
         assert hasattr(devqubit, "pack_run")
         assert hasattr(devqubit, "unpack_bundle")
         assert hasattr(devqubit, "Bundle")
 
-        # Storage
-        assert hasattr(devqubit, "create_store")
-        assert hasattr(devqubit, "create_registry")
+    def test_config(self) -> None:
+        """Config API is accessible."""
+        import devqubit
 
-        # Config
         assert hasattr(devqubit, "Config")
         assert hasattr(devqubit, "get_config")
         assert hasattr(devqubit, "set_config")
@@ -54,6 +49,18 @@ class TestModuleExports:
 
         assert hasattr(devqubit, "__version__")
         assert isinstance(devqubit.__version__, str)
+
+    def test_low_level_not_in_top_level(self) -> None:
+        """Low-level APIs moved to submodules."""
+        import devqubit
+
+        # These should NOT be in top-level __all__
+        assert "RunRecord" not in devqubit.__all__
+        assert "ArtifactRef" not in devqubit.__all__
+        assert "create_store" not in devqubit.__all__
+        assert "create_registry" not in devqubit.__all__
+        assert "verify_against_baseline" not in devqubit.__all__
+        assert "diff_runs" not in devqubit.__all__
 
 
 class TestTracking:
@@ -92,7 +99,8 @@ class TestComparison:
 
     def test_diff_runs(self, workspace: Path, make_run: Callable) -> None:
         """diff() compares two runs."""
-        from devqubit import Config, create_registry, create_store, diff, set_config
+        from devqubit import Config, diff, set_config
+        from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
         set_config(config)
@@ -131,13 +139,8 @@ class TestBundle:
         self, workspace: Path, make_run: Callable, tmp_path: Path
     ) -> None:
         """pack_run and unpack_bundle work correctly."""
-        from devqubit import (
-            Config,
-            create_registry,
-            create_store,
-            pack_run,
-            set_config,
-        )
+        from devqubit import Config, pack_run, set_config
+        from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
         set_config(config)
@@ -158,14 +161,8 @@ class TestBundle:
         self, workspace: Path, make_run: Callable, tmp_path: Path
     ) -> None:
         """Bundle can read packed runs."""
-        from devqubit import (
-            Bundle,
-            Config,
-            create_registry,
-            create_store,
-            pack_run,
-            set_config,
-        )
+        from devqubit import Bundle, Config, pack_run, set_config
+        from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
         set_config(config)
@@ -209,12 +206,185 @@ class TestConfig:
         assert retrieved.root_dir == workspace
 
 
-class TestStorage:
-    """Tests for storage factory API."""
+# =============================================================================
+# SUBMODULES
+# =============================================================================
+
+
+class TestRunsSubmodule:
+    """Tests for devqubit.runs submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import runs
+
+        # Run loading
+        assert hasattr(runs, "load_run")
+        assert hasattr(runs, "load_run_or_none")
+        assert hasattr(runs, "run_exists")
+        # Listing/searching
+        assert hasattr(runs, "list_runs")
+        assert hasattr(runs, "search_runs")
+        assert hasattr(runs, "count_runs")
+        # Projects/groups
+        assert hasattr(runs, "list_projects")
+        assert hasattr(runs, "list_groups")
+        # Baselines
+        assert hasattr(runs, "get_baseline")
+        assert hasattr(runs, "set_baseline")
+        assert hasattr(runs, "clear_baseline")
+
+    def test_list_runs(self, workspace: Path, make_run: Callable) -> None:
+        """list_runs returns runs."""
+        from devqubit import Config, set_config
+        from devqubit.runs import list_runs
+
+        set_config(Config(root_dir=workspace))
+
+        make_run(project="test_proj")
+        make_run(project="test_proj")
+        make_run(project="other_proj")
+
+        all_runs = list_runs()
+        assert len(all_runs) >= 3
+
+        filtered = list_runs(project="test_proj")
+        assert len(filtered) == 2
+
+    def test_baseline_management(self, workspace: Path, make_run: Callable) -> None:
+        """Baseline get/set/clear work."""
+        from devqubit import Config, set_config
+        from devqubit.runs import clear_baseline, get_baseline, set_baseline
+
+        set_config(Config(root_dir=workspace))
+
+        run = make_run(project="baseline_test")
+
+        # Initially no baseline
+        assert get_baseline("baseline_test") is None
+
+        # Set baseline
+        set_baseline("baseline_test", run.run_id)
+        baseline = get_baseline("baseline_test")
+        assert baseline is not None
+        assert baseline["run_id"] == run.run_id
+
+        # Clear baseline
+        assert clear_baseline("baseline_test") is True
+        assert get_baseline("baseline_test") is None
+
+
+class TestCompareSubmodule:
+    """Tests for devqubit.compare submodule."""
+
+    def test_result_types(self) -> None:
+        """Result types are available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "ComparisonResult")
+        assert hasattr(compare, "VerifyResult")
+        assert hasattr(compare, "VerifyPolicy")
+
+    def test_program_match_mode(self) -> None:
+        """ProgramMatchMode is available."""
+        from devqubit.compare import ProgramMatchMode
+
+        assert hasattr(ProgramMatchMode, "EXACT")
+        assert hasattr(ProgramMatchMode, "STRUCTURAL")
+
+    def test_verdict_types(self) -> None:
+        """Verdict types are available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "Verdict")
+        assert hasattr(compare, "VerdictCategory")
+
+    def test_drift_types(self) -> None:
+        """Drift analysis types are available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "DriftResult")
+        assert hasattr(compare, "DriftThresholds")
+
+    def test_format_options(self) -> None:
+        """FormatOptions is available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "FormatOptions")
+
+
+class TestErrorsSubmodule:
+    """Tests for devqubit.errors submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exceptions are available."""
+        from devqubit import errors
+
+        # Base
+        assert hasattr(errors, "DevQubitError")
+        # Storage
+        assert hasattr(errors, "StorageError")
+        assert hasattr(errors, "ObjectNotFoundError")
+        assert hasattr(errors, "RunNotFoundError")
+        # Query
+        assert hasattr(errors, "QueryParseError")
+        # Envelope
+        assert hasattr(errors, "MissingEnvelopeError")
+        assert hasattr(errors, "EnvelopeValidationError")
+
+    def test_catch_run_not_found(self, workspace: Path) -> None:
+        """RunNotFoundError can be caught."""
+        import pytest
+
+        from devqubit import Config, set_config
+        from devqubit.errors import RunNotFoundError
+        from devqubit.runs import load_run
+
+        set_config(Config(root_dir=workspace))
+
+        with pytest.raises(RunNotFoundError):
+            load_run("nonexistent_run_id")
+
+
+class TestAdaptersSubmodule:
+    """Tests for devqubit.adapters submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import adapters
+
+        assert hasattr(adapters, "AdapterProtocol")
+        assert hasattr(adapters, "list_available_adapters")
+        assert hasattr(adapters, "adapter_load_errors")
+        assert hasattr(adapters, "get_adapter_by_name")
+
+    def test_list_adapters(self) -> None:
+        """list_available_adapters returns a list."""
+        from devqubit.adapters import list_available_adapters
+
+        result = list_available_adapters()
+        assert isinstance(result, list)
+
+
+class TestStorageSubmodule:
+    """Tests for devqubit.storage submodule."""
+
+    def test_exports(self) -> None:
+        """All expected exports are available."""
+        from devqubit import storage
+
+        assert hasattr(storage, "create_store")
+        assert hasattr(storage, "create_registry")
+        assert hasattr(storage, "ObjectStoreProtocol")
+        assert hasattr(storage, "RegistryProtocol")
+        assert hasattr(storage, "ArtifactRef")
+        assert hasattr(storage, "RunSummary")
+        assert hasattr(storage, "BaselineInfo")
 
     def test_create_store(self, workspace: Path) -> None:
         """create_store creates a working store."""
-        from devqubit import Config, create_store
+        from devqubit import Config
+        from devqubit.storage import create_store
 
         config = Config(root_dir=workspace)
         store = create_store(config=config)
@@ -225,7 +395,8 @@ class TestStorage:
 
     def test_create_registry(self, workspace: Path) -> None:
         """create_registry creates a working registry."""
-        from devqubit import Config, create_registry
+        from devqubit import Config
+        from devqubit.storage import create_registry
 
         config = Config(root_dir=workspace)
         registry = create_registry(config=config)
@@ -234,11 +405,6 @@ class TestStorage:
         assert hasattr(registry, "load")
         assert hasattr(registry, "exists")
         assert hasattr(registry, "list_runs")
-
-
-# =============================================================================
-# SUBMODULES
-# =============================================================================
 
 
 class TestBundleSubmodule:
@@ -265,24 +431,6 @@ class TestCiSubmodule:
         assert hasattr(ci, "write_junit")
         assert hasattr(ci, "result_to_junit")
         assert hasattr(ci, "github_annotations")
-
-    def test_github_annotations_callable(self) -> None:
-        """github_annotations is callable."""
-        from devqubit import ci
-
-        assert callable(ci.github_annotations)
-
-
-class TestCompareSubmodule:
-    """Tests for devqubit.compare submodule."""
-
-    def test_exports(self) -> None:
-        """All expected exports are available."""
-        from devqubit import compare
-
-        assert hasattr(compare, "ComparisonResult")
-        assert hasattr(compare, "VerifyResult")
-        assert hasattr(compare, "VerifyPolicy")
 
 
 class TestConfigSubmodule:

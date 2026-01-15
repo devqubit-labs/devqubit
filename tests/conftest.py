@@ -1,12 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-Test fixtures for devqubit public API and CLI tests.
-
-Provides isolated workspace fixtures for testing without affecting
-real user data.
-"""
+"""Test fixtures for devqubit public API and CLI tests."""
 
 from __future__ import annotations
 
@@ -18,11 +13,11 @@ from typing import Any, Callable
 import pytest
 from click.testing import CliRunner
 from devqubit_engine.cli import cli
-from devqubit_engine.core.config import Config
-from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.local import LocalRegistry, LocalStore
-from devqubit_engine.uec.types import ArtifactRef
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.config import Config
+from devqubit_engine.storage.backends.local import LocalRegistry, LocalStore
+from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.utils.common import utc_now_iso
 
 
 @pytest.fixture

@@ -21,7 +21,7 @@ import logging
 import re
 from typing import Any, Mapping, Sequence
 
-from devqubit_engine.utils.hashing import sha256_bytes
+from devqubit_engine.utils.common import sha256_bytes
 
 
 logger = logging.getLogger(__name__)

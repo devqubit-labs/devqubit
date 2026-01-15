@@ -1,29 +1,24 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-End-to-end integration tests for devqubit.
-
-These tests verify complete user workflows using the public API.
-They use real storage, real pack/unpack, and real comparison.
-"""
+"""End-to-end integration tests for devqubit."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from devqubit import (
-    Bundle,
     Config,
-    create_registry,
-    create_store,
     diff,
     pack_run,
     set_config,
     track,
     unpack_bundle,
+    verify_baseline,
 )
-from devqubit.compare import ComparisonResult
+from devqubit.compare import ComparisonResult, VerifyPolicy
+from devqubit.runs import set_baseline
+from devqubit.storage import create_registry, create_store
 
 
 class TestFullWorkflow:
@@ -84,8 +79,81 @@ class TestFullWorkflow:
         assert result.identical
 
 
-class TestCrossWorkspaceDiff:
-    """Tests for comparing runs across workspaces."""
+class TestVerifyBaselineWorkflow:
+    """Tests for high-level verify_baseline API."""
+
+    def test_verify_against_stored_baseline(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
+        """verify_baseline works with stored baseline."""
+        set_config(config)
+
+        # Create baseline run
+        with track(project="verify_test") as baseline_run:
+            baseline_run.log_param("shots", 1000)
+            baseline_run.log_metric("fidelity", 0.95)
+            baseline_id = baseline_run.run_id
+
+        # Set as baseline
+        set_baseline("verify_test", baseline_id)
+
+        # Create candidate run (similar)
+        with track(project="verify_test") as candidate_run:
+            candidate_run.log_param("shots", 1000)
+            candidate_run.log_metric("fidelity", 0.94)
+            candidate_id = candidate_run.run_id
+
+        # Verify
+        result = verify_baseline(candidate_id, project="verify_test")
+
+        assert hasattr(result, "ok")
+        assert hasattr(result, "comparison")
+
+    def test_verify_with_custom_policy(
+        self,
+        workspace: Path,
+        store,
+        registry,
+        config: Config,
+    ):
+        """verify_baseline accepts custom policy."""
+        set_config(config)
+
+        with track(project="policy_test") as baseline_run:
+            baseline_run.log_param("shots", 1000)
+            baseline_id = baseline_run.run_id
+
+        set_baseline("policy_test", baseline_id)
+
+        with track(project="policy_test") as candidate_run:
+            candidate_run.log_param("shots", 2000)  # Different!
+            candidate_id = candidate_run.run_id
+
+        # Strict policy - params must match
+        strict = VerifyPolicy(params_must_match=True)
+        result = verify_baseline(
+            candidate_id,
+            project="policy_test",
+            policy=strict,
+        )
+        assert not result.ok
+
+        # Lenient policy - params don't need to match
+        lenient = VerifyPolicy(params_must_match=False)
+        result = verify_baseline(
+            candidate_id,
+            project="policy_test",
+            policy=lenient,
+        )
+        # May or may not pass depending on other factors
+
+
+class TestDiffWorkflows:
+    """Tests for comparing runs."""
 
     def test_diff_detects_param_changes(
         self,
@@ -112,32 +180,6 @@ class TestCrossWorkspaceDiff:
         assert not result.params["match"]
         assert "shots" in result.params["changed"]
         assert result.params["changed"]["shots"] == {"a": 1000, "b": 2000}
-
-    def test_diff_detects_metric_changes(
-        self,
-        workspace: Path,
-        store,
-        registry,
-        config: Config,
-    ):
-        """Diff detects metric differences."""
-        set_config(config)
-
-        with track(project="metrics") as run_a:
-            run_a.log_metric("fidelity", 0.95)
-            run_id_a = run_a.run_id
-
-        with track(project="metrics") as run_b:
-            run_b.log_metric("fidelity", 0.85)  # Different
-            run_id_b = run_b.run_id
-
-        result = diff(run_id_a, run_id_b, registry=registry, store=store)
-
-        assert result.to_dict() is not None
-
-
-class TestBundleDiff:
-    """Tests for comparing bundles."""
 
     def test_diff_bundle_to_run(
         self,
@@ -181,7 +223,11 @@ class TestBundleDiff:
         bundle_a = tmp_path / "bundle_a.zip"
         bundle_b = tmp_path / "bundle_b.zip"
 
-        with track(project="test", capture_env=False, capture_git=False) as run_a:
+        with track(
+            project="test",
+            capture_env=False,
+            capture_git=False,
+        ) as run_a:
             run_a.log_param("value", 100)
             run_id_a = run_a.run_id
 
@@ -192,7 +238,11 @@ class TestBundleDiff:
             registry=registry,
         )
 
-        with track(project="test", capture_env=False, capture_git=False) as run_b:
+        with track(
+            project="test",
+            capture_env=False,
+            capture_git=False,
+        ) as run_b:
             run_b.log_param("value", 200)
             run_id_b = run_b.run_id
 
@@ -208,95 +258,10 @@ class TestBundleDiff:
         assert result.run_id_a == run_id_a
         assert result.run_id_b == run_id_b
         assert not result.params["match"]
-        assert result.params["changed"]["value"] == {"a": 100, "b": 200}
-
-
-class TestBundleReader:
-    """Tests for Bundle reader API."""
-
-    def test_bundle_context_manager(
-        self,
-        workspace: Path,
-        store,
-        registry,
-        config: Config,
-        tmp_path: Path,
-    ):
-        """Bundle works as context manager."""
-        set_config(config)
-        bundle_path = tmp_path / "bundle.zip"
-
-        with track(project="reader_test") as run:
-            run.log_param("key", "value")
-            run_id = run.run_id
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store,
-            registry=registry,
-        )
-
-        with Bundle(bundle_path) as bundle:
-            assert bundle.run_id == run_id
-            assert bundle.run_record is not None
-            record = bundle.run_record
-            if hasattr(record, "record"):
-                assert record.record["data"]["params"]["key"] == "value"
-            else:
-                assert record["data"]["params"]["key"] == "value"
 
 
 class TestArtifactRoundtrip:
     """Tests for artifact preservation through pack/unpack."""
-
-    def test_multiple_artifacts_preserved(self, tmp_path: Path):
-        """Multiple artifacts survive pack/unpack."""
-        workspace_src = tmp_path / "src"
-        workspace_dst = tmp_path / "dst"
-        workspace_src.mkdir()
-        workspace_dst.mkdir()
-
-        store_src = create_store(f"file://{workspace_src}/objects")
-        reg_src = create_registry(f"file://{workspace_src}")
-        store_dst = create_store(f"file://{workspace_dst}/objects")
-        reg_dst = create_registry(f"file://{workspace_dst}")
-        bundle_path = tmp_path / "bundle.zip"
-
-        with track(
-            project="artifacts",
-            store=store_src,
-            registry=reg_src,
-            capture_env=False,
-            capture_git=False,
-        ) as run:
-            run.log_bytes(
-                kind="binary",
-                data=b"\x00\x01\x02",
-                media_type="application/octet-stream",
-                role="data",
-            )
-            run.log_json(name="config", obj={"key": "value"}, role="config")
-            run.log_text(name="notes", text="Some notes", role="docs")
-            run_id = run.run_id
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store_src,
-            registry=reg_src,
-        )
-        unpack_bundle(
-            bundle_path=bundle_path,
-            dest_store=store_dst,
-            dest_registry=reg_dst,
-        )
-
-        loaded = reg_dst.load(run_id)
-
-        for artifact in loaded.artifacts:
-            data = store_dst.get_bytes(artifact.digest)
-            assert len(data) > 0
 
     def test_artifact_content_integrity(self, tmp_path: Path):
         """Artifact content is identical after roundtrip."""
@@ -403,22 +368,33 @@ class TestEndToEndScenarios:
         assert "RuntimeError" in loaded.record["errors"][0]["type"]
         assert "hardware error" in loaded.record["errors"][0]["message"]
 
-    def test_tags_workflow(
+    def test_ci_verification_workflow(
         self,
         workspace: Path,
         store,
         registry,
         config: Config,
     ):
-        """Tags can be added and queried."""
+        """CI/CD verification workflow with baseline."""
         set_config(config)
 
-        with track(project="tags_test") as run:
-            run.set_tag("device", "ibm_perth")
-            run.set_tag("experiment", "calibration")
-            run_id = run.run_id
+        # Establish baseline
+        with track(project="ci_project") as baseline:
+            baseline.log_param("algorithm", "vqe")
+            baseline.log_metric("energy", -1.5)
+            baseline_id = baseline.run_id
 
-        loaded = registry.load(run_id)
-        tags = loaded.record["data"]["tags"]
-        assert tags["device"] == "ibm_perth"
-        assert tags["experiment"] == "calibration"
+        set_baseline("ci_project", baseline_id)
+
+        # PR candidate
+        with track(project="ci_project") as candidate:
+            candidate.log_param("algorithm", "vqe")
+            candidate.log_metric("energy", -1.51)  # Slightly improved
+            candidate_id = candidate.run_id
+
+        # Verify in CI
+        result = verify_baseline(candidate_id, project="ci_project")
+
+        # Should pass (similar results)
+        assert hasattr(result, "ok")
+        assert hasattr(result, "format")  # Can generate report

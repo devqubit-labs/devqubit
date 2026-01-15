@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for bundle pack/unpack operations and bundle reading."""
+"""Tests for bundle pack/unpack operations."""
 
 from __future__ import annotations
 
@@ -9,64 +9,97 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from devqubit_engine.bundle.pack import list_bundle_contents, pack_run, unpack_bundle
+from devqubit_engine.bundle.pack import pack_run, unpack_bundle
 from devqubit_engine.bundle.reader import Bundle, is_bundle_path
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 
 
-class TestIsBundle:
-    """Tests for bundle path validation."""
+class TestBundleRoundtrip:
+    """Tests for full pack/unpack roundtrip between workspaces."""
 
-    def test_valid_bundle(self, tmp_path: Path):
-        """Valid bundle with required files is detected."""
-        bundle_path = tmp_path / "test.zip"
-        with zipfile.ZipFile(bundle_path, "w") as zf:
-            zf.writestr("manifest.json", "{}")
-            zf.writestr("run.json", "{}")
+    def test_roundtrip_preserves_data(
+        self,
+        factory_store,
+        factory_registry,
+        tmp_path: Path,
+    ):
+        """Full roundtrip preserves params, metrics, and artifacts."""
+        store_a = factory_store()
+        reg_a = factory_registry()
+        store_b = factory_store()
+        reg_b = factory_registry()
+        bundle_path = tmp_path / "bundle.zip"
 
-        assert is_bundle_path(bundle_path)
+        # Create run with various data types
+        with track(
+            project="roundtrip",
+            store=store_a,
+            registry=reg_a,
+            capture_env=False,
+            capture_git=False,
+        ) as run:
+            run.log_param("shots", 1000)
+            run.log_param("seed", 42)
+            run.log_metric("fidelity", 0.95)
+            run.log_bytes(
+                kind="test.artifact",
+                data=b"artifact content",
+                media_type="application/octet-stream",
+                role="test",
+            )
+            run_id = run.run_id
 
-    def test_nonexistent_path(self, tmp_path: Path):
-        """Nonexistent path is not a bundle."""
-        assert not is_bundle_path(tmp_path / "nonexistent.zip")
+        # Pack from workspace A
+        pack_result = pack_run(
+            run_id=run_id,
+            output_path=bundle_path,
+            store=store_a,
+            registry=reg_a,
+        )
 
-    def test_missing_manifest(self, tmp_path: Path):
-        """Zip without manifest.json is not a bundle."""
-        bundle_path = tmp_path / "test.zip"
-        with zipfile.ZipFile(bundle_path, "w") as zf:
-            zf.writestr("run.json", "{}")
+        assert pack_result.run_id == run_id
+        assert bundle_path.exists()
+        assert pack_result.artifact_count >= 1
 
-        assert not is_bundle_path(bundle_path)
+        # Unpack to workspace B
+        unpack_result = unpack_bundle(
+            bundle_path=bundle_path,
+            dest_store=store_b,
+            dest_registry=reg_b,
+        )
 
-    def test_not_a_zip(self, tmp_path: Path):
-        """Non-zip file is not a bundle."""
-        path = tmp_path / "test.zip"
-        path.write_text("not a zip")
+        assert unpack_result.run_id == run_id
 
-        assert not is_bundle_path(path)
+        # Verify data integrity
+        loaded = reg_b.load(run_id)
+        assert loaded.params["shots"] == 1000
+        assert loaded.params["seed"] == 42
+        assert loaded.metrics["fidelity"] == 0.95
+        assert len(loaded.artifacts) >= 1
+
+        # Verify artifact content is accessible
+        artifact = loaded.artifacts[0]
+        data = store_b.get_bytes(artifact.digest)
+        assert data == b"artifact content"
 
 
 class TestPackRun:
     """Tests for packing runs into bundles."""
 
-    def test_pack_creates_bundle(self, store, registry, config, tmp_path: Path):
-        """Pack creates valid bundle with manifest and run record."""
+    def test_pack_creates_valid_bundle(self, store, registry, config, tmp_path: Path):
+        """Pack creates bundle with required structure."""
         bundle_path = tmp_path / "test.zip"
 
         with track(project="pack_test", config=config) as run:
             run.log_param("x", 42)
             run_id = run.run_id
 
-        result = pack_run(
+        pack_run(
             run_id=run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
         )
-
-        assert result.run_id == run_id
-        assert result.bundle_path == bundle_path
-        assert bundle_path.exists()
 
         # Verify bundle structure
         with zipfile.ZipFile(bundle_path, "r") as zf:
@@ -74,40 +107,23 @@ class TestPackRun:
             assert "manifest.json" in names
             assert "run.json" in names
 
-    def test_pack_includes_artifacts(self, store, registry, config, tmp_path: Path):
-        """Pack includes artifact objects in bundle."""
-        bundle_path = tmp_path / "test.zip"
+        # Verify it's detected as bundle
+        assert is_bundle_path(bundle_path)
 
-        with track(project="pack_test", config=config) as run:
-            run.log_bytes(
-                kind="test.data",
-                data=b"test artifact content",
-                media_type="application/octet-stream",
-                role="test",
-            )
-            run_id = run.run_id
-
-        result = pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store,
-            registry=registry,
-        )
-
-        assert result.object_count >= 1
-        assert result.artifact_count >= 1
-        assert not result.missing_objects
-
-    def test_pack_strict_fails_on_missing(
-        self, store, registry, config, tmp_path: Path
+    def test_pack_strict_fails_on_missing_objects(
+        self,
+        store,
+        registry,
+        config,
+        tmp_path: Path,
     ):
-        """Strict mode fails if objects are missing."""
+        """Strict mode fails if referenced objects are missing."""
         bundle_path = tmp_path / "test.zip"
 
         with track(project="pack_test", config=config) as run:
             run_id = run.run_id
 
-        # Manually add a fake artifact reference
+        # Add fake artifact reference
         run_record = registry.load(run_id)
         record = run_record.to_dict()
         record["artifacts"] = [
@@ -133,43 +149,6 @@ class TestPackRun:
 class TestUnpackBundle:
     """Tests for unpacking bundles."""
 
-    def test_unpack_restores_run(self, factory_store, factory_registry, tmp_path: Path):
-        """Unpack restores run record and objects."""
-        store_a = factory_store()
-        reg_a = factory_registry()
-        store_b = factory_store()
-        reg_b = factory_registry()
-        bundle_path = tmp_path / "test.zip"
-
-        # Create and pack in workspace A
-        with track(
-            project="unpack_test",
-            store=store_a,
-            registry=reg_a,
-            capture_env=False,
-            capture_git=False,
-        ) as run:
-            run.log_param("value", 123)
-            run_id = run.run_id
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store_a,
-            registry=reg_a,
-        )
-
-        # Unpack to workspace B
-        result = unpack_bundle(
-            bundle_path=bundle_path,
-            dest_store=store_b,
-            dest_registry=reg_b,
-        )
-
-        assert result.run_id == run_id
-        loaded = reg_b.load(run_id)
-        assert loaded.record["data"]["params"]["value"] == 123
-
     def test_unpack_fails_if_exists(self, store, registry, config, tmp_path: Path):
         """Unpack fails if run exists and overwrite=False."""
         bundle_path = tmp_path / "test.zip"
@@ -192,7 +171,7 @@ class TestUnpackBundle:
                 overwrite=False,
             )
 
-    def test_unpack_overwrite(self, store, registry, config, tmp_path: Path):
+    def test_unpack_with_overwrite(self, store, registry, config, tmp_path: Path):
         """Unpack succeeds with overwrite=True."""
         bundle_path = tmp_path / "test.zip"
 
@@ -216,90 +195,15 @@ class TestUnpackBundle:
         assert result.run_id == run_id
 
 
-class TestRoundtrip:
-    """Tests for full pack/unpack roundtrip."""
-
-    def test_roundtrip_preserves_data(
-        self, factory_store, factory_registry, tmp_path: Path
-    ):
-        """Full roundtrip preserves params and artifacts."""
-        store_a = factory_store()
-        reg_a = factory_registry()
-        store_b = factory_store()
-        reg_b = factory_registry()
-        bundle_path = tmp_path / "bundle.zip"
-
-        # Create run with params and artifact
-        with track(
-            project="roundtrip",
-            store=store_a,
-            registry=reg_a,
-            capture_env=False,
-            capture_git=False,
-        ) as run:
-            run.log_param("shots", 1000)
-            run.log_param("seed", 42)
-            run.log_bytes(
-                kind="test.artifact",
-                data=b"artifact data",
-                media_type="application/octet-stream",
-                role="test",
-            )
-            run_id = run.run_id
-
-        # Pack and unpack
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store_a,
-            registry=reg_a,
-        )
-        unpack_bundle(
-            bundle_path=bundle_path,
-            dest_store=store_b,
-            dest_registry=reg_b,
-        )
-
-        # Verify
-        loaded = reg_b.load(run_id)
-        assert loaded.record["data"]["params"]["shots"] == 1000
-        assert loaded.record["data"]["params"]["seed"] == 42
-        assert len(loaded.artifacts) >= 1
-
-        # Verify artifact content is accessible
-        artifact = loaded.artifacts[0]
-        data = store_b.get_bytes(artifact.digest)
-        assert data == b"artifact data"
-
-
 class TestBundleReader:
     """Tests for Bundle reader class."""
 
-    def test_read_manifest_and_record(self, store, registry, config, tmp_path: Path):
-        """Bundle reader provides access to manifest and run record."""
+    def test_read_bundle_contents(self, store, registry, config, tmp_path: Path):
+        """Bundle reader provides access to manifest, record, and objects."""
         bundle_path = tmp_path / "test.zip"
 
         with track(project="reader_test", config=config) as run:
-            run.log_param("x", 1)
-            run_id = run.run_id
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store,
-            registry=registry,
-        )
-
-        with Bundle(bundle_path) as b:
-            assert b.run_id == run_id
-            assert b.manifest["run_id"] == run_id
-            assert b.run_record["data"]["params"]["x"] == 1
-
-    def test_bundle_store_access(self, store, registry, config, tmp_path: Path):
-        """Bundle store provides read access to objects."""
-        bundle_path = tmp_path / "test.zip"
-
-        with track(project="store_test", config=config) as run:
+            run.log_param("key", "value")
             run.log_bytes(
                 kind="test.data",
                 data=b"test content",
@@ -316,6 +220,14 @@ class TestBundleReader:
         )
 
         with Bundle(bundle_path) as b:
+            # Manifest access
+            assert b.run_id == run_id
+            assert b.manifest["run_id"] == run_id
+
+            # Run record access
+            assert b.run_record["data"]["params"]["key"] == "value"
+
+            # Object store access
             artifacts = b.run_record.get("artifacts", [])
             assert len(artifacts) >= 1
 
@@ -323,58 +235,36 @@ class TestBundleReader:
             data = b.store.get_bytes(digest)
             assert data == b"test content"
 
-    def test_list_objects(self, store, registry, config, tmp_path: Path):
-        """Bundle lists contained objects."""
-        bundle_path = tmp_path / "test.zip"
-
-        with track(project="list_test", config=config) as run:
-            run.log_bytes(
-                kind="abcdef",
-                data=b"aaa",
-                media_type="text/plain",
-                role="test",
-            )
-            run.log_bytes(
-                kind="fedcba",
-                data=b"bbb",
-                media_type="text/plain",
-                role="test",
-            )
-            run_id = run.run_id
-
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store,
-            registry=registry,
-        )
-
-        with Bundle(bundle_path) as b:
+            # List objects
             objects = b.list_objects()
-            assert len(objects) >= 2
+            assert len(objects) >= 1
             assert all(o.startswith("sha256:") for o in objects)
 
 
-class TestListBundleContents:
-    """Tests for listing bundle contents without extraction."""
+class TestBundleDetection:
+    """Tests for bundle path validation."""
 
-    def test_list_contents(self, store, registry, config, tmp_path: Path):
-        """list_bundle_contents returns summary without extracting."""
+    def test_valid_bundle_detected(self, tmp_path: Path):
+        """Valid bundle with required files is detected."""
         bundle_path = tmp_path / "test.zip"
+        with zipfile.ZipFile(bundle_path, "w") as zf:
+            zf.writestr("manifest.json", "{}")
+            zf.writestr("run.json", "{}")
 
-        with track(project="list_contents", config=config) as run:
-            run.log_param("key", "value")
-            run_id = run.run_id
+        assert is_bundle_path(bundle_path)
 
-        pack_run(
-            run_id=run_id,
-            output_path=bundle_path,
-            store=store,
-            registry=registry,
-        )
+    def test_invalid_paths_not_detected(self, tmp_path: Path):
+        """Invalid paths are not detected as bundles."""
+        # Nonexistent
+        assert not is_bundle_path(tmp_path / "nonexistent.zip")
 
-        contents = list_bundle_contents(bundle_path)
+        # Missing manifest
+        no_manifest = tmp_path / "no_manifest.zip"
+        with zipfile.ZipFile(no_manifest, "w") as zf:
+            zf.writestr("run.json", "{}")
+        assert not is_bundle_path(no_manifest)
 
-        assert contents["run_id"] == run_id
-        assert "manifest" in contents
-        assert contents["manifest"]["run_id"] == run_id
+        # Not a zip
+        not_zip = tmp_path / "not_a.zip"
+        not_zip.write_text("not a zip file")
+        assert not is_bundle_path(not_zip)

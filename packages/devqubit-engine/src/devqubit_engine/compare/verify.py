@@ -18,8 +18,8 @@ from typing import Any, Protocol, runtime_checkable
 from devqubit_engine.compare.diff import diff_runs
 from devqubit_engine.compare.results import ProgramMatchMode, VerifyResult
 from devqubit_engine.compare.verdict import build_verdict
-from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.protocols import ObjectStoreProtocol
+from devqubit_engine.storage.types import ObjectStoreProtocol
+from devqubit_engine.tracking.record import RunRecord
 
 
 logger = logging.getLogger(__name__)

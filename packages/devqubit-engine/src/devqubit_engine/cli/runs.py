@@ -73,7 +73,7 @@ def list_runs(
         devqubit list --status COMPLETED --backend ibm_brisbane
         devqubit list --tag experiment=bell --tag validated
     """
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -181,7 +181,7 @@ def search_runs(
         devqubit search "params.shots = 1000 and tags.device ~ ibm"
         devqubit search "status = COMPLETED" --sort metric.fidelity
     """
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.query import QueryParseError, parse_query
     from devqubit_engine.storage.factory import create_registry
 
@@ -242,9 +242,9 @@ def search_runs(
 @click.pass_context
 def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
     """Show detailed run information."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -317,7 +317,7 @@ def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
 @click.pass_context
 def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
     """Delete a run."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -342,7 +342,7 @@ def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
 @click.pass_context
 def list_projects(ctx: click.Context) -> None:
     """List all projects."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -388,7 +388,7 @@ def groups_list(
     fmt: str,
 ) -> None:
     """List run groups."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -429,7 +429,7 @@ def groups_show(
     fmt: str,
 ) -> None:
     """Show runs in a group."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)

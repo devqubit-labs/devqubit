@@ -30,7 +30,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 
 
 logger = logging.getLogger(__name__)

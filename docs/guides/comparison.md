@@ -17,9 +17,7 @@ Most users start with the CLI: {doc}`../reference/cli` → `devqubit diff` and `
 Compare two runs to detect differences in parameters, programs, metrics, and results:
 
 ```python
-from devqubit import diff, create_registry
-
-registry = create_registry()
+from devqubit import diff
 
 result = diff("RUN_BASELINE", "RUN_CANDIDATE")
 
@@ -190,11 +188,8 @@ This is more robust than simple O(√k/n) heuristics, especially for non-uniform
 Verify a candidate run against the project's baseline:
 
 ```python
-from devqubit import create_registry
-from devqubit import verify_against_baseline
+from devqubit import verify_baseline
 from devqubit.compare import VerifyPolicy
-
-registry = create_registry()
 
 policy = VerifyPolicy(
     params_must_match=True,
@@ -202,8 +197,8 @@ policy = VerifyPolicy(
     noise_factor=1.0,  # Use bootstrap-calibrated threshold
 )
 
-result = verify_against_baseline(
-    candidate=registry.load("RUN_CANDIDATE"),
+result = verify_baseline(
+    "RUN_CANDIDATE",
     project="vqe-h2",
     policy=policy,
 )
@@ -242,13 +237,13 @@ policy = VerifyPolicy(
 | `EITHER` | Pass if exact OR structural matches | General use (default) |
 
 ```python
-from devqubit.compare import VerifyPolicy
+from devqubit.compare import VerifyPolicy, ProgramMatchMode
 
 # Strict reproducibility
-policy = VerifyPolicy(program_match_mode="exact")
+policy = VerifyPolicy(program_match_mode=ProgramMatchMode.EXACT)
 
 # VQE-friendly (ignore parameter values)
-policy = VerifyPolicy(program_match_mode="structural")
+policy = VerifyPolicy(program_match_mode=ProgramMatchMode.STRUCTURAL)
 ```
 
 ### TVD Thresholds
@@ -281,26 +276,36 @@ policy = VerifyPolicy(tvd_max=0.05, noise_factor=1.2)
 ## Setting Baselines
 
 ```python
-from devqubit import create_registry
-
-registry = create_registry()
+from devqubit.runs import get_baseline, set_baseline, clear_baseline
 
 # Set baseline
-registry.set_baseline("vqe-h2", "RUN_PRODUCTION_V1")
+set_baseline("vqe-h2", "RUN_PRODUCTION_V1")
 
 # Get current baseline
-baseline = registry.get_baseline("vqe-h2")
-print(baseline["run_id"])
+baseline = get_baseline("vqe-h2")
+if baseline:
+    print(baseline["run_id"])
+
+# Clear baseline
+clear_baseline("vqe-h2")
+```
+
+Or via CLI:
+
+```bash
+devqubit baseline set vqe-h2 RUN_PRODUCTION_V1
+devqubit baseline get vqe-h2
+devqubit baseline clear vqe-h2
 ```
 
 ## Auto-Promote on Pass
 
 ```python
-result = verify_against_baseline(
-    candidate=candidate,
+from devqubit import verify_baseline
+
+result = verify_baseline(
+    "RUN_CANDIDATE",
     project="vqe-h2",
-    store=store,
-    registry=registry,
     policy=policy,
     promote_on_pass=True,  # Update baseline if verification passes
 )
@@ -313,7 +318,9 @@ result = verify_against_baseline(
 Calibration drift is automatically detected during comparison:
 
 ```python
-result = diff("RUN_A", "RUN_B", registry=registry, store=store)
+from devqubit import diff
+
+result = diff("RUN_A", "RUN_B")
 
 if result.device_drift and result.device_drift.significant_drift:
     print("! Significant calibration drift detected")
@@ -343,10 +350,10 @@ if result.device_drift and result.device_drift.significant_drift:
 ### JUnit Output
 
 ```python
-from devqubit import verify_against_baseline
+from devqubit import verify_baseline
 from devqubit.ci import write_junit
 
-result = verify_against_baseline(...)
+result = verify_baseline("RUN_CANDIDATE", project="vqe-h2")
 write_junit(result, "results.xml")
 ```
 

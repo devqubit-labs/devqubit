@@ -21,35 +21,50 @@ Comparison
 >>> result = diff("run_id_a", "run_id_b")
 >>> print(result.identical)
 
-Verification
-------------
->>> from devqubit import verify_against_baseline
->>> from devqubit.compare import VerifyPolicy
->>> result = verify_against_baseline(candidate, project="my_project", policy=VerifyPolicy())
->>> assert result.ok
+Verification (High-Level)
+-------------------------
+>>> from devqubit import verify_baseline
+>>> result = verify_baseline("candidate_run_id", project="my_project")
+>>> if result.ok:
+...     print("Verification passed!")
+>>> else:
+...     print(result.verdict.summary)
 
-Snapshots
----------
->>> from devqubit.uec import ExecutionEnvelope, DeviceSnapshot
->>> envelope = ExecutionEnvelope(device=device_snapshot, ...)
+Verification (Custom Policy)
+----------------------------
+>>> from devqubit import verify_baseline
+>>> from devqubit.compare import VerifyPolicy, ProgramMatchMode
+>>> policy = VerifyPolicy(
+...     program_match_mode=ProgramMatchMode.STRUCTURAL,
+...     noise_factor=1.2,
+... )
+>>> result = verify_baseline("candidate_run_id", project="my_project", policy=policy)
 
-UI
-------------
->>> from devqubit import run_server
->>> run_server(port=8080)
+Run Navigation
+--------------
+>>> from devqubit.runs import list_runs, search_runs, get_baseline
+>>> runs = list_runs(project="my_project", limit=10)
+>>> high_fidelity = search_runs("metric.fidelity > 0.95")
+>>> baseline = get_baseline("my_project")
 
 Submodules
 ----------
-- devqubit.compare: Comparison utilities (ProgramMatchMode)
+- devqubit.runs: Run navigation and baseline management
+- devqubit.compare: Comparison types (ProgramMatchMode, Verdict, etc.)
 - devqubit.ci: CI/CD integration (JUnit, GitHub annotations)
 - devqubit.bundle: Run packaging utilities
 - devqubit.config: Configuration management
 - devqubit.uec: UEC snapshot schemas
+- devqubit.storage: Storage backends
+- devqubit.adapters: SDK adapter extension API
+- devqubit.errors: Public exception types
+- devqubit.ui: Web UI (optional, requires devqubit[ui])
 """
 
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 
@@ -60,28 +75,18 @@ __all__ = [
     "Run",
     "track",
     "wrap_backend",
-    # Models
-    "RunRecord",
-    "ArtifactRef",
     # Comparison
     "diff",
-    "diff_runs",
     # Verification
-    "verify",
-    "verify_against_baseline",
+    "verify_baseline",
     # Bundle
     "pack_run",
     "unpack_bundle",
     "Bundle",
-    # Storage
-    "create_store",
-    "create_registry",
     # Config
     "Config",
     "get_config",
     "set_config",
-    # UI
-    "run_server",
 ]
 
 
@@ -94,42 +99,174 @@ except PackageNotFoundError:
 if TYPE_CHECKING:
     from devqubit_engine.bundle.pack import pack_run, unpack_bundle
     from devqubit_engine.bundle.reader import Bundle
-    from devqubit_engine.compare.diff import diff, diff_runs
-    from devqubit_engine.compare.verify import verify, verify_against_baseline
-    from devqubit_engine.core.config import Config, get_config, set_config
-    from devqubit_engine.core.record import RunRecord
-    from devqubit_engine.core.run import Run, track, wrap_backend
-    from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.uec.types import ArtifactRef
-    from devqubit_ui.app import run_server
+    from devqubit_engine.compare.diff import diff
+    from devqubit_engine.compare.results import VerifyResult
+    from devqubit_engine.compare.verify import VerifyPolicy
+    from devqubit_engine.config import Config, get_config, set_config
+    from devqubit_engine.tracking.run import Run, track, wrap_backend
 
 
 _LAZY_IMPORTS = {
-    "Run": ("devqubit_engine.core.run", "Run"),
-    "track": ("devqubit_engine.core.run", "track"),
-    "wrap_backend": ("devqubit_engine.core.run", "wrap_backend"),
-    "RunRecord": ("devqubit_engine.core.record", "RunRecord"),
-    "ArtifactRef": ("devqubit_engine.uec.types", "ArtifactRef"),
+    # Core tracking
+    "Run": ("devqubit_engine.tracking.run", "Run"),
+    "track": ("devqubit_engine.tracking.run", "track"),
+    "wrap_backend": ("devqubit_engine.tracking.run", "wrap_backend"),
+    # Comparison
     "diff": ("devqubit_engine.compare.diff", "diff"),
-    "diff_runs": ("devqubit_engine.compare.diff", "diff_runs"),
-    "verify": ("devqubit_engine.compare.verify", "verify"),
-    "verify_against_baseline": (
-        "devqubit_engine.compare.verify",
-        "verify_against_baseline",
-    ),
+    # Bundle
     "pack_run": ("devqubit_engine.bundle.pack", "pack_run"),
     "unpack_bundle": ("devqubit_engine.bundle.pack", "unpack_bundle"),
     "Bundle": ("devqubit_engine.bundle.reader", "Bundle"),
-    "create_store": ("devqubit_engine.storage.factory", "create_store"),
-    "create_registry": ("devqubit_engine.storage.factory", "create_registry"),
-    "Config": ("devqubit_engine.core.config", "Config"),
-    "get_config": ("devqubit_engine.core.config", "get_config"),
-    "set_config": ("devqubit_engine.core.config", "set_config"),
-    "run_server": ("devqubit_ui.app", "run_server"),
+    # Config
+    "Config": ("devqubit_engine.config", "Config"),
+    "get_config": ("devqubit_engine.config", "get_config"),
+    "set_config": ("devqubit_engine.config", "set_config"),
 }
 
 
+def verify_baseline(
+    candidate: str | Path,
+    *,
+    project: str,
+    policy: "VerifyPolicy | dict[str, Any] | None" = None,
+    promote_on_pass: bool = False,
+) -> "VerifyResult":
+    """
+    Verify a candidate run against the stored baseline for a project.
+
+    This is the recommended high-level API for CI/CD verification.
+    It automatically loads the candidate run, baseline, and storage
+    backends from the global configuration.
+
+    Parameters
+    ----------
+    candidate : str or Path
+        Candidate run ID or path to a bundle file.
+    project : str
+        Project name to look up baseline for.
+    policy : VerifyPolicy or dict or None, optional
+        Verification policy configuration. Uses defaults if not provided.
+        Can be a VerifyPolicy instance or a dict with policy options.
+    promote_on_pass : bool, default=False
+        If True and verification passes, promote candidate to new baseline.
+
+    Returns
+    -------
+    VerifyResult
+        Verification result with ``ok`` status, ``failures``, ``comparison``,
+        and ``verdict`` (root-cause analysis if failed).
+
+    Raises
+    ------
+    ValueError
+        If no baseline is set for the project and ``allow_missing_baseline``
+        is False in the policy.
+    RunNotFoundError
+        If the candidate run does not exist.
+
+    Examples
+    --------
+    Basic verification:
+
+    >>> from devqubit import verify_baseline
+    >>> result = verify_baseline("candidate_run_id", project="my_project")
+    >>> if result.ok:
+    ...     print("Verification passed!")
+    ... else:
+    ...     print(f"Failed: {result.failures}")
+    ...     print(f"Root cause: {result.verdict.summary}")
+
+    With custom policy:
+
+    >>> from devqubit import verify_baseline
+    >>> from devqubit.compare import VerifyPolicy, ProgramMatchMode
+    >>> policy = VerifyPolicy(
+    ...     program_match_mode=ProgramMatchMode.STRUCTURAL,
+    ...     noise_factor=1.2,
+    ...     allow_missing_baseline=True,
+    ... )
+    >>> result = verify_baseline(
+    ...     "candidate_run_id",
+    ...     project="my_project",
+    ...     policy=policy,
+    ...     promote_on_pass=True,
+    ... )
+
+    With bundle file:
+
+    >>> result = verify_baseline(
+    ...     "experiment.zip",
+    ...     project="my_project",
+    ... )
+
+    CI/CD integration:
+
+    >>> from devqubit import verify_baseline
+    >>> from devqubit.ci import write_junit
+    >>> result = verify_baseline("candidate_run_id", project="my_project")
+    >>> write_junit(result, "results.xml")
+    >>> assert result.ok, f"Verification failed: {result.failures}"
+
+    Notes
+    -----
+    For low-level verification with explicit storage backends, use
+    the functions in ``devqubit_engine.compare.verify`` directly.
+
+    See Also
+    --------
+    devqubit.compare.VerifyPolicy : Policy configuration options.
+    devqubit.compare.VerifyResult : Result type details.
+    devqubit.runs.get_baseline : Get current baseline for a project.
+    devqubit.runs.set_baseline : Set a new baseline.
+    """
+    from devqubit_engine.bundle.reader import Bundle, is_bundle_path
+    from devqubit_engine.compare.verify import (
+        verify_against_baseline as _verify_against_baseline,
+    )
+    from devqubit_engine.config import get_config
+    from devqubit_engine.storage.factory import create_registry, create_store
+    from devqubit_engine.storage.types import ArtifactRef
+    from devqubit_engine.tracking.record import RunRecord
+
+    cfg = get_config()
+    store = create_store(config=cfg)
+    registry = create_registry(config=cfg)
+
+    # Handle bundle input
+    if is_bundle_path(candidate):
+        with Bundle(Path(candidate)) as bundle:
+            record_dict = bundle.run_record
+            artifacts = [
+                ArtifactRef.from_dict(a)
+                for a in record_dict.get("artifacts", [])
+                if isinstance(a, dict)
+            ]
+            candidate_record = RunRecord(record=record_dict, artifacts=artifacts)
+
+            # For bundles, use the bundle's own store
+            return _verify_against_baseline(
+                candidate_record,
+                project=project,
+                store=bundle.store,
+                registry=registry,
+                policy=policy,
+                promote_on_pass=promote_on_pass,
+            )
+
+    # Handle run ID input
+    candidate_record = registry.load(str(candidate))
+    return _verify_against_baseline(
+        candidate_record,
+        project=project,
+        store=store,
+        registry=registry,
+        policy=policy,
+        promote_on_pass=promote_on_pass,
+    )
+
+
 def __getattr__(name: str) -> Any:
+    """Lazy import handler for module-level attributes."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -140,4 +277,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
+    """List available attributes for autocomplete."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

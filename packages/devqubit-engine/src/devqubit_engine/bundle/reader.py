@@ -18,7 +18,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Iterator
 
-from devqubit_engine.storage.protocols import ObjectNotFoundError
+from devqubit_engine.storage.errors import ObjectNotFoundError
 
 
 logger = logging.getLogger(__name__)

@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.uec.result import (
+from devqubit_engine.uec.models.result import (
     CountsFormat,
     NormalizedExpectation,
     ResultError,

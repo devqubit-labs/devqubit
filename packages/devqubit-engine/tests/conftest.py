@@ -11,19 +11,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
-from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
-from devqubit_engine.core.config import Config
-from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.local import LocalRegistry, LocalStore
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.config import Config
+from devqubit_engine.storage.backends.local import LocalRegistry, LocalStore
+from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.uec.producer import ProducerInfo
-from devqubit_engine.uec.result import CountsFormat
-from devqubit_engine.uec.types import ArtifactRef
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.uec.models.execution import ProducerInfo
 
 
 # =============================================================================
@@ -261,46 +259,9 @@ def snapshot_factory() -> Callable[..., DeviceSnapshot]:
     return _create
 
 
-@pytest.fixture
-def minimal_snapshot(snapshot_factory) -> DeviceSnapshot:
-    """A minimal device snapshot without calibration."""
-    return snapshot_factory()
-
-
-@pytest.fixture
-def calibrated_snapshot(snapshot_factory, calibration_factory) -> DeviceSnapshot:
-    """A device snapshot with full calibration data."""
-    return snapshot_factory(
-        backend_name="ibm_test",
-        calibration=calibration_factory(num_qubits=5),
-    )
-
-
 # =============================================================================
 # UEC Result Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def qiskit_counts_format() -> CountsFormat:
-    """Standard Qiskit counts format (canonical bit order)."""
-    return CountsFormat(
-        source_sdk="qiskit",
-        source_key_format="qiskit_little_endian",
-        bit_order="cbit0_right",
-        transformed=False,
-    )
-
-
-@pytest.fixture
-def braket_counts_format() -> CountsFormat:
-    """Braket counts format (transformed to canonical)."""
-    return CountsFormat(
-        source_sdk="braket",
-        source_key_format="braket_big_endian",
-        bit_order="cbit0_right",
-        transformed=True,
-    )
 
 
 @pytest.fixture
@@ -345,18 +306,3 @@ cx q[0],q[1];
 cx q[1],q[2];
 measure q -> c;
 """
-
-
-@pytest.fixture
-def circuit_data_factory() -> Callable[..., CircuitData]:
-    """Factory for creating CircuitData objects."""
-
-    def _create(
-        data: str | bytes,
-        format: CircuitFormat = CircuitFormat.OPENQASM2,
-        sdk: SDK = SDK.QISKIT,
-        name: str | None = None,
-    ) -> CircuitData:
-        return CircuitData(data=data, format=format, sdk=sdk, name=name)
-
-    return _create

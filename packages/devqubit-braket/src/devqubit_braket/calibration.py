@@ -25,12 +25,12 @@ from statistics import median
 from typing import Any
 
 from devqubit_braket.utils import get_nested, obj_to_dict, to_float
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.utils.common import utc_now_iso
 
 
 def _parse_qubit_key(qubits_key: str) -> list[int]:

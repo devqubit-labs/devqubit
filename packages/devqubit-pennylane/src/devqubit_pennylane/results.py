@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from devqubit_engine.uec.result import (
+from devqubit_engine.uec.models.result import (
     CountsFormat,
     NormalizedExpectation,
     QuasiProbability,

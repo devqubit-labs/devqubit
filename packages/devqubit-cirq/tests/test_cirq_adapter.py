@@ -15,7 +15,7 @@ from devqubit_cirq.adapter import (
     _compute_structural_hash,
     _materialize_circuits,
 )
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 
 
 def _artifacts_of_kind(loaded, kind: str):

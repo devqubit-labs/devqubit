@@ -30,12 +30,12 @@ from devqubit_braket.utils import (
     get_nested,
     obj_to_dict,
 )
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.utils.time_utils import utc_now_iso
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.utils.common import utc_now_iso
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.run import Run
+    from devqubit_engine.tracking.run import Run
 
 logger = logging.getLogger(__name__)
 

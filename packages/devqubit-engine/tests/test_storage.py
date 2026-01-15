@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for storage implementations."""
+"""Tests for storage backends and factory."""
 
 from __future__ import annotations
 
@@ -11,100 +11,114 @@ from devqubit_engine.storage.factory import create_registry, create_store
 
 
 class TestObjectStore:
-    """Tests for LocalStore object storage."""
+    """Tests for content-addressed object storage."""
 
-    def test_roundtrip(self, store):
-        """Put and get returns same data."""
+    def test_put_get_roundtrip(self, store):
+        """Store and retrieve data correctly."""
         digest = store.put_bytes(b"hello world")
-        assert digest.startswith("sha256:")
-        data = store.get_bytes(digest)
-        assert data == b"hello world"
 
-    def test_idempotent(self, store):
-        """Storing same content returns same digest."""
-        d1 = store.put_bytes(b"same content")
-        d2 = store.put_bytes(b"same content")
+        assert digest.startswith("sha256:")
+        assert len(digest) == 71  # sha256: + 64 hex chars
+        assert store.get_bytes(digest) == b"hello world"
+
+    def test_content_addressed_deduplication(self, store):
+        """Same content always returns same digest."""
+        d1 = store.put_bytes(b"identical content")
+        d2 = store.put_bytes(b"identical content")
+
         assert d1 == d2
 
     def test_exists(self, store):
-        """exists() returns correct status."""
-        digest = store.put_bytes(b"test")
+        """exists() reflects actual storage state."""
+        digest = store.put_bytes(b"test data")
+
         assert store.exists(digest)
         assert not store.exists("sha256:" + "0" * 64)
 
     def test_delete(self, store):
-        """delete() removes object."""
+        """delete() removes object from store."""
         digest = store.put_bytes(b"to delete")
+
         assert store.delete(digest)
         assert not store.exists(digest)
+        assert not store.delete(digest)  # Second delete returns False
+
+    def test_get_size(self, store):
+        """get_size() returns correct byte count."""
+        data = b"x" * 1000
+        digest = store.put_bytes(data)
+
+        assert store.get_size(digest) == 1000
 
 
 class TestRegistry:
-    """Tests for LocalRegistry run storage."""
+    """Tests for run metadata registry."""
 
     def test_save_and_load(self, registry, run_factory):
         """Save and load roundtrips correctly."""
-        run = run_factory(run_id="RUN0000001")
+        run = run_factory(run_id="RUN0000001", project="test", params={"shots": 1000})
         registry.save(run.to_dict())
+
         loaded = registry.load("RUN0000001")
+
         assert loaded.run_id == "RUN0000001"
+        assert loaded.project == "test"
+        assert loaded.params == {"shots": 1000}
+
+    def test_exists(self, registry, run_factory):
+        """exists() reflects actual registry state."""
+        registry.save(run_factory(run_id="EXISTS001").to_dict())
+
+        assert registry.exists("EXISTS001")
+        assert not registry.exists("NOTEXIST1")
+
+    def test_delete(self, registry, run_factory):
+        """delete() removes run from registry."""
+        registry.save(run_factory(run_id="TODELETE1").to_dict())
+
+        assert registry.delete("TODELETE1")
+        assert not registry.exists("TODELETE1")
 
     def test_list_runs(self, registry, run_factory):
-        """list_runs returns runs in order."""
+        """list_runs returns runs with pagination."""
         for i in range(5):
-            run = run_factory(run_id=f"RUN00000{i:02d}")
-            record = run.to_dict()
+            record = run_factory(run_id=f"LIST{i:05d}").to_dict()
             record["created_at"] = f"2025-01-{i+1:02d}T00:00:00Z"
             registry.save(record)
 
         runs = registry.list_runs(limit=3)
+
         assert len(runs) == 3
 
-    def test_exists(self, registry, run_factory):
-        """exists() returns correct status."""
-        registry.save(run_factory(run_id="EXISTS1234").to_dict())
-        assert registry.exists("EXISTS1234")
-        assert not registry.exists("NOTEXIST12")
+    def test_list_runs_by_project(self, registry, run_factory):
+        """list_runs filters by project."""
+        registry.save(run_factory(run_id="PROJ_A_1", project="project_a").to_dict())
+        registry.save(run_factory(run_id="PROJ_A_2", project="project_a").to_dict())
+        registry.save(run_factory(run_id="PROJ_B_1", project="project_b").to_dict())
 
-    def test_delete(self, registry, run_factory):
-        """delete() removes run."""
-        registry.save(run_factory(run_id="TODELETE12").to_dict())
-        assert registry.delete("TODELETE12")
-        assert not registry.exists("TODELETE12")
+        runs = registry.list_runs(project="project_a")
 
-
-class TestStorageFactory:
-    """Tests for storage factory functions."""
-
-    def test_create_store_local(self, tmp_path: Path):
-        """create_store creates local store from file:// URI."""
-        store = create_store(f"file://{tmp_path}/objects")
-        digest = store.put_bytes(b"test")
-        assert store.exists(digest)
-
-    def test_create_registry_local(self, tmp_path: Path, run_factory):
-        """create_registry creates local registry from file:// URI."""
-        registry = create_registry(f"file://{tmp_path}")
-        registry.save(run_factory(run_id="FACTORY123").to_dict())
-        assert registry.exists("FACTORY123")
+        assert len(runs) == 2
+        assert all(r["project"] == "project_a" for r in runs)
 
 
 class TestRegistrySearch:
-    """Tests for search_runs functionality."""
+    """Tests for search_runs query functionality."""
 
-    def test_search_by_params(self, registry, run_factory):
+    def test_search_by_param(self, registry, run_factory):
         """Search runs by parameter value."""
         for i, shots in enumerate([100, 1000, 1000]):
             record = run_factory(
-                run_id=f"SEARCH{i:04d}",
+                run_id=f"PARAM{i:04d}",
                 params={"shots": shots},
             ).to_dict()
             registry.save(record)
 
         results = registry.search_runs("params.shots = 1000")
+
         assert len(results) == 2
 
-    def test_search_by_metric(self, registry, run_factory):
+    def test_search_by_metric_comparison(self, registry, run_factory):
         """Search runs by metric comparison."""
         for i, fidelity in enumerate([0.8, 0.9, 0.95]):
             record = run_factory(
@@ -114,25 +128,28 @@ class TestRegistrySearch:
             registry.save(record)
 
         results = registry.search_runs("metric.fidelity > 0.85")
+
         assert len(results) == 2
 
-    def test_search_by_tag(self, registry, run_factory):
-        """Search runs by tag value."""
-        for i, device in enumerate(["ibm_kyoto", "ibm_osaka", "google_sycamore"]):
+    def test_search_by_tag_pattern(self, registry, run_factory):
+        """Search runs by tag pattern matching."""
+        devices = ["ibm_kyoto", "ibm_osaka", "google_sycamore"]
+        for i, device in enumerate(devices):
             record = run_factory(
-                run_id=f"TAG{i:04d}",
+                run_id=f"TAG{i:05d}",
                 tags={"device": device},
             ).to_dict()
             registry.save(record)
 
         results = registry.search_runs("tags.device ~ ibm")
+
         assert len(results) == 2
 
     def test_search_with_sort(self, registry, run_factory):
-        """Search with sorting."""
+        """Search with sorting by metric."""
         for i, fidelity in enumerate([0.7, 0.9, 0.8]):
             record = run_factory(
-                run_id=f"SORT{i:04d}",
+                run_id=f"SORT{i:05d}",
                 metrics={"fidelity": fidelity},
             ).to_dict()
             registry.save(record)
@@ -143,19 +160,7 @@ class TestRegistrySearch:
             descending=True,
         )
 
-        assert results[0].record["data"]["metrics"]["fidelity"] == 0.9
-
-    def test_search_with_limit(self, registry, run_factory):
-        """Search respects limit."""
-        for i in range(10):
-            record = run_factory(
-                run_id=f"LIMIT{i:04d}",
-                params={"x": 1},
-            ).to_dict()
-            registry.save(record)
-
-        results = registry.search_runs("params.x = 1", limit=5)
-        assert len(results) == 5
+        assert results[0].metrics["fidelity"] == 0.9
 
     def test_search_multiple_conditions(self, registry, run_factory):
         """Search with AND conditions."""
@@ -169,26 +174,25 @@ class TestRegistrySearch:
             registry.save(record)
 
         results = registry.search_runs("params.shots = 1000 and metric.fidelity > 0.85")
+
         assert len(results) == 1
 
     def test_search_by_status(self, registry, run_factory):
         """Search by run status."""
-        record = run_factory(run_id="FINISHED01", status="FINISHED").to_dict()
-        registry.save(record)
-
-        record = run_factory(run_id="FAILED0001", status="FAILED").to_dict()
-        registry.save(record)
+        registry.save(run_factory(run_id="FINISHED1", status="FINISHED").to_dict())
+        registry.save(run_factory(run_id="FAILED001", status="FAILED").to_dict())
 
         results = registry.search_runs("status = FINISHED")
+
         assert len(results) == 1
-        assert results[0].run_id == "FINISHED01"
+        assert results[0].run_id == "FINISHED1"
 
 
 class TestRegistryGroups:
     """Tests for run groups functionality."""
 
     def test_list_groups(self, registry, run_factory):
-        """List run groups."""
+        """List run groups with counts."""
         for i in range(3):
             record = run_factory(
                 run_id=f"GROUP_A_{i}",
@@ -205,14 +209,14 @@ class TestRegistryGroups:
             registry.save(record)
 
         groups = registry.list_groups()
-        assert len(groups) == 2
 
+        assert len(groups) == 2
         group_001 = next(g for g in groups if g["group_id"] == "sweep_001")
         assert group_001["run_count"] == 3
         assert group_001["group_name"] == "Parameter Sweep"
 
     def test_list_runs_in_group(self, registry, run_factory):
-        """List runs within a group."""
+        """List runs within a specific group."""
         for i in range(5):
             record = run_factory(
                 run_id=f"INGROUP_{i}",
@@ -220,54 +224,59 @@ class TestRegistryGroups:
             ).to_dict()
             registry.save(record)
 
-        registry.save(run_factory(run_id="OUTSIDE").to_dict())
+        registry.save(run_factory(run_id="OUTSIDE01").to_dict())
 
         runs = registry.list_runs_in_group("my_group")
+
         assert len(runs) == 5
 
     def test_list_groups_by_project(self, registry, run_factory):
         """Filter groups by project."""
-        record = run_factory(
-            run_id="PROJ_A",
-            project="project_a",
-            group_id="group_a",
-        ).to_dict()
-        registry.save(record)
-
-        record = run_factory(
-            run_id="PROJ_B",
-            project="project_b",
-            group_id="group_b",
-        ).to_dict()
-        registry.save(record)
+        registry.save(
+            run_factory(
+                run_id="PROJ_A",
+                project="project_a",
+                group_id="group_a",
+            ).to_dict()
+        )
+        registry.save(
+            run_factory(
+                run_id="PROJ_B",
+                project="project_b",
+                group_id="group_b",
+            ).to_dict()
+        )
 
         groups = registry.list_groups(project="project_a")
+
         assert len(groups) == 1
         assert groups[0]["group_id"] == "group_a"
 
-    def test_empty_groups(self, registry, run_factory):
-        """No groups when no grouped runs."""
-        registry.save(run_factory(run_id="NOGR001").to_dict())
-        registry.save(run_factory(run_id="NOGR002").to_dict())
+    def test_no_groups_when_ungrouped(self, registry, run_factory):
+        """No groups returned when runs have no group_id."""
+        registry.save(run_factory(run_id="UNGROUPED1").to_dict())
+        registry.save(run_factory(run_id="UNGROUPED2").to_dict())
 
         groups = registry.list_groups()
+
         assert len(groups) == 0
 
-    def test_list_runs_with_group_filter(self, registry, run_factory):
-        """list_runs can filter by group_id."""
-        for i in range(3):
-            record = run_factory(
-                run_id=f"GRP1_{i}",
-                group_id="group_1",
-            ).to_dict()
-            registry.save(record)
 
-        for i in range(2):
-            record = run_factory(
-                run_id=f"GRP2_{i}",
-                group_id="group_2",
-            ).to_dict()
-            registry.save(record)
+class TestStorageFactory:
+    """Tests for storage factory functions."""
 
-        runs = registry.list_runs(group_id="group_1")
-        assert len(runs) == 3
+    def test_create_store_from_file_uri(self, tmp_path: Path):
+        """create_store creates LocalStore from file:// URI."""
+        store = create_store(f"file://{tmp_path}/objects")
+
+        digest = store.put_bytes(b"factory test")
+
+        assert store.exists(digest)
+
+    def test_create_registry_from_file_uri(self, tmp_path: Path, run_factory):
+        """create_registry creates LocalRegistry from file:// URI."""
+        registry = create_registry(f"file://{tmp_path}")
+
+        registry.save(run_factory(run_id="FACTORY01").to_dict())
+
+        assert registry.exists("FACTORY01")

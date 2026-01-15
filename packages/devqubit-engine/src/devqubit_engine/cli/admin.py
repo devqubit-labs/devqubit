@@ -58,7 +58,7 @@ def storage_gc(ctx: click.Context, dry_run: bool, yes: bool, fmt: str) -> None:
     Identifies and optionally removes objects in the object store that
     are not referenced by any run records.
     """
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
     from devqubit_engine.storage.gc import gc_run
 
@@ -130,7 +130,7 @@ def storage_prune(
     Removes runs matching the specified status that are older than the
     threshold, while keeping the N most recent matching runs.
     """
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
     from devqubit_engine.storage.gc import prune_runs
 
@@ -177,7 +177,7 @@ def storage_health(ctx: click.Context) -> None:
     Reports on total runs, objects, and identifies any integrity issues
     such as orphaned or missing objects.
     """
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
     from devqubit_engine.storage.gc import check_workspace_health
 
@@ -219,9 +219,9 @@ def baseline_group() -> None:
 @click.pass_context
 def baseline_set(ctx: click.Context, project: str, run_id: str) -> None:
     """Set baseline run for a project."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -244,7 +244,7 @@ def baseline_set(ctx: click.Context, project: str, run_id: str) -> None:
 @click.pass_context
 def baseline_get(ctx: click.Context, project: str, fmt: str) -> None:
     """Get baseline run for a project."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -271,7 +271,7 @@ def baseline_get(ctx: click.Context, project: str, fmt: str) -> None:
 @click.pass_context
 def baseline_clear(ctx: click.Context, project: str, yes: bool) -> None:
     """Clear baseline for a project."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -292,7 +292,7 @@ def baseline_clear(ctx: click.Context, project: str, yes: bool) -> None:
 @click.pass_context
 def baseline_list(ctx: click.Context) -> None:
     """List all project baselines."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
@@ -333,7 +333,7 @@ def baseline_list(ctx: click.Context) -> None:
 @click.pass_context
 def config_cmd(ctx: click.Context) -> None:
     """Show current configuration."""
-    from devqubit_engine.core.config import Config
+    from devqubit_engine.config import Config
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)

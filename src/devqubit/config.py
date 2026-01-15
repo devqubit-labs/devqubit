@@ -57,7 +57,7 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.config import (
+    from devqubit_engine.config import (
         Config,
         RedactionConfig,
         get_config,
@@ -68,12 +68,12 @@ if TYPE_CHECKING:
 
 
 _LAZY_IMPORTS = {
-    "Config": ("devqubit_engine.core.config", "Config"),
-    "RedactionConfig": ("devqubit_engine.core.config", "RedactionConfig"),
-    "get_config": ("devqubit_engine.core.config", "get_config"),
-    "set_config": ("devqubit_engine.core.config", "set_config"),
-    "reset_config": ("devqubit_engine.core.config", "reset_config"),
-    "load_config": ("devqubit_engine.core.config", "load_config"),
+    "Config": ("devqubit_engine.config", "Config"),
+    "RedactionConfig": ("devqubit_engine.config", "RedactionConfig"),
+    "get_config": ("devqubit_engine.config", "get_config"),
+    "set_config": ("devqubit_engine.config", "set_config"),
+    "reset_config": ("devqubit_engine.config", "reset_config"),
+    "load_config": ("devqubit_engine.config", "load_config"),
 }
 
 

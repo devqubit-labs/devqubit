@@ -26,7 +26,7 @@ Examples
 >>> store = create_store("s3://my-bucket/devqubit/objects")
 
 >>> # Create both from config
->>> from devqubit_engine.core.config import get_config
+>>> from devqubit_engine.config import get_config
 >>> config = get_config()
 >>> store = create_store(config=config)
 >>> registry = create_registry(config=config)
@@ -39,17 +39,14 @@ from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
-from devqubit_engine.core.config import Config, get_config
-from devqubit_engine.storage.local import (
+from devqubit_engine.config import Config, get_config
+from devqubit_engine.storage.backends.local import (
     LocalRegistry,
     LocalStore,
     LocalWorkspace,
 )
-from devqubit_engine.storage.protocols import (
-    ObjectStoreProtocol,
-    RegistryProtocol,
-    StorageError,
-)
+from devqubit_engine.storage.errors import StorageError
+from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +88,7 @@ def _lazy_import_s3() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[s3] is not installed.
     """
-    from devqubit_engine.storage.remote_s3 import S3Registry, S3Store
+    from devqubit_engine.storage.backends.remote_s3 import S3Registry, S3Store
 
     return S3Store, S3Registry
 
@@ -110,7 +107,7 @@ def _lazy_import_gcs() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[gcs] is not installed.
     """
-    from devqubit_engine.storage.remote_gcs import GCSRegistry, GCSStore
+    from devqubit_engine.storage.backends.remote_gcs import GCSRegistry, GCSStore
 
     return GCSStore, GCSRegistry
 
