@@ -1226,7 +1226,7 @@ class Run:
 
         # Build envelope for manual run
         try:
-            from devqubit_engine.uec.resolution.synthesize import (
+            from devqubit_engine.uec.api.synthesize import (
                 synthesize_envelope,
             )
 
