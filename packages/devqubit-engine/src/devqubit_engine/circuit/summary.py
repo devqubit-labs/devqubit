@@ -263,7 +263,7 @@ def summarize_circuit(circuit: Any, sdk: SDK | None = None) -> CircuitSummary:
     from devqubit_engine.circuit.registry import get_summarizer
 
     if sdk is None:
-        sdk = _detect_sdk(circuit)
+        sdk = _detect_sdk_from_circuit(circuit)
 
     summarizer = get_summarizer(sdk)
     if summarizer is None:
@@ -272,7 +272,7 @@ def summarize_circuit(circuit: Any, sdk: SDK | None = None) -> CircuitSummary:
     return summarizer(circuit)
 
 
-def _detect_sdk(circuit: Any) -> SDK:
+def _detect_sdk_from_circuit(circuit: Any) -> SDK:
     """
     Detect SDK from circuit object type.
 
@@ -293,14 +293,14 @@ def _detect_sdk(circuit: Any) -> SDK:
     """
     module = type(circuit).__module__
 
-    sdk_prefixes = [
+    sdk_patterns = (
         ("qiskit", SDK.QISKIT),
         ("braket", SDK.BRAKET),
         ("cirq", SDK.CIRQ),
         ("pennylane", SDK.PENNYLANE),
-    ]
+    )
 
-    for prefix, sdk in sdk_prefixes:
+    for prefix, sdk in sdk_patterns:
         if prefix in module:
             return sdk
 
@@ -335,68 +335,21 @@ def diff_summaries(
     changes: list[str] = []
     metrics: dict[str, Any] = {}
 
-    def _compare(
-        metric_key: str,
-        label: str,
-        val_a: int,
-        val_b: int,
-        show_pct: bool = True,
-    ) -> None:
-        """Compare two values and record changes."""
-        if val_a == val_b:
-            return
-
-        delta = val_b - val_a
-        metrics[f"{metric_key}_delta"] = delta
-
-        if show_pct and val_a > 0:
-            pct = (delta / val_a) * 100
-            metrics[f"{metric_key}_delta_pct"] = pct
-            changes.append(f"{label}: {val_a} → {val_b} ({pct:+.1f}%)")
-        else:
-            changes.append(f"{label}: {val_a} → {val_b}")
-
     # Compare numeric fields
-    _compare(
-        "num_qubits",
-        "qubits",
-        summary_a.num_qubits,
-        summary_b.num_qubits,
-        show_pct=False,
+    _NUMERIC_FIELDS = (
+        ("num_qubits", "qubits", False),
+        ("num_clbits", "clbits", False),
+        ("depth", "depth", True),
+        ("gate_count_1q", "1Q gates", True),
+        ("gate_count_2q", "2Q gates", True),
+        ("gate_count_total", "total gates", True),
+        ("parameter_count", "parameters", False),
     )
-    _compare(
-        "num_clbits",
-        "clbits",
-        summary_a.num_clbits,
-        summary_b.num_clbits,
-        show_pct=False,
-    )
-    _compare("depth", "depth", summary_a.depth, summary_b.depth)
-    _compare(
-        "gate_count_1q",
-        "1Q gates",
-        summary_a.gate_count_1q,
-        summary_b.gate_count_1q,
-    )
-    _compare(
-        "gate_count_2q",
-        "2Q gates",
-        summary_a.gate_count_2q,
-        summary_b.gate_count_2q,
-    )
-    _compare(
-        "gate_count_total",
-        "total gates",
-        summary_a.gate_count_total,
-        summary_b.gate_count_total,
-    )
-    _compare(
-        "parameter_count",
-        "parameters",
-        summary_a.parameter_count,
-        summary_b.parameter_count,
-        show_pct=False,
-    )
+
+    for field_name, label, show_pct in _NUMERIC_FIELDS:
+        val_a = getattr(summary_a, field_name)
+        val_b = getattr(summary_b, field_name)
+        _compare_numeric(field_name, label, val_a, val_b, show_pct, changes, metrics)
 
     # Clifford status change
     if summary_a.is_clifford != summary_b.is_clifford:
@@ -421,7 +374,7 @@ def diff_summaries(
 
     logger.debug(
         "Compared summaries: %s",
-        "match" if len(changes) == 0 else f"{len(changes)} changes",
+        "match" if not changes else f"{len(changes)} changes",
     )
 
     return CircuitDiff(
@@ -431,3 +384,27 @@ def diff_summaries(
         summary_a=summary_a,
         summary_b=summary_b,
     )
+
+
+def _compare_numeric(
+    metric_key: str,
+    label: str,
+    val_a: int,
+    val_b: int,
+    show_pct: bool,
+    changes: list[str],
+    metrics: dict[str, Any],
+) -> None:
+    """Compare two numeric values and record changes."""
+    if val_a == val_b:
+        return
+
+    delta = val_b - val_a
+    metrics[f"{metric_key}_delta"] = delta
+
+    if show_pct and val_a > 0:
+        pct = (delta / val_a) * 100
+        metrics[f"{metric_key}_delta_pct"] = pct
+        changes.append(f"{label}: {val_a} → {val_b} ({pct:+.1f}%)")
+    else:
+        changes.append(f"{label}: {val_a} → {val_b}")

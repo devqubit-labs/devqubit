@@ -51,49 +51,44 @@ def find_artifact(
     for artifact in record.artifacts:
         if role and artifact.role != role:
             continue
-        if kind_contains:
-            kind = artifact.kind.lower()
-            if kind_contains.lower() not in kind:
-                continue
+        if kind_contains and kind_contains.lower() not in artifact.kind.lower():
+            continue
         logger.debug("Found artifact: role=%s, kind=%s", artifact.role, artifact.kind)
         return artifact
     return None
 
 
-def load_json_artifact(
-    artifact: ArtifactRef,
-    store: ObjectStoreProtocol,
-) -> Any | None:
+def find_all_artifacts(
+    record: RunRecord,
+    *,
+    role: str | None = None,
+    kind_contains: str | None = None,
+) -> list[ArtifactRef]:
     """
-    Load and parse JSON artifact payload from object store.
+    Find all artifacts matching criteria.
 
     Parameters
     ----------
-    artifact : ArtifactRef
-        Artifact reference containing digest.
-    store : ObjectStoreProtocol
-        Object store to retrieve data from.
+    record : RunRecord
+        Run record containing artifacts.
+    role : str, optional
+        Required artifact role.
+    kind_contains : str, optional
+        Substring required in artifact kind (case-insensitive).
 
     Returns
     -------
-    Any or None
-        Parsed JSON payload, or None on failure.
-
-    Notes
-    -----
-    Returns None on any failure (missing object, decode error, parse error).
-    Check logs for details on failures.
+    list of ArtifactRef
+        All matching artifact references.
     """
-    try:
-        data = store.get_bytes(artifact.digest)
-        return json.loads(data.decode("utf-8"))
-    except Exception as e:
-        logger.debug(
-            "Failed to load JSON artifact %s: %s",
-            artifact.digest[:16],
-            e,
-        )
-        return None
+    results = []
+    for artifact in record.artifacts:
+        if role and artifact.role != role:
+            continue
+        if kind_contains and kind_contains.lower() not in artifact.kind.lower():
+            continue
+        results.append(artifact)
+    return results
 
 
 def get_artifact_digests(
@@ -119,19 +114,240 @@ def get_artifact_digests(
     list of str
         Sorted list of artifact digests matching filters.
     """
-    digests: list[str] = []
-    for artifact in record.artifacts:
-        if artifact.role != role:
-            continue
+    artifacts = find_all_artifacts(record, role=role, kind_contains=kind_contains)
+    return sorted(a.digest for a in artifacts)
 
-        if kind_contains:
-            kind = artifact.kind.lower()
-            if kind_contains.lower() not in kind:
-                continue
 
-        digests.append(artifact.digest)
+def load_artifact_bytes(
+    artifact: ArtifactRef,
+    store: ObjectStoreProtocol,
+) -> bytes | None:
+    """
+    Load artifact bytes from object store.
 
-    return sorted(digests)
+    Parameters
+    ----------
+    artifact : ArtifactRef
+        Artifact reference containing digest.
+    store : ObjectStoreProtocol
+        Object store to retrieve data from.
+
+    Returns
+    -------
+    bytes or None
+        Raw bytes, or None on failure.
+    """
+    try:
+        return store.get_bytes(artifact.digest)
+    except Exception as e:
+        logger.debug("Failed to load artifact %s: %s", artifact.digest[:16], e)
+        return None
+
+
+def load_artifact_text(
+    artifact: ArtifactRef,
+    store: ObjectStoreProtocol,
+    *,
+    encoding: str = "utf-8",
+) -> str | None:
+    """
+    Load artifact as text from object store.
+
+    Parameters
+    ----------
+    artifact : ArtifactRef
+        Artifact reference.
+    store : ObjectStoreProtocol
+        Object store.
+    encoding : str, default="utf-8"
+        Text encoding.
+
+    Returns
+    -------
+    str or None
+        Decoded text, or None on failure.
+    """
+    data = load_artifact_bytes(artifact, store)
+    if data is None:
+        return None
+    try:
+        return data.decode(encoding)
+    except UnicodeDecodeError as e:
+        logger.debug("Failed to decode artifact as %s: %s", encoding, e)
+        return None
+
+
+def load_artifact_json(
+    artifact: ArtifactRef,
+    store: ObjectStoreProtocol,
+) -> Any | None:
+    """
+    Load and parse JSON artifact from object store.
+
+    Parameters
+    ----------
+    artifact : ArtifactRef
+        Artifact reference containing digest.
+    store : ObjectStoreProtocol
+        Object store to retrieve data from.
+
+    Returns
+    -------
+    Any or None
+        Parsed JSON payload, or None on failure.
+    """
+    text = load_artifact_text(artifact, store)
+    if text is None:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        logger.debug("Failed to parse artifact as JSON: %s", e)
+        return None
+
+
+# Legacy alias for backward compatibility
+load_json_artifact = load_artifact_json
+
+
+def get_artifact(
+    record: RunRecord,
+    selector: str | int,
+) -> ArtifactRef | None:
+    """
+    Get artifact by index or selector.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+    selector : str or int
+        Either:
+        - int: artifact index
+        - str: digest prefix, kind, or "role:kind" pattern
+
+    Returns
+    -------
+    ArtifactRef or None
+        Matching artifact or None if not found.
+    """
+    # Index-based access
+    if isinstance(selector, int):
+        if 0 <= selector < len(record.artifacts):
+            return record.artifacts[selector]
+        return None
+
+    selector = str(selector)
+
+    # Digest prefix
+    if selector.startswith("sha256:"):
+        for art in record.artifacts:
+            if art.digest.startswith(selector):
+                return art
+        return None
+
+    # role:kind pattern
+    if ":" in selector:
+        role, kind = selector.split(":", 1)
+        for art in record.artifacts:
+            if art.role == role and kind in art.kind:
+                return art
+        return None
+
+    # Kind substring match
+    for art in record.artifacts:
+        if selector in art.kind:
+            return art
+
+    return None
+
+
+def get_artifact_bytes(
+    record: RunRecord,
+    selector: str | int,
+    store: ObjectStoreProtocol,
+) -> bytes | None:
+    """
+    Get artifact content bytes by selector.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+    selector : str or int
+        Artifact selector (see get_artifact).
+    store : ObjectStoreProtocol
+        Object store.
+
+    Returns
+    -------
+    bytes or None
+        Artifact content or None if not found.
+    """
+    art = get_artifact(record, selector)
+    if not art:
+        return None
+    return load_artifact_bytes(art, store)
+
+
+def get_artifact_text(
+    record: RunRecord,
+    selector: str | int,
+    store: ObjectStoreProtocol,
+    *,
+    encoding: str = "utf-8",
+) -> str | None:
+    """
+    Get artifact content as text by selector.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+    selector : str or int
+        Artifact selector.
+    store : ObjectStoreProtocol
+        Object store.
+    encoding : str, default="utf-8"
+        Text encoding.
+
+    Returns
+    -------
+    str or None
+        Artifact text content or None if not found or decode fails.
+    """
+    art = get_artifact(record, selector)
+    if not art:
+        return None
+    return load_artifact_text(art, store, encoding=encoding)
+
+
+def get_artifact_json(
+    record: RunRecord,
+    selector: str | int,
+    store: ObjectStoreProtocol,
+) -> Any | None:
+    """
+    Get artifact content as parsed JSON by selector.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+    selector : str or int
+        Artifact selector.
+    store : ObjectStoreProtocol
+        Object store.
+
+    Returns
+    -------
+    Any or None
+        Parsed JSON or None if not found/invalid.
+    """
+    art = get_artifact(record, selector)
+    if not art:
+        return None
+    return load_artifact_json(art, store)
 
 
 @dataclass
@@ -211,7 +427,7 @@ def list_artifacts(
     store: ObjectStoreProtocol | None = None,
 ) -> list[ArtifactInfo]:
     """
-    List artifacts from a run record.
+    List artifacts from a run record with extended info.
 
     Parameters
     ----------
@@ -232,7 +448,6 @@ def list_artifacts(
     results: list[ArtifactInfo] = []
 
     for i, art in enumerate(record.artifacts):
-        # Apply filters
         if role and art.role != role:
             continue
         if kind_contains and kind_contains.lower() not in art.kind.lower():
@@ -254,165 +469,9 @@ def list_artifacts(
 
         results.append(ArtifactInfo(ref=art, index=i, name=name, size=size))
 
-    # Sort by role, then kind
     results.sort(key=lambda a: (a.role, a.kind, a.index))
-
     logger.debug("Listed %d artifacts (filtered by role=%s)", len(results), role)
     return results
-
-
-def get_artifact(
-    record: RunRecord,
-    selector: str | int,
-) -> ArtifactRef | None:
-    """
-    Get artifact by index or selector.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record.
-    selector : str or int
-        Either:
-        - int: artifact index
-        - str: digest prefix, kind, or "role:kind" pattern
-
-    Returns
-    -------
-    ArtifactRef or None
-        Matching artifact or None if not found.
-    """
-    if isinstance(selector, int):
-        if 0 <= selector < len(record.artifacts):
-            return record.artifacts[selector]
-        return None
-
-    selector = str(selector)
-
-    # Try digest prefix
-    if selector.startswith("sha256:"):
-        for art in record.artifacts:
-            if art.digest.startswith(selector):
-                return art
-        return None
-
-    # Try role:kind pattern
-    if ":" in selector:
-        role, kind = selector.split(":", 1)
-        for art in record.artifacts:
-            if art.role == role and kind in art.kind:
-                return art
-        return None
-
-    # Try kind match
-    for art in record.artifacts:
-        if selector in art.kind:
-            return art
-
-    return None
-
-
-def get_artifact_bytes(
-    record: RunRecord,
-    selector: str | int,
-    store: ObjectStoreProtocol,
-) -> bytes | None:
-    """
-    Get artifact content bytes.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record.
-    selector : str or int
-        Artifact selector (see get_artifact).
-    store : ObjectStoreProtocol
-        Object store.
-
-    Returns
-    -------
-    bytes or None
-        Artifact content or None if not found.
-    """
-    art = get_artifact(record, selector)
-    if not art:
-        return None
-
-    try:
-        return store.get_bytes(art.digest)
-    except Exception as e:
-        logger.debug("Failed to get artifact bytes: %s", e)
-        return None
-
-
-def get_artifact_text(
-    record: RunRecord,
-    selector: str | int,
-    store: ObjectStoreProtocol,
-    *,
-    encoding: str = "utf-8",
-) -> str | None:
-    """
-    Get artifact content as text.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record.
-    selector : str or int
-        Artifact selector.
-    store : ObjectStoreProtocol
-        Object store.
-    encoding : str, default="utf-8"
-        Text encoding.
-
-    Returns
-    -------
-    str or None
-        Artifact text content or None if not found or decode fails.
-    """
-    data = get_artifact_bytes(record, selector, store)
-    if data is None:
-        return None
-
-    try:
-        return data.decode(encoding)
-    except UnicodeDecodeError as e:
-        logger.debug("Failed to decode artifact as %s: %s", encoding, e)
-        return None
-
-
-def get_artifact_json(
-    record: RunRecord,
-    selector: str | int,
-    store: ObjectStoreProtocol,
-) -> Any | None:
-    """
-    Get artifact content as parsed JSON.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record.
-    selector : str or int
-        Artifact selector.
-    store : ObjectStoreProtocol
-        Object store.
-
-    Returns
-    -------
-    Any or None
-        Parsed JSON or None if not found/invalid.
-    """
-    text = get_artifact_text(record, selector, store)
-    if text is None:
-        return None
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        logger.debug("Failed to parse artifact as JSON: %s", e)
-        return None
 
 
 def get_program_qasm(
@@ -467,16 +526,17 @@ def get_program_qasm(
     # Fallback: search artifacts
     kind_pattern = "openqasm3.canonical" if canonical else "openqasm3"
     for art in record.artifacts:
-        if art.role == "program" and kind_pattern in art.kind:
-            meta = art.meta or {}
-            prog_idx = meta.get("program_index", 0)
-            if prog_idx == index:
-                try:
-                    data = store.get_bytes(art.digest)
-                    logger.debug("Loaded QASM from artifact: %s", art.kind)
-                    return data.decode("utf-8")
-                except Exception as e:
-                    logger.debug("Failed to load QASM from artifact: %s", e)
+        if art.role != "program" or kind_pattern not in art.kind:
+            continue
+        meta = art.meta or {}
+        if meta.get("program_index", 0) != index:
+            continue
+        try:
+            data = store.get_bytes(art.digest)
+            logger.debug("Loaded QASM from artifact: %s", art.kind)
+            return data.decode("utf-8")
+        except Exception as e:
+            logger.debug("Failed to load QASM from artifact: %s", e)
 
     # If canonical not found and we wanted it, try raw
     if canonical:
@@ -523,9 +583,7 @@ def list_programs(record: RunRecord) -> list[dict[str, Any]]:
 
     # From artifacts (fill gaps)
     for art in record.artifacts:
-        if art.role != "program":
-            continue
-        if "openqasm3" not in art.kind:
+        if art.role != "program" or "openqasm3" not in art.kind:
             continue
 
         meta = art.meta or {}
@@ -596,7 +654,7 @@ class CountsInfo:
 
     def __repr__(self) -> str:
         """Return string representation."""
-        return f"CountsInfo(shots={self.total_shots}, " f"outcomes={self.num_outcomes})"
+        return f"CountsInfo(shots={self.total_shots}, outcomes={self.num_outcomes})"
 
 
 def get_counts(
@@ -623,51 +681,55 @@ def get_counts(
     CountsInfo or None
         Counts information or None if not found.
     """
-    # Find results artifact with counts
     artifact = find_artifact(record, role="results", kind_contains="counts")
     if not artifact:
         logger.debug("No counts artifact found in run %s", record.run_id)
         return None
 
-    payload = load_json_artifact(artifact, store)
+    payload = load_artifact_json(artifact, store)
     if not isinstance(payload, dict):
         return None
 
-    # Handle batch format
-    experiments = payload.get("experiments")
-    if isinstance(experiments, list) and experiments:
-        if experiment_index is not None:
-            # Specific experiment
-            if experiment_index < len(experiments):
-                exp = experiments[experiment_index]
-                raw_counts = exp.get("counts", {})
-            else:
-                logger.debug(
-                    "Experiment index %d out of range (max: %d)",
-                    experiment_index,
-                    len(experiments) - 1,
-                )
-                return None
-        else:
-            # Aggregate all experiments
-            raw_counts: dict[str, int] = {}
-            for exp in experiments:
-                if isinstance(exp, dict):
-                    for k, v in exp.get("counts", {}).items():
-                        raw_counts[str(k)] = raw_counts.get(str(k), 0) + int(v)
-    else:
-        # Simple format
-        raw_counts = payload.get("counts", {})
-
-    if not isinstance(raw_counts, dict) or not raw_counts:
+    raw_counts = _extract_counts_from_payload(payload, experiment_index)
+    if not raw_counts:
         return None
 
-    # Build CountsInfo
     counts = {str(k): int(v) for k, v in raw_counts.items()}
     total = sum(counts.values())
 
     logger.debug("Loaded counts: %d shots, %d outcomes", total, len(counts))
     return CountsInfo(counts=counts, total_shots=total, num_outcomes=len(counts))
+
+
+def _extract_counts_from_payload(
+    payload: dict[str, Any],
+    experiment_index: int | None,
+) -> dict[str, int]:
+    """Extract raw counts from payload, handling batch format."""
+    experiments = payload.get("experiments")
+
+    if not isinstance(experiments, list) or not experiments:
+        # Simple format
+        return payload.get("counts", {})
+
+    if experiment_index is not None:
+        # Specific experiment
+        if experiment_index >= len(experiments):
+            logger.debug(
+                "Experiment index %d out of range (max: %d)",
+                experiment_index,
+                len(experiments) - 1,
+            )
+            return {}
+        return experiments[experiment_index].get("counts", {})
+
+    # Aggregate all experiments
+    aggregated: dict[str, int] = {}
+    for exp in experiments:
+        if isinstance(exp, dict):
+            for k, v in exp.get("counts", {}).items():
+                aggregated[str(k)] = aggregated.get(str(k), 0) + int(v)
+    return aggregated
 
 
 def diff_counts(
@@ -700,7 +762,6 @@ def diff_counts(
     """
     probs_a = counts_a.probabilities
     probs_b = counts_b.probabilities
-
     all_keys = set(probs_a.keys()) | set(probs_b.keys())
 
     # Compute TVD
@@ -722,7 +783,6 @@ def diff_counts(
             }
         )
 
-    # Sort by max probability
     aligned.sort(key=lambda x: max(x["prob_a"], x["prob_b"]), reverse=True)
 
     return {

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable, Dict
+from typing import Any, Callable
 
 
 class SDK(str, Enum):
@@ -51,12 +51,16 @@ class CircuitFormat(str, Enum):
     @property
     def sdk(self) -> SDK:
         """Get associated SDK for native formats."""
-        return {
-            CircuitFormat.QPY: SDK.QISKIT,
-            CircuitFormat.JAQCD: SDK.BRAKET,
-            CircuitFormat.CIRQ_JSON: SDK.CIRQ,
-            CircuitFormat.TAPE_JSON: SDK.PENNYLANE,
-        }.get(self, SDK.UNKNOWN)
+        return _FORMAT_TO_SDK.get(self, SDK.UNKNOWN)
+
+
+# Mapping from native formats to their SDKs
+_FORMAT_TO_SDK: dict[CircuitFormat, SDK] = {
+    CircuitFormat.QPY: SDK.QISKIT,
+    CircuitFormat.JAQCD: SDK.BRAKET,
+    CircuitFormat.CIRQ_JSON: SDK.CIRQ,
+    CircuitFormat.TAPE_JSON: SDK.PENNYLANE,
+}
 
 
 @dataclass
@@ -169,7 +173,7 @@ class GateClassifier:
 
     def __init__(
         self,
-        gates: Dict[str, GateInfo],
+        gates: dict[str, GateInfo],
         normalizer: Callable[[str], str] | None = None,
     ) -> None:
         self._gates = gates
@@ -181,10 +185,24 @@ class GateClassifier:
         return self._gates.get(normalized, GateInfo(GateCategory.OTHER))
 
     def classify_counts(
-        self, gate_counts: Dict[str, int]
-    ) -> Dict[str, int | bool | None]:
-        """Classify gate counts and compute summary statistics."""
-        stats: Dict[str, int | bool | None] = {
+        self,
+        gate_counts: dict[str, int],
+    ) -> dict[str, int | bool | None]:
+        """
+        Classify gate counts and compute summary statistics.
+
+        Parameters
+        ----------
+        gate_counts : dict[str, int]
+            Mapping from gate name to count.
+
+        Returns
+        -------
+        dict
+            Statistics with keys: gate_count_1q, gate_count_2q,
+            gate_count_multi, gate_count_measure, is_clifford.
+        """
+        stats: dict[str, int | bool | None] = {
             "gate_count_1q": 0,
             "gate_count_2q": 0,
             "gate_count_multi": 0,
@@ -199,18 +217,18 @@ class GateClassifier:
 
             match info.category:
                 case GateCategory.SINGLE_QUBIT:
-                    stats["gate_count_1q"] += count
+                    stats["gate_count_1q"] += count  # type: ignore[operator]
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.TWO_QUBIT:
-                    stats["gate_count_2q"] += count
+                    stats["gate_count_2q"] += count  # type: ignore[operator]
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.MULTI_QUBIT:
-                    stats["gate_count_multi"] += count
+                    stats["gate_count_multi"] += count  # type: ignore[operator]
                     is_clifford = False
                 case GateCategory.MEASURE:
-                    stats["gate_count_measure"] += count
+                    stats["gate_count_measure"] += count  # type: ignore[operator]
                 case GateCategory.BARRIER:
                     pass
                 case _:
