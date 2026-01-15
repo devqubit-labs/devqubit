@@ -1171,19 +1171,6 @@ class Run:
                 return True
         return False
 
-    def _is_manual_run(self) -> bool:
-        """
-        Check if this is a manual run (no adapter).
-
-        Returns
-        -------
-        bool
-            True if manual run, False if adapter run.
-        """
-        from devqubit_engine.utils.common import is_manual_run_record
-
-        return is_manual_run_record(self.record)
-
     def _ensure_envelope(self) -> None:
         """
         Ensure an envelope artifact exists before finalization.
@@ -1205,12 +1192,14 @@ class Run:
         a ``MissingExecutionEnvelope`` error in the errors list. The run
         is still persisted (for debugging) but marked as failed.
         """
+        from devqubit_engine.utils.common import is_manual_run_record
+
         if self._has_envelope_artifact():
             logger.debug("Envelope artifact already exists, skipping auto-generation")
             return
 
         # Only auto-generate for manual runs
-        if not self._is_manual_run():
+        if not is_manual_run_record(self.record):
             adapter = self.record.get("adapter", "unknown")
 
             # Mark run as FAILED with structured error
