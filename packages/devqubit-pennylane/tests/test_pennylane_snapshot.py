@@ -7,7 +7,7 @@ import json
 
 import pennylane as qml
 import pytest
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 from devqubit_pennylane.snapshot import (
     _extract_capabilities,
     _extract_shots,

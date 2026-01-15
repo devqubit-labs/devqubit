@@ -31,8 +31,8 @@ from devqubit_engine.utils.common import is_manual_run_record
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.record import RunRecord
     from devqubit_engine.storage.types import ObjectStoreProtocol
+    from devqubit_engine.tracking.record import RunRecord
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 
 

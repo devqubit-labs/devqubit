@@ -12,7 +12,7 @@ Example
 -------
 >>> from braket.circuits import Circuit
 >>> from braket.devices import LocalSimulator
->>> from devqubit_engine.core.run import track
+>>> from devqubit_engine.tracking.run import track
 >>>
 >>> circuit = Circuit().h(0).cnot(0, 1)
 >>>
@@ -36,7 +36,7 @@ from devqubit_braket.envelope import (
 from devqubit_braket.serialization import is_braket_circuit
 from devqubit_braket.tracked import TrackedTask, TrackedTaskBatch
 from devqubit_braket.utils import extract_task_id, get_backend_name
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable

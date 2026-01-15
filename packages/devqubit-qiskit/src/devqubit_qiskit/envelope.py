@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from devqubit_engine.core.run import Run
 from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.execution import ExecutionSnapshot

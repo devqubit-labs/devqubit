@@ -36,7 +36,7 @@ from devqubit_qiskit_runtime.utils import (
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.run import Run
+    from devqubit_engine.tracking.run import Run
 
 logger = logging.getLogger(__name__)
 

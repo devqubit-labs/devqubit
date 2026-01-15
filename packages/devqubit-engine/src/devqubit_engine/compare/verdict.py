@@ -18,8 +18,8 @@ from typing import Any
 from devqubit_engine.circuit.summary import diff_summaries
 from devqubit_engine.compare.diff import _extract_circuit_summary
 from devqubit_engine.compare.results import ComparisonResult, Verdict, VerdictCategory
-from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.types import ObjectStoreProtocol
+from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.utils.distributions import compute_noise_context
 
 

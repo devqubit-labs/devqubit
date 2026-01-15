@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 
 
 class TestBasicTracking:

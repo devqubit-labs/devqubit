@@ -15,7 +15,7 @@ import logging
 from typing import Any
 
 from devqubit_engine.circuit.models import CircuitFormat
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.program import ProgramArtifact
 from devqubit_engine.uec.types import ProgramRole
 from devqubit_qiskit.serialization import QiskitCircuitSerializer

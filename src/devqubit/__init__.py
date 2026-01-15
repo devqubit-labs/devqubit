@@ -97,18 +97,18 @@ if TYPE_CHECKING:
     from devqubit_engine.compare.diff import diff, diff_runs
     from devqubit_engine.compare.verify import verify, verify_against_baseline
     from devqubit_engine.config import Config, get_config, set_config
-    from devqubit_engine.core.record import RunRecord
-    from devqubit_engine.core.run import Run, track, wrap_backend
     from devqubit_engine.storage.factory import create_registry, create_store
     from devqubit_engine.storage.types import ArtifactRef
+    from devqubit_engine.tracking.record import RunRecord
+    from devqubit_engine.tracking.run import Run, track, wrap_backend
     from devqubit_ui.app import run_server
 
 
 _LAZY_IMPORTS = {
-    "Run": ("devqubit_engine.core.run", "Run"),
-    "track": ("devqubit_engine.core.run", "track"),
-    "wrap_backend": ("devqubit_engine.core.run", "wrap_backend"),
-    "RunRecord": ("devqubit_engine.core.record", "RunRecord"),
+    "Run": ("devqubit_engine.tracking.run", "Run"),
+    "track": ("devqubit_engine.tracking.run", "track"),
+    "wrap_backend": ("devqubit_engine.tracking.run", "wrap_backend"),
+    "RunRecord": ("devqubit_engine.tracking.record", "RunRecord"),
     "ArtifactRef": ("devqubit_engine.uec.types", "ArtifactRef"),
     "diff": ("devqubit_engine.compare.diff", "diff"),
     "diff_runs": ("devqubit_engine.compare.diff", "diff_runs"),
@@ -122,9 +122,9 @@ _LAZY_IMPORTS = {
     "Bundle": ("devqubit_engine.bundle.reader", "Bundle"),
     "create_store": ("devqubit_engine.storage.factory", "create_store"),
     "create_registry": ("devqubit_engine.storage.factory", "create_registry"),
-    "Config": ("devqubit_engine.core.config", "Config"),
-    "get_config": ("devqubit_engine.core.config", "get_config"),
-    "set_config": ("devqubit_engine.core.config", "set_config"),
+    "Config": ("devqubit_engine.tracking.config", "Config"),
+    "get_config": ("devqubit_engine.tracking.config", "get_config"),
+    "set_config": ("devqubit_engine.tracking.config", "set_config"),
     "run_server": ("devqubit_ui.app", "run_server"),
 }
 

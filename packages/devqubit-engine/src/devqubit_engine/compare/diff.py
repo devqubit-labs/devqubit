@@ -37,7 +37,6 @@ from devqubit_engine.compare.results import (
     ProgramMatchMode,
 )
 from devqubit_engine.config import Config, get_config
-from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.artifacts.counts import get_counts
 from devqubit_engine.storage.artifacts.lookup import get_artifact_digests
 from devqubit_engine.storage.factory import create_registry, create_store
@@ -46,6 +45,7 @@ from devqubit_engine.storage.types import (
     ObjectStoreProtocol,
     RegistryProtocol,
 )
+from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.api.resolve import resolve_envelope
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.uec.models.device import DeviceSnapshot

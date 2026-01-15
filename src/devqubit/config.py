@@ -68,12 +68,12 @@ if TYPE_CHECKING:
 
 
 _LAZY_IMPORTS = {
-    "Config": ("devqubit_engine.core.config", "Config"),
-    "RedactionConfig": ("devqubit_engine.core.config", "RedactionConfig"),
-    "get_config": ("devqubit_engine.core.config", "get_config"),
-    "set_config": ("devqubit_engine.core.config", "set_config"),
-    "reset_config": ("devqubit_engine.core.config", "reset_config"),
-    "load_config": ("devqubit_engine.core.config", "load_config"),
+    "Config": ("devqubit_engine.tracking.config", "Config"),
+    "RedactionConfig": ("devqubit_engine.tracking.config", "RedactionConfig"),
+    "get_config": ("devqubit_engine.tracking.config", "get_config"),
+    "set_config": ("devqubit_engine.tracking.config", "set_config"),
+    "reset_config": ("devqubit_engine.tracking.config", "reset_config"),
+    "load_config": ("devqubit_engine.tracking.config", "load_config"),
 }
 
 

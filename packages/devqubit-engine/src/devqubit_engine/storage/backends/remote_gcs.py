@@ -20,7 +20,6 @@ import json
 import re
 from typing import Any, Dict, Iterator, List
 
-from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.types import (
     ArtifactRef,
     BaselineInfo,
@@ -28,6 +27,7 @@ from devqubit_engine.storage.types import (
     RunNotFoundError,
     RunSummary,
 )
+from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.utils.common import utc_now_iso
 
 

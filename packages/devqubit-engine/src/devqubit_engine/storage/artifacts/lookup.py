@@ -20,8 +20,8 @@ from devqubit_engine.storage.artifacts.io import (
 
 
 if TYPE_CHECKING:
-    from devqubit_engine.core.record import RunRecord
     from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
+    from devqubit_engine.tracking.record import RunRecord
 
 logger = logging.getLogger(__name__)
 

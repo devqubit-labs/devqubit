@@ -387,7 +387,7 @@ class TestExecutionEnvelope:
 
         with patch.dict(
             "sys.modules",
-            {"devqubit_engine.core.schema.validation": mock_module},
+            {"devqubit_engine.schema.validation": mock_module},
         ):
             result = env.validate_schema()
 

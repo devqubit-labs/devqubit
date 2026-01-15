@@ -5,12 +5,12 @@
 
 from __future__ import annotations
 
-from devqubit_engine.core.run import track
 from devqubit_engine.storage.gc import (
     check_workspace_health,
     gc_run,
     prune_runs,
 )
+from devqubit_engine.tracking.run import track
 
 
 class TestGarbageCollection:

@@ -57,13 +57,13 @@ from devqubit_engine.circuit.models import (
     LoadedCircuit,
 )
 from devqubit_engine.circuit.registry import get_loader, list_available
-from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
     ArtifactRef,
     ObjectStoreProtocol,
     RegistryProtocol,
 )
+from devqubit_engine.tracking.record import RunRecord
 
 
 logger = logging.getLogger(__name__)
@@ -927,7 +927,7 @@ def _save_replay_run(
 ) -> str | None:
     """Save replay as a new tracked run."""
     try:
-        from devqubit_engine.core.run import track
+        from devqubit_engine.tracking.run import track
 
         dest_registry = registry or create_registry(f"file://{root}" if root else None)
         dest_store = store or create_store(f"file://{root}/objects" if root else None)

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.result import ResultSnapshot
 from devqubit_engine.utils.common import utc_now_iso

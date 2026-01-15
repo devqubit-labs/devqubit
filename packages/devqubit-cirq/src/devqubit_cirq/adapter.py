@@ -11,7 +11,7 @@ using the Uniform Execution Contract (UEC).
 Example
 -------
 >>> import cirq
->>> from devqubit_engine.core import track
+>>> from devqubit_engine.tracking import track
 >>>
 >>> q0, q1 = cirq.LineQubit.range(2)
 >>> circuit = cirq.Circuit([
@@ -42,7 +42,7 @@ from devqubit_cirq.serialization import (
 from devqubit_cirq.snapshot import create_device_snapshot
 from devqubit_cirq.utils import cirq_version, get_adapter_version, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot

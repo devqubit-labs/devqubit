@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from devqubit_engine.bundle.pack import list_bundle_contents, pack_run, unpack_bundle
 from devqubit_engine.bundle.reader import Bundle, is_bundle_path
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 
 
 class TestIsBundle:

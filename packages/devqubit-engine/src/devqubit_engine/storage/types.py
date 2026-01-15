@@ -20,7 +20,7 @@ from typing import (
     runtime_checkable,
 )
 
-from devqubit_engine.core.record import RunRecord
+from devqubit_engine.tracking.record import RunRecord
 
 
 # Regex pattern for validating SHA-256 digest format

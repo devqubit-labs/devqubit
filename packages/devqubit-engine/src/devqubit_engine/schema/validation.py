@@ -80,7 +80,7 @@ def _load_schema(schema_id: str) -> dict[str, Any]:
     logger.debug("Loading schema: %s from %s", schema_id, filename)
 
     try:
-        schema_file = resources.files("devqubit_engine.core.schema") / filename
+        schema_file = resources.files("devqubit_engine.schema") / filename
         with schema_file.open("r", encoding="utf-8") as f:
             schema = json.load(f)
     except FileNotFoundError:

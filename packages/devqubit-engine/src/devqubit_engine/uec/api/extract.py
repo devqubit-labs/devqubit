@@ -23,8 +23,8 @@ from devqubit_engine.uec.models.result import canonicalize_bitstrings
 
 if TYPE_CHECKING:
     from devqubit_engine.circuit.summary import CircuitSummary
-    from devqubit_engine.core.record import RunRecord
     from devqubit_engine.storage.types import ObjectStoreProtocol
+    from devqubit_engine.tracking.record import RunRecord
     from devqubit_engine.uec.models.device import DeviceSnapshot
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 

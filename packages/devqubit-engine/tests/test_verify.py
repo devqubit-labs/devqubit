@@ -14,7 +14,7 @@ from devqubit_engine.compare.verify import (
     verify,
     verify_against_baseline,
 )
-from devqubit_engine.core.run import track
+from devqubit_engine.tracking.run import track
 
 
 class TestVerifyPolicy:

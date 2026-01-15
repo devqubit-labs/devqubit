@@ -143,7 +143,7 @@ class TestCreateDeviceSnapshotWithFakeBackend:
     ):
         """raw_properties_ref is set when tracker is provided."""
 
-        from devqubit_engine.core.run import track
+        from devqubit_engine.tracking.run import track
 
         with track(project="raw_props_test", store=store, registry=registry) as run:
             snapshot = create_device_snapshot(fake_sampler, tracker=run)

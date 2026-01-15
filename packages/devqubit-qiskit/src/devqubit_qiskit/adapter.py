@@ -28,7 +28,7 @@ Example
 -------
 >>> from qiskit import QuantumCircuit
 >>> from qiskit_aer import AerSimulator
->>> from devqubit_engine.core import track
+>>> from devqubit_engine.tracking import track
 >>>
 >>> qc = QuantumCircuit(2)
 >>> qc.h(0)
@@ -48,7 +48,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.producer import ProducerInfo

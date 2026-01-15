@@ -26,7 +26,7 @@ Examples
 >>> store = create_store("s3://my-bucket/devqubit/objects")
 
 >>> # Create both from config
->>> from devqubit_engine.core.config import get_config
+>>> from devqubit_engine.tracking.config import get_config
 >>> config = get_config()
 >>> store = create_store(config=config)
 >>> registry = create_registry(config=config)

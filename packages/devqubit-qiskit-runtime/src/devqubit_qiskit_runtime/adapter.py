@@ -39,7 +39,7 @@ Example
 -------
 >>> from qiskit import QuantumCircuit
 >>> from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2
->>> from devqubit_engine.core import track
+>>> from devqubit_engine.tracking import track
 >>>
 >>> service = QiskitRuntimeService()
 >>> backend = service.backend("ibm_brisbane")
@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from devqubit_engine.circuit.models import CircuitFormat
-from devqubit_engine.core.run import Run
+from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.device import DeviceSnapshot
 from devqubit_engine.uec.envelope import ExecutionEnvelope
 from devqubit_engine.uec.execution import ExecutionSnapshot

@@ -13,9 +13,9 @@ from typing import Any, Callable
 import pytest
 from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
 from devqubit_engine.config import Config
-from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.backends.local import LocalRegistry, LocalStore
 from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
