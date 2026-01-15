@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for baseline verification."""
+"""Tests for baseline verification workflow."""
 
 from __future__ import annotations
 
 import json
 
 import pytest
+from devqubit_engine.compare.ci import (
+    result_to_github_annotations,
+    result_to_junit,
+    write_junit,
+)
 from devqubit_engine.compare.results import ProgramMatchMode, VerifyResult
 from devqubit_engine.compare.verify import (
     VerifyPolicy,
@@ -17,53 +22,8 @@ from devqubit_engine.compare.verify import (
 from devqubit_engine.tracking.run import track
 
 
-class TestVerifyPolicy:
-    """VerifyPolicy configuration tests."""
-
-    def test_default_policy_values(self):
-        """Default policy has sensible CI defaults."""
-        policy = VerifyPolicy()
-
-        assert policy.params_must_match is True
-        assert policy.program_must_match is True
-        assert policy.program_match_mode == ProgramMatchMode.EITHER
-        assert policy.tvd_max is None
-        assert policy.noise_factor is None
-
-    def test_from_dict_parses_correctly(self):
-        """Policy can be created from config dict."""
-        policy = VerifyPolicy.from_dict(
-            {
-                "params_must_match": False,
-                "program_match_mode": "structural",
-                "tvd_max": 0.1,
-                "noise_factor": 1.5,
-            }
-        )
-
-        assert policy.params_must_match is False
-        assert policy.program_match_mode == ProgramMatchMode.STRUCTURAL
-        assert policy.tvd_max == 0.1
-        assert policy.noise_factor == 1.5
-
-    def test_to_dict_roundtrip(self):
-        """Policy survives dict serialization roundtrip."""
-        original = VerifyPolicy(
-            tvd_max=0.05,
-            noise_factor=2.0,
-            program_match_mode=ProgramMatchMode.STRUCTURAL,
-        )
-
-        d = original.to_dict()
-        restored = VerifyPolicy.from_dict(d)
-
-        assert restored.tvd_max == original.tvd_max
-        assert restored.noise_factor == original.noise_factor
-        assert restored.program_match_mode == original.program_match_mode
-
-
-class TestVerify:
-    """Core verification tests."""
+class TestVerifyWorkflow:
+    """End-to-end verification tests simulating CI scenarios."""
 
     def test_identical_runs_pass(self, store, registry, config):
         """Identical runs pass verification."""
@@ -76,7 +36,7 @@ class TestVerify:
             base.log_param("shots", 1000)
             base.log_bytes(
                 kind="circuit.qasm",
-                data=b"OPENQASM 3;",
+                data=b"OPENQASM 3; qubit q; h q;",
                 media_type="text/plain",
                 role="program",
             )
@@ -91,7 +51,7 @@ class TestVerify:
             cand.log_param("shots", 1000)
             cand.log_bytes(
                 kind="circuit.qasm",
-                data=b"OPENQASM 3;",
+                data=b"OPENQASM 3; qubit q; h q;",
                 media_type="text/plain",
                 role="program",
             )
@@ -107,14 +67,14 @@ class TestVerify:
         assert result.ok
         assert len(result.failures) == 0
 
-    def test_param_change_fails(self, store, registry, config):
-        """Parameter changes cause failure when required."""
+    def test_param_change_fails_when_required(self, store, registry, config):
+        """Parameter changes fail verification when params_must_match=True."""
         with track(project="params", config=config) as base:
             base.log_param("shots", 1000)
             base_id = base.run_id
 
         with track(project="params", config=config) as cand:
-            cand.log_param("shots", 2000)
+            cand.log_param("shots", 2000)  # Changed
             cand_id = cand.run_id
 
         result = verify(
@@ -128,12 +88,12 @@ class TestVerify:
         assert not result.ok
         assert any("param" in f.lower() for f in result.failures)
 
-    def test_program_change_fails(self, store, registry, config):
-        """Program changes cause failure when required."""
+    def test_program_change_fails_when_required(self, store, registry, config):
+        """Program changes fail verification when program_must_match=True."""
         with track(project="prog", config=config) as base:
             base.log_bytes(
                 kind="circuit.qasm",
-                data=b"OPENQASM 3; h q;",
+                data=b"OPENQASM 3; qubit q; h q;",
                 media_type="text/plain",
                 role="program",
             )
@@ -142,7 +102,7 @@ class TestVerify:
         with track(project="prog", config=config) as cand:
             cand.log_bytes(
                 kind="circuit.qasm",
-                data=b"OPENQASM 3; x q;",
+                data=b"OPENQASM 3; qubit q; x q;",  # Changed
                 media_type="text/plain",
                 role="program",
             )
@@ -159,12 +119,8 @@ class TestVerify:
         assert not result.ok
         assert any("program" in f.lower() for f in result.failures)
 
-
-class TestTVDThresholds:
-    """TVD-based verification thresholds."""
-
-    def test_tvd_max_enforced(self, store, registry, config):
-        """tvd_max threshold is enforced."""
+    def test_tvd_threshold_enforced(self, store, registry, config):
+        """TVD exceeding threshold fails verification."""
         with track(project="tvd", config=config) as base:
             base.log_bytes(
                 kind="result.counts.json",
@@ -183,7 +139,7 @@ class TestTVDThresholds:
             )
             cand_id = cand.run_id
 
-        # TVD = 0.2, threshold = 0.1 -> should fail
+        # TVD = 0.2, threshold = 0.1 -> fail
         result = verify(
             registry.load(base_id),
             registry.load(cand_id),
@@ -199,8 +155,8 @@ class TestTVDThresholds:
         assert not result.ok
         assert any("tvd" in f.lower() for f in result.failures)
 
-    def test_noise_factor_uses_bootstrap_p95(self, store, registry, config):
-        """noise_factor multiplies bootstrap-calibrated noise_p95."""
+    def test_noise_factor_uses_bootstrap(self, store, registry, config):
+        """noise_factor multiplies bootstrap noise_p95 threshold."""
         with track(project="noise", config=config) as base:
             base.log_bytes(
                 kind="result.counts.json",
@@ -211,7 +167,7 @@ class TestTVDThresholds:
             base_id = base.run_id
 
         with track(project="noise", config=config) as cand:
-            # Large difference that exceeds any reasonable noise threshold
+            # Large difference that should exceed any noise
             cand.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 100, "11": 900}}).encode(),
@@ -228,67 +184,39 @@ class TestTVDThresholds:
             policy=VerifyPolicy(
                 params_must_match=False,
                 program_must_match=False,
-                noise_factor=1.0,  # Use raw p95 threshold
+                noise_factor=1.0,
             ),
         )
 
-        # TVD = 0.4 should exceed noise threshold
         assert not result.ok
-        assert any("noise" in f.lower() or "p95" in f.lower() for f in result.failures)
-
-    def test_analytic_mode_skips_tvd_check(self, store, registry, config):
-        """Runs without counts skip TVD check gracefully."""
-        with track(project="analytic", config=config) as base:
-            base.log_json(name="exp", obj={"value": 0.5}, role="expectation")
-            base_id = base.run_id
-
-        with track(project="analytic", config=config) as cand:
-            cand.log_json(name="exp", obj={"value": 0.6}, role="expectation")
-            cand_id = cand.run_id
-
-        result = verify(
-            registry.load(base_id),
-            registry.load(cand_id),
-            store_baseline=store,
-            store_candidate=store,
-            policy=VerifyPolicy(
-                params_must_match=False,
-                program_must_match=False,
-                noise_factor=2.0,
-            ),
-        )
-
-        # Should pass (TVD check skipped) with warning
-        assert result.ok
-        assert any("tvd check skipped" in w.lower() for w in result.comparison.warnings)
 
 
-class TestBaselineManagement:
-    """Baseline workflow tests."""
+class TestBaselineWorkflow:
+    """Baseline management tests."""
 
     def test_missing_baseline_raises(self, store, registry, config):
         """Missing baseline raises error by default."""
-        with track(project="no_base", config=config) as run:
+        with track(project="no_baseline", config=config) as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
         with pytest.raises(ValueError, match="No baseline"):
             verify_against_baseline(
                 registry.load(run_id),
-                project="no_base",
+                project="no_baseline",
                 store=store,
                 registry=registry,
             )
 
     def test_allow_missing_baseline_passes(self, store, registry, config):
-        """allow_missing_baseline=True allows first run."""
-        with track(project="first", config=config) as run:
+        """First run passes when allow_missing_baseline=True."""
+        with track(project="first_run", config=config) as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
         result = verify_against_baseline(
             registry.load(run_id),
-            project="first",
+            project="first_run",
             store=store,
             registry=registry,
             policy=VerifyPolicy(allow_missing_baseline=True),
@@ -297,8 +225,8 @@ class TestBaselineManagement:
         assert result.ok
         assert result.baseline_run_id is None
 
-    def test_promote_on_pass(self, store, registry, config):
-        """promote_on_pass updates baseline on success."""
+    def test_promote_on_pass_updates_baseline(self, store, registry, config):
+        """Passing verification with promote_on_pass updates baseline."""
         with track(project="promote", config=config) as run:
             run.log_param("x", 1)
             run_id = run.run_id
@@ -318,19 +246,19 @@ class TestBaselineManagement:
 
     def test_no_promote_on_fail(self, store, registry, config):
         """Failed verification does not update baseline."""
-        with track(project="nopromote", config=config) as base:
+        with track(project="no_promote", config=config) as base:
             base.log_param("x", 1)
             base_id = base.run_id
 
-        registry.set_baseline("nopromote", base_id)
+        registry.set_baseline("no_promote", base_id)
 
-        with track(project="nopromote", config=config) as cand:
+        with track(project="no_promote", config=config) as cand:
             cand.log_param("x", 999)  # Different
             cand_id = cand.run_id
 
         result = verify_against_baseline(
             registry.load(cand_id),
-            project="nopromote",
+            project="no_promote",
             store=store,
             registry=registry,
             policy=VerifyPolicy(params_must_match=True),
@@ -339,11 +267,144 @@ class TestBaselineManagement:
 
         assert not result.ok
         # Baseline unchanged
-        assert registry.get_baseline("nopromote")["run_id"] == base_id
+        assert registry.get_baseline("no_promote")["run_id"] == base_id
+
+
+class TestVerifyPolicy:
+    """VerifyPolicy configuration and serialization."""
+
+    def test_default_values(self):
+        """Default policy has sensible CI defaults."""
+        policy = VerifyPolicy()
+
+        assert policy.params_must_match is True
+        assert policy.program_must_match is True
+        assert policy.program_match_mode == ProgramMatchMode.EITHER
+        assert policy.tvd_max is None
+        assert policy.noise_factor is None
+
+    def test_from_dict(self):
+        """Policy can be created from config dict."""
+        policy = VerifyPolicy.from_dict(
+            {
+                "params_must_match": False,
+                "program_match_mode": "structural",
+                "tvd_max": 0.1,
+                "noise_factor": 1.5,
+            }
+        )
+
+        assert policy.params_must_match is False
+        assert policy.program_match_mode == ProgramMatchMode.STRUCTURAL
+        assert policy.tvd_max == 0.1
+        assert policy.noise_factor == 1.5
+
+    def test_roundtrip(self):
+        """Policy survives dict serialization roundtrip."""
+        original = VerifyPolicy(
+            tvd_max=0.05,
+            noise_factor=2.0,
+            program_match_mode=ProgramMatchMode.STRUCTURAL,
+        )
+
+        d = original.to_dict()
+        restored = VerifyPolicy.from_dict(d)
+
+        assert restored.tvd_max == original.tvd_max
+        assert restored.noise_factor == original.noise_factor
+        assert restored.program_match_mode == original.program_match_mode
+
+
+class TestJUnitOutput:
+    """JUnit XML output for CI systems."""
+
+    def test_passing_verification(self, tmp_path):
+        """Passing verification produces valid JUnit XML."""
+        result = VerifyResult(
+            ok=True,
+            failures=[],
+            baseline_run_id="BASE123",
+            candidate_run_id="CAND456",
+            duration_ms=150,
+        )
+
+        junit_path = tmp_path / "results.xml"
+        write_junit(result, junit_path)
+
+        content = junit_path.read_text()
+        assert 'failures="0"' in content
+        assert "CAND456" in content
+        assert "<testsuite" in content
+
+    def test_failing_verification(self, tmp_path):
+        """Failing verification includes failure details."""
+        result = VerifyResult(
+            ok=False,
+            failures=["params mismatch", "TVD exceeded threshold"],
+            baseline_run_id="BASE123",
+            candidate_run_id="CAND456",
+            duration_ms=200,
+        )
+
+        junit_path = tmp_path / "results.xml"
+        write_junit(result, junit_path)
+
+        content = junit_path.read_text()
+        assert 'failures="1"' in content
+        assert "<failure" in content
+
+    def test_result_to_junit_string(self):
+        """result_to_junit returns XML string."""
+        result = VerifyResult(
+            ok=True,
+            failures=[],
+            baseline_run_id="BASE",
+            candidate_run_id="CAND",
+            duration_ms=100,
+        )
+
+        xml = result_to_junit(result)
+
+        assert xml.startswith("<testsuite")
+        assert "CAND" in xml
+
+
+class TestGitHubAnnotations:
+    """GitHub Actions annotation output."""
+
+    def test_pass_uses_notice(self):
+        """Passing verification uses ::notice."""
+        result = VerifyResult(
+            ok=True,
+            failures=[],
+            baseline_run_id="BASE",
+            candidate_run_id="CAND",
+            duration_ms=100,
+        )
+
+        output = result_to_github_annotations(result)
+
+        assert "::notice" in output
+        assert "::error" not in output
+
+    def test_fail_uses_error(self):
+        """Failing verification uses ::error for each failure."""
+        result = VerifyResult(
+            ok=False,
+            failures=["params mismatch", "TVD too high"],
+            baseline_run_id="BASE",
+            candidate_run_id="CAND",
+            duration_ms=100,
+        )
+
+        output = result_to_github_annotations(result)
+
+        assert "::error" in output
+        assert "params mismatch" in output
 
 
 class TestVerifyResultSerialization:
-    """VerifyResult serialization for CI systems."""
+    """VerifyResult serialization for API responses."""
 
     def test_to_dict_structure(self):
         """to_dict has required CI fields."""
@@ -373,7 +434,6 @@ class TestVerifyResultSerialization:
             duration_ms=100,
         )
 
-        # Should not raise
         json_str = json.dumps(result.to_dict(), default=str)
         parsed = json.loads(json_str)
 

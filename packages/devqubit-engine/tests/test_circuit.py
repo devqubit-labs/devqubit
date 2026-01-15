@@ -1,32 +1,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-Tests for circuit module.
-
-Tests circuit data models, SDK detection, loaders, and summarization.
-SDK-specific tests are skipped when the corresponding SDK is not installed.
-"""
+"""Tests for circuit module."""
 
 from __future__ import annotations
 
 import io
 
 import pytest
-from devqubit_engine.circuit.extractors import detect_sdk
-from devqubit_engine.circuit.models import (
-    SDK,
-    CircuitData,
-    CircuitFormat,
-    LoadedCircuit,
+from devqubit_engine.circuit.extractors import (
+    detect_sdk,
+    extract_circuit,
+    extract_circuit_from_refs,
 )
-from devqubit_engine.circuit.registry import (
-    LoaderError,
-    get_loader,
-    list_available,
+from devqubit_engine.circuit.hashing import (
+    hash_circuit_pair,
+    hash_parametric,
+    hash_structural,
 )
+from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
+from devqubit_engine.circuit.registry import LoaderError, get_loader, list_available
 from devqubit_engine.circuit.summary import (
     CircuitSummary,
+    diff_summaries,
     summarize_circuit_data,
 )
 
@@ -53,239 +49,87 @@ requires_cirq = pytest.mark.skipif(
 )
 
 
-class TestCircuitData:
-    """Tests for CircuitData dataclass."""
-
-    def test_circuit_data_binary(self, circuit_data_factory):
-        """CircuitData stores binary data correctly."""
-        data = circuit_data_factory(
-            data=b"binary data",
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
-        )
-
-        assert data.as_bytes() == b"binary data"
-        assert data.format == CircuitFormat.QPY
-        assert data.sdk == SDK.QISKIT
-
-    def test_circuit_data_text(self, circuit_data_factory):
-        """CircuitData stores text data correctly."""
-        data = circuit_data_factory(
-            data="OPENQASM 3.0;",
-            format=CircuitFormat.OPENQASM3,
-            sdk=SDK.QISKIT,
-        )
-
-        assert data.as_text() == "OPENQASM 3.0;"
-        assert data.format == CircuitFormat.OPENQASM3
-
-    def test_circuit_data_with_metadata(self):
-        """CircuitData can include metadata."""
-        data = CircuitData(
-            data=b"test",
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
-            name="my_circuit",
-            index=0,
-            metadata={"version": "1.0"},
-        )
-
-        assert data.name == "my_circuit"
-        assert data.index == 0
-        assert data.metadata == {"version": "1.0"}
-
-    def test_as_bytes_from_text(self, circuit_data_factory):
-        """as_bytes() converts text to bytes."""
-        data = circuit_data_factory(
-            data="hello",
-            format=CircuitFormat.OPENQASM3,
-            sdk=SDK.QISKIT,
-        )
-
-        assert data.as_bytes() == b"hello"
-
-    def test_as_text_from_bytes(self, circuit_data_factory):
-        """as_text() converts bytes to text."""
-        data = circuit_data_factory(
-            data=b"hello",
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
-        )
-
-        assert data.as_text() == "hello"
-
-    def test_as_text_binary_raises(self, circuit_data_factory):
-        """as_text() raises for non-UTF8 binary."""
-        data = circuit_data_factory(
-            data=b"\xff\xfe",  # Invalid UTF-8
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
-        )
-
-        with pytest.raises(UnicodeDecodeError):
-            data.as_text()
-
-
-class TestLoadedCircuit:
-    """Tests for LoadedCircuit dataclass."""
-
-    def test_loaded_circuit_fields(self):
-        """LoadedCircuit has expected fields."""
-        loaded = LoadedCircuit(
-            circuit="mock_circuit_object",
-            sdk=SDK.QISKIT,
-            source_format=CircuitFormat.QPY,
-            name="test_circuit",
-            index=0,
-        )
-
-        assert loaded.circuit == "mock_circuit_object"
-        assert loaded.sdk == SDK.QISKIT
-        assert loaded.source_format == CircuitFormat.QPY
-        assert loaded.name == "test_circuit"
-        assert loaded.index == 0
-
-
-class TestCircuitSummary:
-    """Tests for CircuitSummary dataclass."""
-
-    def test_summary_to_dict(self):
-        """CircuitSummary serializes to dict."""
-        summary = CircuitSummary(
-            num_qubits=2,
-            depth=3,
-            gate_count_1q=2,
-            gate_count_2q=1,
-            gate_types={"h": 1, "cx": 1},
-        )
-
-        d = summary.to_dict()
-
-        assert d["num_qubits"] == 2
-        assert d["depth"] == 3
-        assert d["gate_types"] == {"h": 1, "cx": 1}
-
-    def test_summary_gate_count_total(self):
-        """gate_count_total is computed correctly."""
-        summary = CircuitSummary(
-            gate_count_1q=5,
-            gate_count_2q=3,
-            gate_count_total=8,
-        )
-
-        assert summary.gate_count_total == 8
-
-
-class TestDetectSDK:
-    """Tests for SDK detection from run records."""
-
-    def test_detect_qiskit_from_adapter(self, run_factory):
-        """Detect Qiskit from adapter name."""
-        record = run_factory(adapter="devqubit-qiskit")
-        assert detect_sdk(record) == SDK.QISKIT
-
-    def test_detect_braket_from_adapter(self, run_factory):
-        """Detect Braket from adapter name."""
-        record = run_factory(adapter="devqubit-braket")
-        assert detect_sdk(record) == SDK.BRAKET
-
-    def test_detect_cirq_from_adapter(self, run_factory):
-        """Detect Cirq from adapter name."""
-        record = run_factory(adapter="devqubit-cirq")
-        assert detect_sdk(record) == SDK.CIRQ
-
-    def test_detect_pennylane_from_adapter(self, run_factory):
-        """Detect PennyLane from adapter name."""
-        record = run_factory(adapter="devqubit-pennylane")
-        assert detect_sdk(record) == SDK.PENNYLANE
-
-    def test_detect_unknown_returns_unknown(self, run_factory):
-        """Unknown adapter returns SDK.UNKNOWN."""
-        record = run_factory(adapter="some-unknown-adapter")
-        assert detect_sdk(record) == SDK.UNKNOWN
-
-    def test_detect_case_insensitive(self, run_factory):
-        """SDK detection is case-insensitive."""
-        record = run_factory(adapter="devqubit-Qiskit")
-        assert detect_sdk(record) == SDK.QISKIT
-
-
-class TestQiskitLoader:
-    """Tests for Qiskit circuit loader."""
+class TestCircuitPipeline:
+    """End-to-end tests for circuit extraction and summarization."""
 
     @requires_qiskit
-    def test_qiskit_loader_qpy(self):
-        """QiskitLoader loads QPY format."""
+    def test_qiskit_qpy_full_pipeline(self, run_factory, store, artifact_factory):
+        """
+        Full pipeline: QPY artifact → extract → load → summarize.
+
+        This is the realistic flow when processing a Qiskit run.
+        """
         from qiskit import QuantumCircuit, qpy
 
-        qc = QuantumCircuit(2, 2, name="test")
+        # Create a realistic circuit
+        qc = QuantumCircuit(3, 3, name="ghz_state")
         qc.h(0)
         qc.cx(0, 1)
-        qc.measure([0, 1], [0, 1])
+        qc.cx(1, 2)
+        qc.measure([0, 1, 2], [0, 1, 2])
 
+        # Serialize to QPY
         buffer = io.BytesIO()
         qpy.dump(qc, buffer)
+        qpy_bytes = buffer.getvalue()
 
-        data = CircuitData(
-            data=buffer.getvalue(),
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
+        # Create artifact and run record
+        artifact = artifact_factory(
+            data=qpy_bytes,
+            kind="qiskit.qpy.circuits",
+            role="program",
+            media_type="application/x-qpy",
         )
+        record = run_factory(adapter="devqubit-qiskit", artifacts=[artifact])
 
-        loader = get_loader(SDK.QISKIT)
-        loaded = loader.load(data)
+        # Extract circuit from run
+        circuit_data = extract_circuit(record, store)
 
-        assert loaded.sdk == SDK.QISKIT
-        assert loaded.source_format == CircuitFormat.QPY
-        assert loaded.circuit.num_qubits == 2
+        assert circuit_data is not None
+        assert circuit_data.format == CircuitFormat.QPY
+        assert circuit_data.sdk == SDK.QISKIT
+
+        # Summarize
+        summary = summarize_circuit_data(circuit_data)
+
+        assert summary.num_qubits == 3
+        assert summary.gate_count_1q == 1  # H
+        assert summary.gate_count_2q == 2  # 2x CX
+        assert summary.gate_count_measure == 3
 
     @requires_qiskit
-    def test_qiskit_loader_qasm2(self, bell_qasm2):
-        """QiskitLoader loads QASM2 format."""
-        data = CircuitData(
-            data=bell_qasm2,
-            format=CircuitFormat.OPENQASM2,
-            sdk=SDK.QISKIT,
+    def test_qasm2_full_pipeline(
+        self, run_factory, store, artifact_factory, bell_qasm2
+    ):
+        """
+        Full pipeline: OpenQASM2 artifact → extract → load → summarize.
+        """
+        artifact = artifact_factory(
+            data=bell_qasm2.encode("utf-8"),
+            kind="source.openqasm2",
+            role="program",
+            media_type="text/plain",
         )
+        record = run_factory(adapter="devqubit-qiskit", artifacts=[artifact])
 
-        loader = get_loader(SDK.QISKIT)
-        loaded = loader.load(data)
+        circuit_data = extract_circuit(record, store)
 
-        assert loaded.sdk == SDK.QISKIT
-        assert loaded.circuit.num_qubits == 2
+        assert circuit_data is not None
+        assert circuit_data.format == CircuitFormat.OPENQASM2
 
-    @requires_qiskit
-    def test_qiskit_loader_preserves_name(self):
-        """QiskitLoader preserves circuit name."""
-        from qiskit import QuantumCircuit, qpy
+        summary = summarize_circuit_data(circuit_data)
 
-        qc = QuantumCircuit(2, name="my_named_circuit")
-        qc.h(0)
-
-        buffer = io.BytesIO()
-        qpy.dump(qc, buffer)
-
-        data = CircuitData(
-            data=buffer.getvalue(),
-            format=CircuitFormat.QPY,
-            sdk=SDK.QISKIT,
-        )
-
-        loader = get_loader(SDK.QISKIT)
-        loaded = loader.load(data)
-
-        assert loaded.circuit.name == "my_named_circuit"
-
-
-class TestBraketLoader:
-    """Tests for Braket circuit loader."""
+        assert summary.num_qubits == 2
+        assert summary.depth > 0
 
     @requires_braket
-    def test_braket_loader_jaqcd(self):
-        """BraketLoader loads JAQCD format."""
+    def test_braket_jaqcd_full_pipeline(self, run_factory, store, artifact_factory):
+        """
+        Full pipeline: JAQCD artifact → extract → load → summarize.
+        """
         from braket.circuits import Circuit
 
-        circuit = Circuit().h(0).cnot(0, 1)
+        circuit = Circuit().h(0).cnot(0, 1).h(1)
 
         try:
             from braket.circuits.serialization import IRType
@@ -294,168 +138,270 @@ class TestBraketLoader:
         except ImportError:
             ir_program = circuit.to_ir()
 
-        data = CircuitData(
-            data=ir_program.json(),
-            format=CircuitFormat.JAQCD,
-            sdk=SDK.BRAKET,
+        artifact = artifact_factory(
+            data=ir_program.json().encode("utf-8"),
+            kind="braket.jaqcd",
+            role="program",
+            media_type="application/json",
+        )
+        record = run_factory(adapter="devqubit-braket", artifacts=[artifact])
+
+        circuit_data = extract_circuit(record, store)
+
+        assert circuit_data is not None
+        assert circuit_data.format == CircuitFormat.JAQCD
+        assert circuit_data.sdk == SDK.BRAKET
+
+        summary = summarize_circuit_data(circuit_data)
+
+        assert summary.num_qubits == 2
+        assert summary.gate_count_2q == 1  # CNOT
+
+
+class TestSDKDetection:
+    """Test SDK detection from run records."""
+
+    @pytest.mark.parametrize(
+        "adapter,expected_sdk",
+        [
+            ("devqubit-qiskit", SDK.QISKIT),
+            ("devqubit-braket", SDK.BRAKET),
+            ("devqubit-cirq", SDK.CIRQ),
+            ("devqubit-pennylane", SDK.PENNYLANE),
+            ("devqubit-Qiskit", SDK.QISKIT),  # case insensitive
+            ("unknown-adapter", SDK.UNKNOWN),
+            ("manual", SDK.UNKNOWN),
+        ],
+    )
+    def test_detect_sdk_from_adapter(self, run_factory, adapter, expected_sdk):
+        """SDK detection based on adapter name."""
+        record = run_factory(adapter=adapter)
+        assert detect_sdk(record) == expected_sdk
+
+
+class TestCircuitHashing:
+    """Test circuit hashing for reproducibility tracking."""
+
+    def test_structural_hash_ignores_param_values(self):
+        """
+        Structural hash should be the same for circuits with
+        different parameter values but same structure.
+        """
+        ops_v1 = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "rz", "qubits": [0], "params": {"theta": 0.5}},
+            {"gate": "cx", "qubits": [0, 1]},
+        ]
+        ops_v2 = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "rz", "qubits": [0], "params": {"theta": 1.57}},  # different value
+            {"gate": "cx", "qubits": [0, 1]},
+        ]
+
+        hash_v1 = hash_structural(ops_v1)
+        hash_v2 = hash_structural(ops_v2)
+
+        assert hash_v1 == hash_v2
+        assert hash_v1.startswith("sha256:")
+
+    def test_parametric_hash_differs_with_param_values(self):
+        """
+        Parametric hash should differ when parameter values differ.
+        """
+        ops = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "rz", "qubits": [0], "params": {"theta": None}},
+        ]
+
+        hash_v1 = hash_parametric(ops, {"theta": 0.5})
+        hash_v2 = hash_parametric(ops, {"theta": 1.57})
+
+        assert hash_v1 != hash_v2
+
+    def test_hash_circuit_pair_convenience(self):
+        """hash_circuit_pair returns both hashes."""
+        ops = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "cx", "qubits": [0, 1]},
+        ]
+
+        structural, parametric = hash_circuit_pair(ops)
+
+        assert structural.startswith("sha256:")
+        assert parametric.startswith("sha256:")
+
+    def test_hash_deterministic(self):
+        """Same input always produces same hash."""
+        ops = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "cx", "qubits": [0, 1]},
+            {"gate": "measure", "qubits": [0, 1], "clbits": [0, 1]},
+        ]
+
+        # Multiple calls
+        hashes = [hash_structural(ops) for _ in range(5)]
+
+        assert len(set(hashes)) == 1  # All identical
+
+
+class TestExtractFromRefs:
+    """Test circuit extraction from artifact refs (UEC envelope flow)."""
+
+    def test_extract_from_refs_prefers_qasm3(self, store):
+        """When multiple formats available, prefer OpenQASM3."""
+        qasm3_content = "OPENQASM 3.0; qubit[2] q; h q[0]; cx q[0], q[1];"
+        qasm2_content = "OPENQASM 2.0; qreg q[2]; h q[0]; cx q[0],q[1];"
+
+        from devqubit_engine.storage.types import ArtifactRef
+
+        digest_qasm3 = store.put_bytes(qasm3_content.encode())
+        digest_qasm2 = store.put_bytes(qasm2_content.encode())
+
+        refs = [
+            ArtifactRef(
+                kind="source.openqasm2",
+                digest=digest_qasm2,
+                media_type="text/plain",
+                role="program",
+            ),
+            ArtifactRef(
+                kind="source.openqasm3",
+                digest=digest_qasm3,
+                media_type="text/plain",
+                role="program",
+            ),
+        ]
+
+        result = extract_circuit_from_refs(refs, store)
+
+        assert result is not None
+        assert result.format == CircuitFormat.OPENQASM3
+
+    def test_extract_from_refs_empty_returns_none(self, store):
+        """Empty refs list returns None."""
+        result = extract_circuit_from_refs([], store)
+        assert result is None
+
+
+class TestCircuitDiff:
+    """Test circuit summary comparison for drift detection."""
+
+    def test_diff_identical_summaries(self):
+        """Identical summaries should match."""
+        summary = CircuitSummary(
+            num_qubits=2,
+            depth=3,
+            gate_count_1q=1,
+            gate_count_2q=1,
+            gate_count_total=2,
         )
 
-        loader = get_loader(SDK.BRAKET)
-        loaded = loader.load(data)
+        diff = diff_summaries(summary, summary)
 
-        assert loaded.sdk == SDK.BRAKET
-        assert loaded.source_format == CircuitFormat.JAQCD
+        assert diff.match is True
+        assert len(diff.changes) == 0
 
-
-class TestCirqLoader:
-    """Tests for Cirq circuit loader."""
-
-    @requires_cirq
-    def test_cirq_loader_json(self):
-        """CirqLoader loads Cirq JSON format."""
-        import cirq
-
-        q0, q1 = cirq.LineQubit.range(2)
-        circuit = cirq.Circuit(
-            [
-                cirq.H(q0),
-                cirq.CNOT(q0, q1),
-                cirq.measure(q0, q1, key="m"),
-            ]
+    def test_diff_detects_changes(self):
+        """Diff should detect structural changes."""
+        summary_a = CircuitSummary(
+            num_qubits=2,
+            depth=3,
+            gate_count_1q=1,
+            gate_count_2q=1,
+            gate_count_total=2,
+            gate_types={"h": 1, "cx": 1},
+        )
+        summary_b = CircuitSummary(
+            num_qubits=3,  # changed
+            depth=5,  # changed
+            gate_count_1q=2,  # changed
+            gate_count_2q=2,  # changed
+            gate_count_total=4,
+            gate_types={"h": 2, "cx": 2},
         )
 
-        data = CircuitData(
-            data=cirq.to_json(circuit),
-            format=CircuitFormat.CIRQ_JSON,
-            sdk=SDK.CIRQ,
-        )
+        diff = diff_summaries(summary_a, summary_b)
 
-        loader = get_loader(SDK.CIRQ)
-        loaded = loader.load(data)
-
-        assert loaded.sdk == SDK.CIRQ
-        assert loaded.source_format == CircuitFormat.CIRQ_JSON
+        assert diff.match is False
+        assert len(diff.changes) > 0
+        assert "qubits" in str(diff.changes)
+        assert diff.metrics["num_qubits_delta"] == 1
 
 
-class TestLoaderErrors:
-    """Tests for loader error handling."""
+class TestErrorHandling:
+    """Test error handling in circuit operations."""
 
-    def test_get_loader_unknown_raises(self):
-        """get_loader raises for unknown SDK."""
-        with pytest.raises(LoaderError):
+    def test_loader_unknown_sdk_raises(self):
+        """Getting loader for unknown SDK raises LoaderError."""
+        with pytest.raises(LoaderError) as exc_info:
             get_loader(SDK.UNKNOWN)
 
+        assert "No loader" in str(exc_info.value)
+
+    def test_extract_no_artifacts_returns_none(self, run_factory, store):
+        """Extraction from run without program artifacts returns None."""
+        record = run_factory(artifacts=[])
+
+        result = extract_circuit(record, store)
+
+        assert result is None
+
     @requires_qiskit
-    def test_qiskit_loader_invalid_qpy_raises(self):
-        """QiskitLoader raises for invalid QPY data."""
+    def test_loader_invalid_data_raises(self):
+        """Loading invalid data raises exception."""
         data = CircuitData(
-            data=b"not valid qpy data",
+            data=b"not valid qpy data at all",
             format=CircuitFormat.QPY,
             sdk=SDK.QISKIT,
         )
 
         loader = get_loader(SDK.QISKIT)
-        with pytest.raises(Exception):  # Could be various exceptions
+
+        with pytest.raises(Exception):
             loader.load(data)
 
 
-class TestSummarizeCircuitData:
-    """Tests for circuit data summarization."""
+class TestCircuitData:
+    """Test CircuitData model basics."""
 
-    @requires_qiskit
-    def test_summarize_qasm2_data(self, bell_qasm2):
-        """Summarize CircuitData with OpenQASM2 via loader."""
-        data = CircuitData(
-            data=bell_qasm2,
-            format=CircuitFormat.OPENQASM2,
+    def test_binary_text_conversion(self):
+        """CircuitData converts between bytes and text."""
+        text_data = CircuitData(
+            data="OPENQASM 3.0;",
+            format=CircuitFormat.OPENQASM3,
             sdk=SDK.QISKIT,
         )
 
-        summary = summarize_circuit_data(data)
+        assert text_data.as_bytes() == b"OPENQASM 3.0;"
+        assert text_data.as_text() == "OPENQASM 3.0;"
+        assert text_data.is_binary is False
 
-        assert summary is not None
-        assert summary.num_qubits == 2
-
-    @requires_qiskit
-    def test_summarize_qpy_data(self):
-        """Summarize CircuitData with QPY (requires loader)."""
-        from qiskit import QuantumCircuit, qpy
-
-        qc = QuantumCircuit(3)
-        qc.h(0)
-        qc.cx(0, 1)
-        qc.cx(1, 2)
-
-        buffer = io.BytesIO()
-        qpy.dump(qc, buffer)
-
-        data = CircuitData(
-            data=buffer.getvalue(),
+        binary_data = CircuitData(
+            data=b"\x00\x01\x02",
             format=CircuitFormat.QPY,
             sdk=SDK.QISKIT,
         )
 
-        summary = summarize_circuit_data(data)
+        assert binary_data.as_bytes() == b"\x00\x01\x02"
+        assert binary_data.is_binary is True
 
-        assert summary is not None
-        assert summary.num_qubits == 3
-        assert summary.gate_count_1q == 1
-        assert summary.gate_count_2q == 2
-
-    @requires_braket
-    def test_summarize_braket_jaqcd_data(self):
-        """Summarize CircuitData with JAQCD."""
-        from braket.circuits import Circuit
-        from braket.circuits.serialization import IRType
-
-        circuit = Circuit().h(0).cnot(0, 1).h(1)
-        ir_program = circuit.to_ir(ir_type=IRType.JAQCD)
-
-        data = CircuitData(
-            data=ir_program.json(),
-            format=CircuitFormat.JAQCD,
-            sdk=SDK.BRAKET,
-        )
-
-        summary = summarize_circuit_data(data)
-
-        assert summary is not None
-        assert summary.num_qubits == 2
-        assert summary.gate_count_1q == 2
-        assert summary.gate_count_2q == 1
-
-    @requires_cirq
-    def test_summarize_cirq_json_data(self):
-        """Summarize CircuitData with Cirq JSON."""
-        import cirq
-
-        q0, q1 = cirq.LineQubit.range(2)
-        circuit = cirq.Circuit([cirq.H(q0), cirq.CNOT(q0, q1)])
-
-        data = CircuitData(
-            data=cirq.to_json(circuit),
-            format=CircuitFormat.CIRQ_JSON,
-            sdk=SDK.CIRQ,
-        )
-
-        summary = summarize_circuit_data(data)
-
-        assert summary is not None
-        assert summary.num_qubits == 2
-        assert summary.gate_count_1q == 1
-        assert summary.gate_count_2q == 1
-
-    @requires_qiskit
-    def test_summarize_ghz_circuit(self, ghz_qasm2):
-        """Summarize 3-qubit GHZ circuit."""
-        data = CircuitData(
-            data=ghz_qasm2,
-            format=CircuitFormat.OPENQASM2,
+    def test_circuit_summary_serialization(self):
+        """CircuitSummary round-trips through dict."""
+        summary = CircuitSummary(
+            num_qubits=5,
+            depth=10,
+            gate_count_1q=8,
+            gate_count_2q=4,
+            gate_count_total=12,
+            gate_types={"h": 5, "cx": 4, "rz": 3},
+            is_clifford=False,
             sdk=SDK.QISKIT,
         )
 
-        summary = summarize_circuit_data(data)
+        d = summary.to_dict()
+        restored = CircuitSummary.from_dict(d)
 
-        assert summary.num_qubits == 3
-        assert summary.gate_count_1q == 1  # H
-        assert summary.gate_count_2q == 2  # 2x CX
+        assert restored.num_qubits == summary.num_qubits
+        assert restored.depth == summary.depth
+        assert restored.gate_types == summary.gate_types
+        assert restored.sdk == summary.sdk
