@@ -4,8 +4,7 @@
 """
 Measurement counts utilities.
 
-This module provides functions for extracting and comparing measurement
-counts from run artifacts.
+Functions for extracting and working with measurement counts from run artifacts.
 """
 
 from __future__ import annotations
@@ -14,14 +13,13 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.storage.artifacts.browse import find_artifact
 from devqubit_engine.storage.artifacts.io import load_artifact_json
+from devqubit_engine.storage.artifacts.lookup import find_artifact
 
 
 if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
     from devqubit_engine.storage.types import ObjectStoreProtocol
-
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +72,6 @@ class CountsInfo:
         return result
 
     def __repr__(self) -> str:
-        """Return string representation."""
         return f"CountsInfo(shots={self.total_shots}, outcomes={self.num_outcomes})"
 
 
@@ -86,11 +83,9 @@ def _extract_counts_from_payload(
     experiments = payload.get("experiments")
 
     if not isinstance(experiments, list) or not experiments:
-        # Simple format
         return payload.get("counts", {})
 
     if experiment_index is not None:
-        # Specific experiment
         if experiment_index >= len(experiments):
             logger.debug(
                 "Experiment index %d out of range (max: %d)",

@@ -38,8 +38,8 @@ from devqubit_engine.compare.results import (
 )
 from devqubit_engine.core.config import Config, get_config
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.artifacts.browse import get_artifact_digests
 from devqubit_engine.storage.artifacts.counts import get_counts
+from devqubit_engine.storage.artifacts.lookup import get_artifact_digests
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
     ArtifactRef,

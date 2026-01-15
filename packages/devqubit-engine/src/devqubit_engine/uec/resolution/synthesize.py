@@ -332,8 +332,8 @@ def _build_result(
     is assumed and marked appropriately in metadata.
     """
     # Lazy import to avoid circular dependencies
-    from devqubit_engine.storage.artifacts.browse import find_artifact
     from devqubit_engine.storage.artifacts.io import load_artifact_json
+    from devqubit_engine.storage.artifacts.lookup import find_artifact
 
     status = record.record.get("info", {}).get("status", "RUNNING")
 

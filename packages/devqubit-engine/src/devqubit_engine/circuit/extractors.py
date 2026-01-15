@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 
 from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.storage.artifacts.browse import find_artifact
 from devqubit_engine.storage.artifacts.io import load_artifact_bytes
+from devqubit_engine.storage.artifacts.lookup import find_artifact
 from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
 
 

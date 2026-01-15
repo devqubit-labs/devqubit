@@ -4,8 +4,7 @@
 """
 Artifact browsing and discovery.
 
-This module provides functions for finding, listing, and accessing
-artifacts from run records.
+Functions for finding, listing, and accessing artifacts from run records.
 """
 
 from __future__ import annotations
@@ -24,8 +23,12 @@ if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
     from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
 
-
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Finding artifacts
+# =============================================================================
 
 
 def find_artifact(
@@ -123,18 +126,16 @@ def get_artifact_digests(
     list of str
         Sorted list of artifact digests matching filters.
     """
-    artifacts = find_all_artifacts(
-        record,
-        role=role,
-        kind_contains=kind_contains,
-    )
+    artifacts = find_all_artifacts(record, role=role, kind_contains=kind_contains)
     return sorted(a.digest for a in artifacts)
 
 
-def get_artifact(
-    record: RunRecord,
-    selector: str | int,
-) -> "ArtifactRef | None":
+# =============================================================================
+# Accessing artifacts by selector
+# =============================================================================
+
+
+def get_artifact(record: RunRecord, selector: str | int) -> ArtifactRef | None:
     """
     Get artifact by index or selector.
 
@@ -144,7 +145,6 @@ def get_artifact(
         Run record.
     selector : str or int
         Either:
-
         - int: artifact index
         - str: digest prefix, kind, or "role:kind" pattern
 
@@ -153,7 +153,6 @@ def get_artifact(
     ArtifactRef or None
         Matching artifact or None if not found.
     """
-    # Index-based access
     if isinstance(selector, int):
         if 0 <= selector < len(record.artifacts):
             return record.artifacts[selector]
@@ -244,6 +243,11 @@ def get_artifact_text(
     return load_artifact_text(art, store, encoding=encoding)
 
 
+# =============================================================================
+# Artifact info
+# =============================================================================
+
+
 @dataclass
 class ArtifactInfo:
     """
@@ -268,31 +272,26 @@ class ArtifactInfo:
 
     @property
     def kind(self) -> str:
-        """Get artifact kind."""
         return self.ref.kind
 
     @property
     def digest(self) -> str:
-        """Get content digest."""
         return self.ref.digest
 
     @property
     def digest_short(self) -> str:
-        """Get shortened digest for display."""
         return self.ref.digest[:20] + "..."
 
     @property
     def role(self) -> str:
-        """Get artifact role."""
         return self.ref.role
 
     @property
     def media_type(self) -> str:
-        """Get MIME type."""
         return self.ref.media_type
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for display."""
+        """Convert to dictionary for serialization."""
         d: dict[str, Any] = {
             "index": self.index,
             "name": self.name,
@@ -308,7 +307,6 @@ class ArtifactInfo:
         return d
 
     def __repr__(self) -> str:
-        """Return string representation."""
         size_str = f", {self.size}B" if self.size else ""
         return f"ArtifactInfo({self.index}: {self.role}/{self.kind}{size_str})"
 
@@ -347,13 +345,11 @@ def list_artifacts(
         if kind_contains and kind_contains.lower() not in art.kind.lower():
             continue
 
-        # Extract name from metadata
         meta = art.meta or {}
         name = (
             meta.get("name") or meta.get("filename") or meta.get("program_name") or ""
         )
 
-        # Get size if store provided
         size = None
         if store:
             try:
