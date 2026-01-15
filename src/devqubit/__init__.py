@@ -100,7 +100,7 @@ if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
     from devqubit_engine.core.run import Run, track, wrap_backend
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.uec.types import ArtifactRef
+    from devqubit_engine.storage.types import ArtifactRef
     from devqubit_ui.app import run_server
 
 

@@ -10,6 +10,8 @@ in devqubit. All storage implementations must conform to these protocols.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Iterator,
@@ -21,26 +23,128 @@ from typing import (
 from devqubit_engine.core.record import RunRecord
 
 
-class StorageError(Exception):
-    """Base exception for storage operations."""
-
-    pass
+# Regex pattern for validating SHA-256 digest format
+_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
-class ObjectNotFoundError(StorageError):
-    """Raised when a requested object doesn't exist in the store."""
+@dataclass(frozen=True)
+class ArtifactRef:
+    """
+    Immutable reference to a stored artifact.
 
-    def __init__(self, digest: str) -> None:
-        self.digest = digest
-        super().__init__(f"Object not found: {digest}")
+    Represents a content-addressed pointer to an artifact stored in
+    the object store. The digest provides deduplication and integrity
+    verification.
 
+    Parameters
+    ----------
+    kind : str
+        Artifact type identifier (e.g., "qiskit.qpy.circuits",
+        "source.openqasm3", "pennylane.tape").
+    digest : str
+        Content digest in format ``sha256:<64-hex-chars>``.
+    media_type : str
+        MIME type of the artifact content (e.g., "application/x-qpy",
+        "application/json").
+    role : str
+        Logical role indicating the artifact's purpose. Common values:
+        "program", "results", "device_snapshot", "artifact".
+    meta : dict, optional
+        Additional metadata attached to the artifact reference.
 
-class RunNotFoundError(StorageError):
-    """Raised when a requested run doesn't exist in the registry."""
+    Raises
+    ------
+    ValueError
+        If any field fails validation (empty, wrong format, etc.).
 
-    def __init__(self, run_id: str) -> None:
-        self.run_id = run_id
-        super().__init__(f"Run not found: {run_id}")
+    Notes
+    -----
+    This class is frozen (immutable) to ensure artifact references
+    remain consistent after creation and can be safely used as dict keys.
+    """
+
+    kind: str
+    digest: str
+    media_type: str
+    role: str
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate artifact reference fields on creation."""
+        if not self.kind or len(self.kind) < 3:
+            raise ValueError(
+                f"Invalid artifact kind: {self.kind!r}. "
+                "Kind must be at least 3 characters."
+            )
+
+        if not isinstance(self.digest, str) or not _DIGEST_PATTERN.fullmatch(
+            self.digest
+        ):
+            raise ValueError(
+                f"Invalid digest format: {self.digest!r}. "
+                "Expected 'sha256:<64-hex-chars>'."
+            )
+
+        if not self.media_type or len(self.media_type) < 3:
+            raise ValueError(
+                f"Invalid media_type: {self.media_type!r}. "
+                "Media type must be at least 3 characters."
+            )
+
+        if not self.role:
+            raise ValueError("Artifact role cannot be empty.")
+
+    def to_dict(self) -> dict[str, Any]:
+        """
+        Convert to a JSON-serializable dictionary.
+
+        Returns
+        -------
+        dict
+            Dictionary representation suitable for JSON serialization.
+            The ``meta`` field is only included if not None.
+        """
+        d: dict[str, Any] = {
+            "kind": self.kind,
+            "digest": self.digest,
+            "media_type": self.media_type,
+            "role": self.role,
+        }
+        if self.meta:
+            d["meta"] = self.meta
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ArtifactRef:
+        """
+        Create an ArtifactRef from a dictionary.
+
+        Parameters
+        ----------
+        d : dict
+            Dictionary containing artifact reference fields.
+            Required keys: "kind", "digest", "media_type", "role".
+            Optional key: "meta".
+
+        Returns
+        -------
+        ArtifactRef
+            New artifact reference instance.
+
+        Raises
+        ------
+        KeyError
+            If required fields are missing.
+        ValueError
+            If field validation fails.
+        """
+        return cls(
+            kind=str(d.get("kind", "")),
+            digest=str(d.get("digest", "")),
+            media_type=str(d.get("media_type", "")),
+            role=str(d.get("role", "")),
+            meta=d.get("meta", {}),
+        )
 
 
 class RunSummary(TypedDict, total=False):

@@ -34,19 +34,23 @@ def _norm_gate(name: str) -> str:
     return s
 
 
+# Common two-qubit gate names for median error calculation
 TWO_QUBIT_GATES = frozenset(
     _norm_gate(x)
     for x in {
+        # Common controlled / entangling gates
         "cx",
         "cnot",
         "cz",
         "cy",
         "ecr",
         "rzx",
+        # Swap family
         "swap",
         "iswap",
         "pswap",
         "phased_iswap",
+        # Interaction / rotation families
         "rxx",
         "ryy",
         "rzz",
@@ -54,12 +58,16 @@ TWO_QUBIT_GATES = frozenset(
         "yy",
         "zz",
         "xy",
+        # Ion-trap style
         "ms",
+        # FSim family (Cirq/Google)
         "fsim",
         "phased_fsim",
+        # Google-specific named aliases
         "sycamore",
         "syc",
         "willow",
+        # Braket controlled-phase (2-qubit)
         "cphaseshift",
         "cphaseshift00",
         "cphaseshift01",

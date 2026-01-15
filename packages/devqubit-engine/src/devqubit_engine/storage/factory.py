@@ -40,16 +40,13 @@ from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
 
 from devqubit_engine.core.config import Config, get_config
+from devqubit_engine.storage.errors import StorageError
 from devqubit_engine.storage.local import (
     LocalRegistry,
     LocalStore,
     LocalWorkspace,
 )
-from devqubit_engine.storage.protocols import (
-    ObjectStoreProtocol,
-    RegistryProtocol,
-    StorageError,
-)
+from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 
 
 logger = logging.getLogger(__name__)

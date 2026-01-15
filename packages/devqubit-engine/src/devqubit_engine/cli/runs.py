@@ -243,8 +243,8 @@ def search_runs(
 def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
     """Show detailed run information."""
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)

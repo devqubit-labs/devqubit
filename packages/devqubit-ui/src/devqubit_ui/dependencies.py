@@ -25,7 +25,7 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 from devqubit_engine.core.config import Config
-from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 from devqubit_ui.app import templates
 from fastapi import Depends, Request
 from fastapi.templating import Jinja2Templates

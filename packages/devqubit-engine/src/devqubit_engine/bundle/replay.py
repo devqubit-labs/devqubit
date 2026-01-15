@@ -59,8 +59,11 @@ from devqubit_engine.circuit.models import (
 from devqubit_engine.circuit.registry import get_loader, list_available
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.factory import create_registry, create_store
-from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
-from devqubit_engine.uec.types import ArtifactRef
+from devqubit_engine.storage.types import (
+    ArtifactRef,
+    ObjectStoreProtocol,
+    RegistryProtocol,
+)
 
 
 logger = logging.getLogger(__name__)

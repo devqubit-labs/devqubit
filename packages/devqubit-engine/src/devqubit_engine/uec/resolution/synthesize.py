@@ -42,11 +42,25 @@ from devqubit_engine.utils.common import is_manual_run_record
 
 if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
-    from devqubit_engine.core.types import VOLATILE_EXECUTE_KEYS, ArtifactRef
-    from devqubit_engine.storage.protocols import ObjectStoreProtocol
+    from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
 
 
 logger = logging.getLogger(__name__)
+
+
+# Keys in execute section that are volatile (change between runs)
+# and should be stripped when computing fingerprints or comparing
+VOLATILE_EXECUTE_KEYS: frozenset[str] = frozenset(
+    {
+        "submitted_at",
+        "job_id",
+        "job_ids",
+        "completed_at",
+        "session_id",
+        "task_id",
+        "task_ids",
+    }
+)
 
 
 def _build_producer(record: "RunRecord") -> ProducerInfo:
@@ -318,7 +332,8 @@ def _build_result(
     is assumed and marked appropriately in metadata.
     """
     # Lazy import to avoid circular dependencies
-    from devqubit_engine.artifacts import find_artifact, load_artifact_json
+    from devqubit_engine.storage.artifacts.browse import find_artifact
+    from devqubit_engine.storage.artifacts.io import load_artifact_json
 
     status = record.record.get("info", {}).get("status", "RUNNING")
 

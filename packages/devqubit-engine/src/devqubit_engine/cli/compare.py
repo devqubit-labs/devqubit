@@ -195,8 +195,8 @@ def verify_cmd(
         verify_against_baseline,
     )
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)

@@ -54,8 +54,8 @@ def artifacts_list(
     """List artifacts in a run."""
     from devqubit_engine.artifacts import list_artifacts
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -113,8 +113,8 @@ def artifacts_show(
         get_artifact_text,
     )
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -167,8 +167,8 @@ def artifacts_counts(
     """Show measurement counts from a run."""
     from devqubit_engine.artifacts import format_counts_table, get_counts
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -225,8 +225,8 @@ def tag_add(ctx: click.Context, run_id: str, tags: tuple[str, ...]) -> None:
         devqubit tag add abc123 validated production
     """
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -266,8 +266,8 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
         devqubit tag remove abc123 temp debug
     """
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
@@ -293,8 +293,8 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
 def tag_list(ctx: click.Context, run_id: str) -> None:
     """List tags on a run."""
     from devqubit_engine.core.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
-    from devqubit_engine.storage.protocols import RunNotFoundError
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)

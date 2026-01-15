@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from devqubit_engine.core.types import ArtifactRef
+from devqubit_engine.storage.types import ArtifactRef
 
 
 class ResultType(str, Enum):

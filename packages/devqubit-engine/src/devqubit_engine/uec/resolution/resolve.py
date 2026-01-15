@@ -32,7 +32,7 @@ from devqubit_engine.utils.common import is_manual_run_record
 
 if TYPE_CHECKING:
     from devqubit_engine.core.record import RunRecord
-    from devqubit_engine.storage.protocols import ObjectStoreProtocol
+    from devqubit_engine.storage.types import ObjectStoreProtocol
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 
 
@@ -72,8 +72,8 @@ def load_envelope(
     1. role="envelope", kind="devqubit.envelope.json" (valid)
     2. role="envelope", kind="devqubit.envelope.invalid.json" (if include_invalid)
     """
+    from devqubit_engine.storage.artifacts.io import load_artifact_json
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
-    from devqubit_engine.utils.artifacts import load_artifact_json
 
     valid_artifact = None
     invalid_artifact = None

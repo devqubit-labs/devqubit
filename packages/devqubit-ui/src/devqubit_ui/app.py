@@ -36,7 +36,7 @@ from typing import AsyncGenerator
 import uvicorn
 from devqubit_engine.core.config import Config
 from devqubit_engine.storage.factory import create_registry, create_store
-from devqubit_engine.storage.protocols import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 from devqubit_ui.filters import register_filters
 from devqubit_ui.plugins import load_ui_plugins
 from fastapi import FastAPI

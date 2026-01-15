@@ -15,15 +15,15 @@ from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
 from devqubit_engine.core.config import Config
 from devqubit_engine.core.record import RunRecord
 from devqubit_engine.storage.local import LocalRegistry, LocalStore
-from devqubit_engine.uec.calibration import (
+from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.uec.models.calibration import (
     DeviceCalibration,
     GateCalibration,
     QubitCalibration,
 )
-from devqubit_engine.uec.device import DeviceSnapshot
-from devqubit_engine.uec.producer import ProducerInfo
-from devqubit_engine.uec.result import CountsFormat
-from devqubit_engine.uec.types import ArtifactRef
+from devqubit_engine.uec.models.device import DeviceSnapshot
+from devqubit_engine.uec.models.execution import ProducerInfo
+from devqubit_engine.uec.models.result import CountsFormat
 
 
 # =============================================================================
