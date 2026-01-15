@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.uec.device import DeviceSnapshot, FrontendConfig
+from devqubit_engine.uec.models.device import DeviceSnapshot, FrontendConfig
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_pennylane.utils import (

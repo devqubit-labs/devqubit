@@ -21,7 +21,7 @@ from devqubit_braket.utils import extract_task_id
 
 if TYPE_CHECKING:
     from devqubit_engine.tracking.run import Run
-    from devqubit_engine.uec.envelope import ExecutionEnvelope
+    from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 
 
 logger = logging.getLogger(__name__)

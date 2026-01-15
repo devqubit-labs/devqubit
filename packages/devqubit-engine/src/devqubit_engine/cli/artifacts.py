@@ -9,71 +9,20 @@ Commands for browsing run artifacts, viewing their contents, and managing tags.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import click
-from devqubit_engine.cli._utils import echo, print_json, root_from_ctx
-
-
-if TYPE_CHECKING:
-    from devqubit_engine.storage.artifacts.counts import CountsInfo
-    from devqubit_engine.storage.artifacts.lookup import ArtifactInfo
+from devqubit_engine.cli._utils import (
+    echo,
+    format_artifacts_table,
+    format_counts_table,
+    print_json,
+    root_from_ctx,
+)
 
 
 def register(cli: click.Group) -> None:
     """Register artifact commands with CLI."""
     cli.add_command(artifacts_group)
     cli.add_command(tag_group)
-
-
-# =============================================================================
-# Formatting
-# =============================================================================
-
-
-def _format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:
-    """Format measurement counts as ASCII table."""
-    lines = [
-        f"Total shots: {counts.total_shots:,}",
-        f"Unique outcomes: {counts.num_outcomes}",
-        "",
-        f"{'Outcome':<20} {'Count':>10} {'Prob':>10}",
-        "-" * 42,
-    ]
-
-    for bitstring, count, prob in counts.top_k(top_k):
-        lines.append(f"{bitstring:<20} {count:>10,} {prob:>10.4f}")
-
-    if counts.num_outcomes > top_k:
-        lines.append(f"... and {counts.num_outcomes - top_k} more outcomes")
-
-    return "\n".join(lines)
-
-
-def _format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:
-    """Format artifact list as ASCII table."""
-    if not artifacts:
-        return "No artifacts found."
-
-    lines = [
-        f"{'#':<4} {'Role':<16} {'Kind':<30} {'Size':>10}",
-        "-" * 62,
-    ]
-
-    for a in artifacts:
-        size_str = f"{a.size:,}" if a.size else "-"
-        kind_display = a.kind[:30] if len(a.kind) <= 30 else a.kind[:27] + "..."
-        lines.append(f"{a.index:<4} {a.role:<16} {kind_display:<30} {size_str:>10}")
-
-    lines.append("")
-    lines.append(f"Total: {len(artifacts)} artifact(s)")
-
-    return "\n".join(lines)
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
 
 
 def _load_run(ctx: click.Context, run_id: str):
@@ -125,7 +74,7 @@ def artifacts_list(
     fmt: str,
 ) -> None:
     """List artifacts in a run."""
-    from devqubit_engine.storage.artifacts import list_artifacts
+    from devqubit_engine.storage.artifacts.lookup import list_artifacts
 
     run_record, _, store = _load_run(ctx, run_id)
     artifacts = list_artifacts(run_record, role=role, store=store)
@@ -133,7 +82,7 @@ def artifacts_list(
     if fmt == "json":
         print_json([a.to_dict() for a in artifacts])
     else:
-        echo(_format_artifacts_table(artifacts))
+        echo(format_artifacts_table(artifacts))
 
 
 @artifacts_group.command("show")
@@ -159,7 +108,7 @@ def artifacts_show(
         devqubit artifacts show abc123 program:openqasm3
         devqubit artifacts show abc123 results --raw > output.json
     """
-    from devqubit_engine.storage.artifacts import (
+    from devqubit_engine.storage.artifacts.lookup import (
         get_artifact,
         get_artifact_bytes,
         get_artifact_text,
@@ -201,7 +150,7 @@ def artifacts_counts(
     fmt: str,
 ) -> None:
     """Show measurement counts from a run."""
-    from devqubit_engine.storage.artifacts import get_counts
+    from devqubit_engine.storage.artifacts.counts import get_counts
 
     run_record, _, store = _load_run(ctx, run_id)
     counts = get_counts(run_record, store)
@@ -219,7 +168,7 @@ def artifacts_counts(
             }
         )
     else:
-        echo(_format_counts_table(counts, top_k=top))
+        echo(format_counts_table(counts, top_k=top))
 
 
 # =============================================================================

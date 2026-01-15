@@ -37,7 +37,7 @@ from devqubit_braket.serialization import is_braket_circuit
 from devqubit_braket.tracked import TrackedTask, TrackedTaskBatch
 from devqubit_braket.utils import extract_task_id, get_backend_name
 from devqubit_engine.tracking.run import Run
-from devqubit_engine.uec.envelope import ExecutionEnvelope
+from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
 

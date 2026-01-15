@@ -10,7 +10,7 @@ capabilities.
 
 Examples
 --------
->>> from devqubit_engine.tracking.config import get_config, load_config
+>>> from devqubit_engine.config import get_config, load_config
 >>> config = get_config()
 >>> print(config.root_dir)
 /home/user/.devqubit
@@ -18,7 +18,7 @@ Examples
 >>> # Override via environment
 >>> import os
 >>> os.environ["DEVQUBIT_HOME"] = "/custom/path"
->>> from devqubit_engine.tracking.config import reset_config
+>>> from devqubit_engine.config import reset_config
 >>> reset_config()
 >>> config = get_config()
 """

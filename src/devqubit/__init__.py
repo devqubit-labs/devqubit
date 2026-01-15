@@ -109,7 +109,7 @@ _LAZY_IMPORTS = {
     "track": ("devqubit_engine.tracking.run", "track"),
     "wrap_backend": ("devqubit_engine.tracking.run", "wrap_backend"),
     "RunRecord": ("devqubit_engine.tracking.record", "RunRecord"),
-    "ArtifactRef": ("devqubit_engine.uec.types", "ArtifactRef"),
+    "ArtifactRef": ("devqubit_engine.storage.types", "ArtifactRef"),
     "diff": ("devqubit_engine.compare.diff", "diff"),
     "diff_runs": ("devqubit_engine.compare.diff", "diff_runs"),
     "verify": ("devqubit_engine.compare.verify", "verify"),
@@ -122,9 +122,9 @@ _LAZY_IMPORTS = {
     "Bundle": ("devqubit_engine.bundle.reader", "Bundle"),
     "create_store": ("devqubit_engine.storage.factory", "create_store"),
     "create_registry": ("devqubit_engine.storage.factory", "create_registry"),
-    "Config": ("devqubit_engine.tracking.config", "Config"),
-    "get_config": ("devqubit_engine.tracking.config", "get_config"),
-    "set_config": ("devqubit_engine.tracking.config", "set_config"),
+    "Config": ("devqubit_engine.config", "Config"),
+    "get_config": ("devqubit_engine.config", "get_config"),
+    "set_config": ("devqubit_engine.config", "set_config"),
     "run_server": ("devqubit_ui.app", "run_server"),
 }
 
