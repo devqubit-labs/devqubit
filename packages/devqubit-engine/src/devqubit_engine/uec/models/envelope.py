@@ -378,7 +378,7 @@ class ExecutionEnvelope:
             Validation result with errors list.
         """
         try:
-            from devqubit_engine.schema.validation import validate_envelope
+            from devqubit_engine.core.schema.validation import validate_envelope
 
             errors = validate_envelope(self.to_dict(), raise_on_error=False)
 
@@ -390,7 +390,7 @@ class ExecutionEnvelope:
         except ImportError:
             logger.warning(
                 "Schema validation not available: "
-                "devqubit_engine.schema.validation module not found"
+                "devqubit_engine..core.schema.validation module not found"
             )
             return ValidationResult(
                 valid=True,

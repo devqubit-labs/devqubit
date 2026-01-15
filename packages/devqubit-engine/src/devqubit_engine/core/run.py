@@ -43,7 +43,7 @@ from typing import Any, Sequence
 
 from devqubit_engine.core.config import Config, get_config
 from devqubit_engine.core.record import RunRecord
-from devqubit_engine.schema.validation import validate_run_record
+from devqubit_engine.core.schema.validation import validate_run_record
 from devqubit_engine.storage.artifacts.browse import get_artifact_digests
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
