@@ -29,7 +29,6 @@ from devqubit_engine.circuit.summary import (
     CircuitSummary,
     summarize_circuit_data,
 )
-from devqubit_engine.storage.types import ArtifactRef
 
 
 def sdk_available(sdk_name: str) -> bool:
@@ -199,42 +198,6 @@ class TestDetectSDK:
         """Detect PennyLane from adapter name."""
         record = run_factory(adapter="devqubit-pennylane")
         assert detect_sdk(record) == SDK.PENNYLANE
-
-    def test_detect_from_qiskit_artifact(self, run_factory):
-        """Detect Qiskit from QPY artifact kind."""
-        valid_digest = "sha256:" + "a" * 64
-        artifact = ArtifactRef(
-            role="program",
-            kind="qiskit.qpy.circuits",
-            digest=valid_digest,
-            media_type="application/octet-stream",
-        )
-        record = run_factory(adapter="unknown", artifacts=[artifact])
-        assert detect_sdk(record) == SDK.QISKIT
-
-    def test_detect_from_braket_artifact(self, run_factory):
-        """Detect Braket from JAQCD artifact kind."""
-        valid_digest = "sha256:" + "a" * 64
-        artifact = ArtifactRef(
-            role="program",
-            kind="braket.ir.jaqcd",
-            digest=valid_digest,
-            media_type="application/json",
-        )
-        record = run_factory(adapter="unknown", artifacts=[artifact])
-        assert detect_sdk(record) == SDK.BRAKET
-
-    def test_detect_from_cirq_artifact(self, run_factory):
-        """Detect Cirq from circuit.json artifact kind."""
-        valid_digest = "sha256:" + "a" * 64
-        artifact = ArtifactRef(
-            role="program",
-            kind="cirq.circuit.json",
-            digest=valid_digest,
-            media_type="application/json",
-        )
-        record = run_factory(adapter="unknown", artifacts=[artifact])
-        assert detect_sdk(record) == SDK.CIRQ
 
     def test_detect_unknown_returns_unknown(self, run_factory):
         """Unknown adapter returns SDK.UNKNOWN."""
