@@ -103,6 +103,8 @@ if TYPE_CHECKING:
     from devqubit_engine.compare.results import VerifyResult
     from devqubit_engine.compare.verify import VerifyPolicy
     from devqubit_engine.config import Config, get_config, set_config
+    from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
+    from devqubit_engine.tracking.record import RunRecord
     from devqubit_engine.tracking.run import Run, track, wrap_backend
 
 
@@ -125,10 +127,12 @@ _LAZY_IMPORTS = {
 
 
 def verify_baseline(
-    candidate: str | Path,
+    candidate: str | Path | RunRecord,
     *,
     project: str,
-    policy: "VerifyPolicy | dict[str, Any] | None" = None,
+    policy: VerifyPolicy | dict[str, Any] | None = None,
+    store: ObjectStoreProtocol | None = None,
+    registry: RegistryProtocol | None = None,
     promote_on_pass: bool = False,
 ) -> "VerifyResult":
     """
@@ -140,13 +144,21 @@ def verify_baseline(
 
     Parameters
     ----------
-    candidate : str or Path
-        Candidate run ID or path to a bundle file.
+    candidate : str, Path, or RunRecord
+        Candidate to verify. Can be:
+        - A run ID (str)
+        - A path to a bundle file (Path or str ending in .zip)
+        - A RunRecord instance (already loaded)
     project : str
         Project name to look up baseline for.
     policy : VerifyPolicy or dict or None, optional
         Verification policy configuration. Uses defaults if not provided.
         Can be a VerifyPolicy instance or a dict with policy options.
+    store : ObjectStoreProtocol or None, optional
+        Object store to use. If None, uses the default from config.
+        Required when candidate is a RunRecord from a different workspace.
+    registry : RegistryProtocol or None, optional
+        Registry to use. If None, uses the default from config.
     promote_on_pass : bool, default=False
         If True and verification passes, promote candidate to new baseline.
 
@@ -207,17 +219,17 @@ def verify_baseline(
     >>> write_junit(result, "results.xml")
     >>> assert result.ok, f"Verification failed: {result.failures}"
 
-    Notes
-    -----
-    For low-level verification with explicit storage backends, use
-    the functions in ``devqubit_engine.compare.verify`` directly.
+    Cross-workspace verification (explicit stores):
 
-    See Also
-    --------
-    devqubit.compare.VerifyPolicy : Policy configuration options.
-    devqubit.compare.VerifyResult : Result type details.
-    devqubit.runs.get_baseline : Get current baseline for a project.
-    devqubit.runs.set_baseline : Set a new baseline.
+    >>> from devqubit.storage import create_store, create_registry
+    >>> store = create_store("s3://my-bucket/objects")
+    >>> registry = create_registry("s3://my-bucket")
+    >>> result = verify_baseline(
+    ...     "candidate_run_id",
+    ...     project="my_project",
+    ...     store=store,
+    ...     registry=registry,
+    ... )
     """
     from devqubit_engine.bundle.reader import Bundle, is_bundle_path
     from devqubit_engine.compare.verify import (
@@ -228,12 +240,24 @@ def verify_baseline(
     from devqubit_engine.storage.types import ArtifactRef
     from devqubit_engine.tracking.record import RunRecord
 
-    cfg = get_config()
-    store = create_store(config=cfg)
-    registry = create_registry(config=cfg)
+    # Get default store/registry from config if not provided
+    if store is None or registry is None:
+        cfg = get_config()
+        if store is None:
+            store = create_store(config=cfg)
+        if registry is None:
+            registry = create_registry(config=cfg)
 
-    # Handle bundle input
-    if is_bundle_path(candidate):
+    # Handle different candidate types
+    candidate_record: RunRecord
+    candidate_store = store
+
+    # Case 1: Already a RunRecord
+    if isinstance(candidate, RunRecord):
+        candidate_record = candidate
+
+    # Case 2: Bundle file path
+    elif is_bundle_path(candidate):
         with Bundle(Path(candidate)) as bundle:
             record_dict = bundle.run_record
             artifacts = [
@@ -242,23 +266,26 @@ def verify_baseline(
                 if isinstance(a, dict)
             ]
             candidate_record = RunRecord(record=record_dict, artifacts=artifacts)
+            # Use bundle's store for artifacts
+            candidate_store = bundle.store
 
-            # For bundles, use the bundle's own store
             return _verify_against_baseline(
                 candidate_record,
                 project=project,
-                store=bundle.store,
+                store=candidate_store,
                 registry=registry,
                 policy=policy,
                 promote_on_pass=promote_on_pass,
             )
 
-    # Handle run ID input
-    candidate_record = registry.load(str(candidate))
+    # Case 3: Run ID string
+    else:
+        candidate_record = registry.load(str(candidate))
+
     return _verify_against_baseline(
         candidate_record,
         project=project,
-        store=store,
+        store=candidate_store,
         registry=registry,
         policy=policy,
         promote_on_pass=promote_on_pass,
