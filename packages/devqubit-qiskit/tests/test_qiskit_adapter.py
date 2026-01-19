@@ -1,30 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for Qiskit adapter."""
+"""End-to-end tests for Qiskit adapter."""
 
 import json
 import logging
 from unittest.mock import patch
 
 from devqubit_engine.tracking.run import track
-from devqubit_qiskit.adapter import (
-    QiskitAdapter,
-    TrackedBackend,
-    TrackedJob,
-)
-from devqubit_qiskit.circuits import (
-    compute_structural_hash,
-    materialize_circuits,
-)
+from devqubit_qiskit.adapter import QiskitAdapter, TrackedBackend, TrackedJob
+from devqubit_qiskit.device import create_device_snapshot
 from devqubit_qiskit.serialization import (
     LoadedCircuitBatch,
     QiskitCircuitLoader,
     serialize_qpy,
 )
-from devqubit_qiskit.snapshot import create_device_snapshot
 from qiskit import QuantumCircuit
-from qiskit.circuit import Parameter
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
 
 
 def _load_envelope(run_id, store, registry):
@@ -52,7 +48,12 @@ def _normalize_bitstring(key: str) -> str:
     return key.replace(" ", "").replace("_", "")
 
 
-class TestQiskitAdapter:
+# =============================================================================
+# Adapter Interface Tests
+# =============================================================================
+
+
+class TestQiskitAdapterInterface:
     """Tests for adapter registration and backend detection."""
 
     def test_adapter_name(self):
@@ -80,71 +81,9 @@ class TestQiskitAdapter:
             assert wrapped.backend is aer_simulator
 
 
-class TestMaterializeCircuits:
-    """Tests for generator/iterator handling."""
-
-    def test_single_circuit(self, bell_circuit):
-        """Single circuit returns (list, was_single=True)."""
-        result, was_single = materialize_circuits(bell_circuit)
-        assert len(result) == 1
-        assert was_single is True
-
-    def test_list_of_circuits(self, bell_circuit, ghz_circuit):
-        """List of circuits passes through."""
-        result, was_single = materialize_circuits([bell_circuit, ghz_circuit])
-        assert len(result) == 2
-        assert was_single is False
-
-    def test_generator_consumed_once(self):
-        """Generator is fully consumed once."""
-
-        def circuit_gen():
-            for _ in range(3):
-                qc = QuantumCircuit(1)
-                qc.h(0)
-                qc.measure_all()
-                yield qc
-
-        gen = circuit_gen()
-        result, _ = materialize_circuits(gen)
-        assert len(result) == 3
-
-
-class TestCircuitHash:
-    """Tests for circuit structure hashing."""
-
-    def test_same_structure_same_hash(self):
-        """Identical structure produces same hash."""
-        qc1 = QuantumCircuit(2)
-        qc1.h(0)
-        qc1.cx(0, 1)
-
-        qc2 = QuantumCircuit(2)
-        qc2.h(0)
-        qc2.cx(0, 1)
-
-        assert compute_structural_hash([qc1]) == compute_structural_hash([qc2])
-
-    def test_different_gates_different_hash(self):
-        """Different gates produce different hash."""
-        qc1 = QuantumCircuit(2)
-        qc1.h(0)
-
-        qc2 = QuantumCircuit(2)
-        qc2.x(0)
-
-        assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
-
-    def test_parameter_values_dont_change_hash(self):
-        """Parameter values don't affect structure hash."""
-        theta = Parameter("θ")
-        qc = QuantumCircuit(1)
-        qc.rx(theta, 0)
-
-        bound1 = qc.assign_parameters({theta: 0.5})
-        bound2 = qc.assign_parameters({theta: 1.5})
-
-        assert compute_structural_hash([bound1]) == compute_structural_hash([bound2])
+# =============================================================================
+# Execution Tests
+# =============================================================================
 
 
 class TestTrackedBackendExecution:
@@ -195,6 +134,11 @@ class TestTrackedBackendExecution:
                 assert sum(result.get_counts(i).values()) == 500
 
 
+# =============================================================================
+# Sampling Behavior Tests
+# =============================================================================
+
+
 class TestSamplingBehavior:
     """Tests for execution sampling."""
 
@@ -220,9 +164,9 @@ class TestSamplingBehavior:
 
         with track(project="test", store=store, registry=registry) as run:
             tracked = run.wrap(aer_simulator, log_every_n=2, log_new_circuits=True)
-            tracked.run(qc, shots=10).result()  # 1: logged (first)
-            tracked.run(qc, shots=10).result()  # 2: logged (periodic)
-            tracked.run(qc, shots=10).result()  # 3: not logged
+            tracked.run(qc, shots=10).result()
+            tracked.run(qc, shots=10).result()
+            tracked.run(qc, shots=10).result()
 
         loaded = registry.load(run.run_id)
         assert _count_kind(loaded, "devqubit.envelope.json") == 2
@@ -240,14 +184,19 @@ class TestSamplingBehavior:
         with track(project="test", store=store, registry=registry) as run:
             tracked = run.wrap(aer_simulator, log_every_n=0, log_new_circuits=True)
             tracked.run(qc1, shots=10).result()
-            tracked.run(qc1, shots=10).result()  # same - not logged
-            tracked.run(qc2, shots=10).result()  # new - logged
+            tracked.run(qc1, shots=10).result()
+            tracked.run(qc2, shots=10).result()
 
         loaded = registry.load(run.run_id)
         assert _count_kind(loaded, "devqubit.envelope.json") == 2
 
 
-class TestEnvelopeStructure:
+# =============================================================================
+# UEC Envelope Tests
+# =============================================================================
+
+
+class TestUECEnvelopeStructure:
     """Tests for UEC ExecutionEnvelope structure."""
 
     def test_envelope_created(self, bell_circuit, aer_simulator, store, registry):
@@ -266,11 +215,7 @@ class TestEnvelopeStructure:
         assert "result" in envelope
 
     def test_envelope_device_section(
-        self,
-        bell_circuit,
-        aer_simulator,
-        store,
-        registry,
+        self, bell_circuit, aer_simulator, store, registry
     ):
         """Envelope device section has required fields."""
         with track(project="test", store=store, registry=registry) as run:
@@ -284,11 +229,7 @@ class TestEnvelopeStructure:
         assert "captured_at" in device
 
     def test_envelope_program_section(
-        self,
-        bell_circuit,
-        aer_simulator,
-        store,
-        registry,
+        self, bell_circuit, aer_simulator, store, registry
     ):
         """Envelope program section has circuit info."""
         with track(project="test", store=store, registry=registry) as run:
@@ -303,13 +244,10 @@ class TestEnvelopeStructure:
 
 
 class TestBatchQASM3Artifacts:
-    """Multi-circuit batches must produce QASM3 artifact per circuit."""
+    """Multi-circuit batches produce QASM3 artifact per circuit."""
 
     def test_batch_3_circuits_produces_3_qasm3_refs(
-        self,
-        aer_simulator,
-        store,
-        registry,
+        self, aer_simulator, store, registry
     ):
         """Batch of 3 circuits should produce 3 QASM3 artifacts."""
         circuits = []
@@ -328,7 +266,6 @@ class TestBatchQASM3Artifacts:
         _, envelope = _load_envelope(run.run_id, store, registry)
 
         assert envelope["program"]["num_circuits"] == 3
-
         logical = envelope["program"].get("logical", [])
         qasm3 = [a for a in logical if a.get("format") == "openqasm3"]
 
@@ -337,24 +274,26 @@ class TestBatchQASM3Artifacts:
         assert indices == {0, 1, 2}
 
 
+# =============================================================================
+# Raw Properties Artifact Tests
+# =============================================================================
+
+
 class TestRawPropertiesArtifact:
-    """raw_properties must be stored via raw_properties_ref when tracker is provided."""
+    """Raw properties stored via raw_properties_ref when tracker is provided."""
 
     def test_snapshot_without_tracker_has_no_ref(self, aer_simulator):
-        """DeviceSnapshot without tracker should have raw_properties_ref=None."""
+        """DeviceSnapshot without tracker has raw_properties_ref=None."""
         snapshot = create_device_snapshot(aer_simulator, tracker=None)
-
-        # Without tracker, raw_properties_ref should be None
         assert snapshot.raw_properties_ref is None
 
     def test_snapshot_with_tracker_has_raw_properties_ref(
         self, aer_simulator, store, registry
     ):
-        """DeviceSnapshot with tracker should have raw_properties_ref populated."""
+        """DeviceSnapshot with tracker has raw_properties_ref populated."""
         with track(project="test", store=store, registry=registry) as run:
             snapshot = create_device_snapshot(aer_simulator, tracker=run)
 
-            # With tracker, raw_properties_ref should be an ArtifactRef
             assert snapshot.raw_properties_ref is not None
             assert (
                 snapshot.raw_properties_ref.kind == "device.qiskit.raw_properties.json"
@@ -363,7 +302,7 @@ class TestRawPropertiesArtifact:
             assert snapshot.raw_properties_ref.digest.startswith("sha256:")
 
     def test_raw_properties_logged_as_artifact(self, aer_simulator, store, registry):
-        """raw_properties should be logged as artifact via adapter."""
+        """raw_properties logged as artifact via adapter."""
         qc = QuantumCircuit(2)
         qc.h(0)
         qc.measure_all()
@@ -376,17 +315,12 @@ class TestRawPropertiesArtifact:
         assert "device.qiskit.raw_properties.json" in _kinds(loaded)
 
     def test_raw_properties_content_is_valid(self, aer_simulator, store, registry):
-        """raw_properties artifact should contain expected backend metadata."""
+        """raw_properties artifact contains expected backend metadata."""
         with track(project="test", store=store, registry=registry) as run:
             snapshot = create_device_snapshot(aer_simulator, tracker=run)
 
-        # Verify artifact was stored and contains expected keys
         assert snapshot.raw_properties_ref is not None
-
-        # Load the artifact content
         content = store.get_bytes(snapshot.raw_properties_ref.digest)
-        import json
-
         raw_props = json.loads(content.decode("utf-8"))
 
         assert isinstance(raw_props, dict)
@@ -394,8 +328,13 @@ class TestRawPropertiesArtifact:
         assert "backend_module" in raw_props
 
 
+# =============================================================================
+# QPY Batch Loading Tests
+# =============================================================================
+
+
 class TestQPYBatchLoading:
-    """QPY loader must support multi-circuit batches."""
+    """QPY loader supports multi-circuit batches."""
 
     def test_load_batch_returns_all_circuits(self, bell_circuit, ghz_circuit):
         """load_batch() returns all circuits from QPY."""
@@ -417,12 +356,17 @@ class TestQPYBatchLoading:
         with caplog.at_level(logging.WARNING):
             loaded = loader.load(data)
 
-        assert loaded.circuit.num_qubits == 2  # returns first
+        assert loaded.circuit.num_qubits == 2
         assert any("load_batch" in r.message.lower() for r in caplog.records)
 
 
+# =============================================================================
+# Error Handling Tests
+# =============================================================================
+
+
 class TestEnvelopeErrorPath:
-    """Envelope must be created even if snapshot fails."""
+    """Envelope created even if snapshot fails."""
 
     def test_envelope_created_on_snapshot_error(self, aer_simulator, store, registry):
         """Envelope created with minimal snapshot on error."""
@@ -466,6 +410,11 @@ class TestIdempotentResultLogging:
         loaded = registry.load(run.run_id)
         assert _count_kind(loaded, "devqubit.envelope.json") == 1
         assert _count_kind(loaded, "result.counts.json") == 1
+
+
+# =============================================================================
+# Artifact Creation Tests
+# =============================================================================
 
 
 class TestArtifactTracking:

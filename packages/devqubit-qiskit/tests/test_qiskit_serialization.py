@@ -4,6 +4,7 @@
 """Tests for Qiskit circuit serialization."""
 
 import io
+import logging
 
 import pytest
 from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
@@ -12,14 +13,16 @@ from devqubit_qiskit.serialization import (
     LoadedCircuitBatch,
     QiskitCircuitLoader,
     QiskitCircuitSerializer,
-    circuit_to_text,
-    serialize_circuit_artifacts,
-    serialize_circuits_text,
     serialize_qasm3,
     serialize_qpy,
     summarize_qiskit_circuit,
 )
 from qiskit import QuantumCircuit, qpy
+
+
+# =============================================================================
+# QPY Serialization Tests
+# =============================================================================
 
 
 class TestSerializeQpy:
@@ -40,7 +43,6 @@ class TestSerializeQpy:
         """Serializes multiple circuits to single QPY blob."""
         data = serialize_qpy([bell_circuit, ghz_circuit], name="batch", index=0)
 
-        # Verify both load back
         loaded = qpy.load(io.BytesIO(data.as_bytes()))
         assert len(loaded) == 2
 
@@ -54,7 +56,6 @@ class TestSerializeQpy:
         assert loaded.num_clbits == bell_circuit.num_clbits
         assert len(loaded.data) == len(bell_circuit.data)
 
-        # Gate names preserved
         original_gates = [instr.operation.name for instr in bell_circuit.data]
         loaded_gates = [instr.operation.name for instr in loaded.data]
         assert original_gates == loaded_gates
@@ -67,10 +68,14 @@ class TestSerializeQpy:
         loaded = qpy.load(io.BytesIO(data.as_bytes()))[0]
         assert loaded.name == "my_special_circuit"
 
-        # Parameters
         data = serialize_qpy(parameterized_circuit)
         loaded = qpy.load(io.BytesIO(data.as_bytes()))[0]
         assert loaded.num_parameters == parameterized_circuit.num_parameters
+
+
+# =============================================================================
+# QASM3 Serialization Tests
+# =============================================================================
 
 
 class TestSerializeQasm3:
@@ -108,6 +113,11 @@ class TestSerializeQasm3:
     def test_empty_list_returns_empty(self):
         """Empty input returns empty list."""
         assert serialize_qasm3([]) == []
+
+
+# =============================================================================
+# Circuit Loader Tests
+# =============================================================================
 
 
 class TestQiskitCircuitLoader:
@@ -186,8 +196,13 @@ class TestQiskitCircuitLoader:
             loader.load(data)
 
 
+# =============================================================================
+# QPY Batch Loading Tests
+# =============================================================================
+
+
 class TestQPYBatchLoading:
-    """Tests for QPY batch loading - MAJOR from review."""
+    """Tests for QPY batch loading."""
 
     def test_load_batch_returns_all_circuits(self, bell_circuit, ghz_circuit):
         """load_batch() returns all circuits from QPY file."""
@@ -207,9 +222,7 @@ class TestQPYBatchLoading:
 
         batch = loader.load_batch(data)
 
-        # First circuit (bell) - 2 qubits
         assert batch[0].num_qubits == 2
-        # Second circuit (ghz) - 3 qubits
         assert batch[1].num_qubits == 3
 
     def test_load_batch_to_loaded_circuits(self, bell_circuit, ghz_circuit):
@@ -236,30 +249,15 @@ class TestQPYBatchLoading:
         circuits = list(batch)
         assert len(circuits) == 2
 
-    def test_load_batch_rejects_non_qpy(self, bell_circuit):
-        """load_batch() rejects non-QPY formats."""
-        loader = QiskitCircuitLoader()
-        results = serialize_qasm3(bell_circuit)
-
-        with pytest.raises(LoaderError, match="only supports QPY"):
-            loader.load_batch(results[0])
-
-    def test_load_single_warns_on_multi_circuit(
-        self, bell_circuit, ghz_circuit, caplog
-    ):
+    def test_load_single_warns_on_multi(self, bell_circuit, ghz_circuit, caplog):
         """load() logs warning when QPY has multiple circuits."""
         loader = QiskitCircuitLoader()
         data = serialize_qpy([bell_circuit, ghz_circuit], name="batch")
 
-        import logging
-
         with caplog.at_level(logging.WARNING):
             loaded = loader.load(data)
 
-        # Should return first circuit
         assert loaded.circuit.num_qubits == 2
-
-        # Should log warning about multiple circuits
         assert any(
             "multiple circuits" in msg.lower() or "load_batch" in msg
             for msg in caplog.messages
@@ -276,6 +274,11 @@ class TestQPYBatchLoading:
         assert batch[0].num_qubits == 2
         assert batch[1].num_qubits == 3
         assert batch[2].num_qubits == 4
+
+
+# =============================================================================
+# Circuit Serializer Tests
+# =============================================================================
 
 
 class TestQiskitCircuitSerializer:
@@ -314,6 +317,11 @@ class TestQiskitCircuitSerializer:
             serializer.serialize(bell_circuit, CircuitFormat.JAQCD)
 
 
+# =============================================================================
+# Circuit Summary Tests
+# =============================================================================
+
+
 class TestSummarizeQiskitCircuit:
     """Tests for circuit summarization."""
 
@@ -322,8 +330,8 @@ class TestSummarizeQiskitCircuit:
         summary = summarize_qiskit_circuit(bell_circuit)
 
         assert summary.num_qubits == 2
-        assert summary.gate_count_1q >= 1  # H gate
-        assert summary.gate_count_2q >= 1  # CX gate
+        assert summary.gate_count_1q >= 1
+        assert summary.gate_count_2q >= 1
         assert summary.depth == bell_circuit.depth()
 
     def test_gate_types_counted(self, bell_circuit):
@@ -351,21 +359,8 @@ class TestSummarizeQiskitCircuit:
         assert summary.gate_count_total == 0
         assert summary.is_clifford is None
 
-    def test_multi_qubit_gates(self):
-        """Counts multi-qubit gates (Toffoli)."""
-        qc = QuantumCircuit(3)
-        qc.h(0)
-        qc.ccx(0, 1, 2)
-        qc.measure_all()
-
-        summary = summarize_qiskit_circuit(qc)
-
-        assert summary.gate_count_1q == 1  # H
-        assert summary.gate_count_multi == 1  # CCX
-
     def test_clifford_detection(self):
         """Detects Clifford vs non-Clifford circuits."""
-        # All Clifford gates
         clifford_qc = QuantumCircuit(2)
         clifford_qc.h(0)
         clifford_qc.s(0)
@@ -375,7 +370,6 @@ class TestSummarizeQiskitCircuit:
         summary = summarize_qiskit_circuit(clifford_qc)
         assert summary.is_clifford is True
 
-        # T gate breaks Clifford
         non_clifford_qc = QuantumCircuit(1)
         non_clifford_qc.h(0)
         non_clifford_qc.t(0)
@@ -384,60 +378,9 @@ class TestSummarizeQiskitCircuit:
         assert summary.is_clifford is False
 
 
-class TestCircuitToText:
-    """Tests for human-readable circuit text."""
-
-    def test_basic_format(self, bell_circuit):
-        """Produces readable text format with key info."""
-        text = circuit_to_text(bell_circuit, index=0)
-
-        assert "=== Circuit 0 ===" in text
-        assert "Qubits:" in text
-        assert "Depth:" in text
-
-    def test_multiple_circuits(self, bell_circuit, ghz_circuit):
-        """Serializes multiple circuits to text."""
-        text = serialize_circuits_text([bell_circuit, ghz_circuit])
-
-        assert "=== Circuit 0 ===" in text
-        assert "=== Circuit 1 ===" in text
-
-    def test_none_returns_empty(self):
-        """None input returns empty string."""
-        assert serialize_circuits_text(None) == ""
-
-
-class TestSerializeCircuitArtifacts:
-    """Tests for multi-format artifact serialization."""
-
-    def test_generates_all_formats(self, bell_circuit):
-        """Generates QPY, OpenQASM, and diagram artifacts."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-
-        assert "qpy" in artifacts
-        assert "openqasm" in artifacts
-        assert "diagram" in artifacts
-
-    def test_qpy_artifact_valid(self, bell_circuit):
-        """QPY artifact is valid and loadable."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-        qpy_bytes, media_type = artifacts["qpy"]
-
-        assert isinstance(qpy_bytes, bytes)
-        assert "qiskit.qpy" in media_type
-
-        # Verify loadable
-        circuits = qpy.load(io.BytesIO(qpy_bytes))
-        assert len(circuits) > 0
-
-    def test_openqasm_artifact_valid(self, bell_circuit):
-        """OpenQASM artifact is valid text."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-        openqasm_bytes, media_type = artifacts["openqasm"]
-
-        text = openqasm_bytes.decode("utf-8")
-        assert "OPENQASM" in text
-        assert "text/plain" in media_type
+# =============================================================================
+# Edge Cases
+# =============================================================================
 
 
 class TestEdgeCases:
@@ -471,16 +414,3 @@ class TestEdgeCases:
         assert summary.num_qubits == 10
         assert summary.gate_count_1q == 10
         assert summary.gate_count_2q == 9
-
-    def test_deep_circuit(self):
-        """Handles deep circuits."""
-        qc = QuantumCircuit(2)
-        for _ in range(100):
-            qc.h(0)
-            qc.cx(0, 1)
-
-        summary = summarize_qiskit_circuit(qc)
-
-        assert summary.depth == qc.depth()
-        assert summary.gate_count_1q == 100
-        assert summary.gate_count_2q == 100

@@ -32,9 +32,6 @@ parameter to sample executions rather than logging all:
     tracked_sampler = run.wrap(sampler, log_every_n=100)  # Log every 100th
     tracked_sampler = run.wrap(sampler, log_every_n=-1)  # Log all (slow!)
 
-Note: Even with log_every_n=0, the first execution is always logged with full
-snapshots and artifacts.
-
 Example
 -------
 >>> from qiskit import QuantumCircuit
@@ -84,9 +81,10 @@ from devqubit_qiskit_runtime.circuits import (
     compute_parametric_hash,
     compute_structural_hash,
 )
-from devqubit_qiskit_runtime.envelope import (
+from devqubit_qiskit_runtime.device import (
+    create_device_snapshot,
     create_failure_result_snapshot,
-    detect_physical_provider,
+    detect_provider,
     finalize_envelope_with_result,
 )
 from devqubit_qiskit_runtime.pubs import (
@@ -98,7 +96,6 @@ from devqubit_qiskit_runtime.results import (
     build_estimator_result_snapshot,
     build_sampler_result_snapshot,
 )
-from devqubit_qiskit_runtime.snapshot import create_device_snapshot
 from devqubit_qiskit_runtime.transpilation import (
     TranspilationConfig,
     TranspilationOptions,
@@ -116,7 +113,6 @@ from devqubit_qiskit_runtime.utils import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level serializer instance
 _serializer = QiskitCircuitSerializer()
 
 
@@ -128,6 +124,11 @@ def _map_transpilation_mode(mode: str) -> TranspilationMode:
         "manual": TranspilationMode.MANUAL,
     }
     return mode_map.get(mode.lower(), TranspilationMode.AUTO)
+
+
+# =============================================================================
+# Tracked Runtime Job
+# =============================================================================
 
 
 @dataclass
@@ -181,9 +182,6 @@ class TrackedRuntimeJob:
         This method is idempotent - calling it multiple times returns the same
         cached result and does not re-log artifacts.
 
-        UEC Compliance: If job.result() raises an exception, an envelope with
-        error details is still created and logged before re-raising.
-
         Returns
         -------
         Any
@@ -197,11 +195,9 @@ class TrackedRuntimeJob:
         if self._cached_result is not None:
             return self._cached_result
 
-        # Wrap job.result() to ensure envelope is created even on failure
         try:
             result = self.job.result(*args, **kwargs)
         except Exception as exc:
-            # Log failure envelope before re-raising
             self._log_failure(exc)
             raise
 
@@ -213,7 +209,6 @@ class TrackedRuntimeJob:
         self._finalized = True
 
         try:
-            # Log raw result
             try:
                 result_payload = to_jsonable(result)
             except Exception:
@@ -230,7 +225,6 @@ class TrackedRuntimeJob:
                 kind="result.qiskit_runtime.output.json",
             )
 
-            # Extract and log results based on primitive type
             if self.primitive_type == "sampler":
                 self.result_snapshot = self._log_sampler_results(result, raw_result_ref)
             else:
@@ -238,7 +232,6 @@ class TrackedRuntimeJob:
                     result, raw_result_ref
                 )
 
-            # Finalize envelope with result
             if self.envelope is not None and self.result_snapshot is not None:
                 finalize_envelope_with_result(
                     self.tracker,
@@ -247,13 +240,11 @@ class TrackedRuntimeJob:
                 )
 
         except Exception as e:
-            # Log error but don't fail - result retrieval should always succeed
             logger.warning(
                 "Failed to log results for %s: %s",
                 self.executor_name,
                 e,
             )
-            # Record error in tracker for visibility
             self.tracker.record.setdefault("warnings", []).append(
                 {
                     "type": "result_logging_failed",
@@ -282,14 +273,12 @@ class TrackedRuntimeJob:
         self._finalized = True
 
         try:
-            # Create failure result snapshot
             self.result_snapshot = create_failure_result_snapshot(
                 exception=exc,
                 backend_name=self.executor_name,
                 primitive_type=self.primitive_type,
             )
 
-            # Finalize envelope with failure result
             if self.envelope is not None:
                 finalize_envelope_with_result(
                     self.tracker,
@@ -368,10 +357,9 @@ class TrackedRuntimeJob:
             raw_result_ref=raw_result_ref,
         )
 
-        # Get experiments from snapshot metadata (estimator stores there)
+        # Get experiments from snapshot metadata (populated by build_estimator_result_snapshot)
         experiments_data = snapshot.metadata.get("experiments", [])
         if experiments_data:
-            # Build payload for artifact
             experiments = []
             for exp_data in experiments_data:
                 expectations = exp_data.get("expectations", [])
@@ -420,6 +408,11 @@ class TrackedRuntimeJob:
         return getattr(self.job, name)
 
 
+# =============================================================================
+# Tracked Runtime Primitive
+# =============================================================================
+
+
 @dataclass
 class TrackedRuntimePrimitive:
     """
@@ -439,21 +432,12 @@ class TrackedRuntimePrimitive:
     log_every_n : int
         Logging frequency:
         - 0 (default): Log first execution only.
-        - N > 0: Log every Nth execution (e.g., 100 = log runs 1, 100, 200...).
-        - -1: Log all executions (slowest, most complete).
+        - N > 0: Log every Nth execution.
+        - -1: Log all executions.
     log_new_circuits : bool
         Auto-log new circuit structures (default True).
     stats_update_interval : int
         Update execution statistics every N executions (default 1000).
-
-    Attributes
-    ----------
-    device_snapshot : DeviceSnapshot or None
-        Cached device snapshot (created once per run).
-    program_snapshot : ProgramSnapshot or None
-        Current program snapshot (updated on circuit logging).
-    execution_snapshot : ExecutionSnapshot or None
-        Current execution snapshot (updated on run).
     """
 
     primitive: Any
@@ -463,7 +447,6 @@ class TrackedRuntimePrimitive:
     log_new_circuits: bool = True
     stats_update_interval: int = 1000
 
-    # Internal state (explicitly typed)
     _warned: bool = field(default=False, init=False, repr=False)
     _snapshot_logged: bool = field(default=False, init=False, repr=False)
     _execution_count: int = field(default=0, init=False, repr=False)
@@ -473,10 +456,7 @@ class TrackedRuntimePrimitive:
         default_factory=set, init=False, repr=False
     )
 
-    # Cached device snapshot
     device_snapshot: DeviceSnapshot | None = field(default=None, init=False, repr=False)
-
-    # UEC snapshots
     program_snapshot: ProgramSnapshot | None = field(
         default=None, init=False, repr=False
     )
@@ -497,10 +477,8 @@ class TrackedRuntimePrimitive:
         if self.device_snapshot is not None:
             return self.device_snapshot
 
-        # Create snapshot with tracker for raw_properties logging
         snapshot = create_device_snapshot(self.primitive, tracker=self.tracker)
 
-        # Update tracker record with summary
         self.tracker.record["device_snapshot"] = {
             "sdk": "qiskit-ibm-runtime",
             "backend_name": exec_name,
@@ -662,7 +640,7 @@ class TrackedRuntimePrimitive:
         devqubit_warn_on_auto_transpile : bool, optional
             If True (default), emit warning when auto transpilation is applied.
         devqubit_strict_isa_check : bool, optional
-            If True (default), use strict ISA checking that trusts IBM's rejection.
+            If True (default), use strict ISA checking.
 
         Parameters
         ----------
@@ -681,7 +659,6 @@ class TrackedRuntimePrimitive:
         exec_name = get_backend_name(self.primitive)
         submitted_at = utc_now_iso()
 
-        # Materialize once
         pubs_list = iter_pubs(pubs)
 
         # Extract devqubit-only kwargs
@@ -693,14 +670,11 @@ class TrackedRuntimePrimitive:
         warn_on_auto = kwargs.pop("devqubit_warn_on_auto_transpile", True)
         strict_isa = kwargs.pop("devqubit_strict_isa_check", True)
 
-        # Extract circuits from PUBs
         circuits = extract_circuits_from_pubs(pubs_list)
 
-        # Increment execution counter
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute structural hash (for deduplication) and parametric hash (for exact match)
         structural_hash = compute_structural_hash(circuits)
         parametric_hash = compute_parametric_hash(circuits)
         is_new_circuit = (
@@ -765,8 +739,8 @@ class TrackedRuntimePrimitive:
                 envelope=None,
             )
 
-        # Tags - use physical provider, not SDK
-        physical_provider = detect_physical_provider(self.primitive)
+        # Set tags
+        physical_provider = detect_provider(self.primitive)
         self.tracker.set_tag("provider", physical_provider)
         self.tracker.set_tag("adapter", "qiskit-runtime")
         self.tracker.set_tag("backend_name", exec_name)
@@ -779,13 +753,11 @@ class TrackedRuntimePrimitive:
         program_artifacts: list[ProgramArtifact] = []
         physical_artifacts: list[ProgramArtifact] = []
 
-        # Compute transpiled circuits once if needed
         transpiled_circuits: list[Any] = []
         if tmeta.get("transpiled_by_devqubit"):
             transpiled_circuits = extract_circuits_from_pubs(pubs_to_run)
 
         if should_log_structure:
-            # Log original circuits/pubs
             if circuits:
                 program_artifacts = self._log_circuits(
                     circuits, exec_name, structural_hash
@@ -836,14 +808,13 @@ class TrackedRuntimePrimitive:
             self.tracker.record["backend"] = {
                 "name": exec_name,
                 "type": self.primitive.__class__.__name__,
-                "provider": physical_provider,  # Physical provider, not SDK
+                "provider": physical_provider,
                 "primitive_type": self.primitive_type,
             }
 
             self._logged_execution_count += 1
 
         # Build ProgramSnapshot
-        # Compute executed hashes from transpiled circuits if available
         executed_structural_hash = (
             compute_structural_hash(transpiled_circuits)
             if transpiled_circuits
@@ -879,8 +850,8 @@ class TrackedRuntimePrimitive:
         # Build ExecutionSnapshot
         self.execution_snapshot = ExecutionSnapshot(
             submitted_at=submitted_at,
-            shots=None,  # Runtime primitives handle shots internally
-            job_ids=[],  # Filled after submission
+            shots=None,
+            job_ids=[],
             execution_count=exec_count,
             transpilation=transpilation_info,
             options={
@@ -889,7 +860,6 @@ class TrackedRuntimePrimitive:
                 "transpilation_needed": tmeta.get("transpilation_needed"),
                 "transpilation_reason": tmeta.get("transpilation_reason"),
                 "observables_layout_mapped": tmeta.get("observables_layout_mapped"),
-                # Store transpilation details here instead
                 "optimization_level": options.optimization_level,
                 "layout_method": options.layout_method,
                 "routing_method": options.routing_method,
@@ -920,7 +890,6 @@ class TrackedRuntimePrimitive:
         )
         self.tracker.record["transpilation"] = transpilation_info.to_dict()
 
-        # Store transpilation options
         transpilation_opts = tmeta.get("transpilation_options") or {}
         if transpilation_opts:
             self.tracker.record["transpilation_options"] = transpilation_opts
@@ -983,7 +952,6 @@ class TrackedRuntimePrimitive:
         if should_log_results and device_snapshot is not None:
             sdk_versions = collect_sdk_versions()
 
-            # Create ProducerInfo for SDK stack tracking
             producer = ProducerInfo.create(
                 adapter="devqubit-qiskit-runtime",
                 adapter_version=get_adapter_version(),
@@ -992,10 +960,9 @@ class TrackedRuntimePrimitive:
                 frontends=["qiskit-ibm-runtime"],
             )
 
-            # Create pending result (will be updated when result() completes)
             pending_result = ResultSnapshot(
                 success=False,
-                status="failed",  # Will be updated when result() completes
+                status="failed",
                 items=[],
                 metadata={"state": "pending"},
             )
@@ -1010,7 +977,6 @@ class TrackedRuntimePrimitive:
                 execution=self.execution_snapshot,
             )
 
-        # Update stats
         self._update_stats()
 
         return TrackedRuntimeJob(
@@ -1025,6 +991,11 @@ class TrackedRuntimePrimitive:
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped primitive."""
         return getattr(self.primitive, name)
+
+
+# =============================================================================
+# Adapter Class
+# =============================================================================
 
 
 class QiskitRuntimeAdapter:
@@ -1081,7 +1052,7 @@ class QiskitRuntimeAdapter:
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": detect_physical_provider(executor),  # Physical provider
+            "provider": detect_provider(executor),
             "primitive_type": get_primitive_type(executor),
         }
 
@@ -1106,8 +1077,8 @@ class QiskitRuntimeAdapter:
         log_every_n : int
             Logging frequency:
             - 0 (default): Log first execution only.
-            - N > 0: Log every Nth execution (e.g., 100 = log runs 1, 100, 200...).
-            - -1: Log all executions (slowest, most complete).
+            - N > 0: Log every Nth execution.
+            - -1: Log all executions.
         log_new_circuits : bool
             Auto-log new circuit structures (default True).
         stats_update_interval : int

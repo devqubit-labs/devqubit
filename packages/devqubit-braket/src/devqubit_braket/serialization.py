@@ -100,50 +100,9 @@ def is_braket_circuit(obj: Any) -> bool:
         return False
 
 
-def _copy_circuit_without_measurements(circuit: Any) -> Any:
-    """
-    Create a copy of a circuit without measurement operations.
-
-    JAQCD format does not support measure instructions, so this function
-    creates a gate-only copy of the circuit for serialization.
-
-    Parameters
-    ----------
-    circuit : braket.circuits.Circuit
-        Braket circuit potentially containing measurements.
-
-    Returns
-    -------
-    braket.circuits.Circuit
-        New circuit with only gate operations (no measurements).
-    """
-    from braket.circuits import Circuit
-
-    circuit_copy = Circuit()
-
-    for instr in circuit.instructions:
-        op = instr.operator
-        op_name = getattr(op, "name", type(op).__name__).lower()
-
-        # Skip measurement operations
-        if op_name in ("measure", "measurement"):
-            continue
-
-        # Get target qubits as integers
-        targets = [int(q) for q in instr.target]
-
-        # Get optional angle parameter (for parametric gates)
-        angle = getattr(op, "angle", None)
-
-        # Get gate function from circuit
-        gate_fn = getattr(circuit_copy, op_name, None)
-        if gate_fn is not None:
-            if angle is not None:
-                gate_fn(*targets, angle)
-            else:
-                gate_fn(*targets)
-
-    return circuit_copy
+# =============================================================================
+# Serialization Functions
+# =============================================================================
 
 
 def serialize_jaqcd(circuit: Any, *, name: str = "", index: int = 0) -> CircuitData:
@@ -248,6 +207,52 @@ def serialize_openqasm(circuit: Any, *, name: str = "", index: int = 0) -> Circu
         raise SerializerError(f"OpenQASM serialization failed: {e}") from e
 
 
+def _copy_circuit_without_measurements(circuit: Any) -> Any:
+    """
+    Create a copy of a circuit without measurement operations.
+
+    JAQCD format does not support measure instructions, so this function
+    creates a gate-only copy of the circuit for serialization.
+
+    Parameters
+    ----------
+    circuit : braket.circuits.Circuit
+        Braket circuit potentially containing measurements.
+
+    Returns
+    -------
+    braket.circuits.Circuit
+        New circuit with only gate operations (no measurements).
+    """
+    from braket.circuits import Circuit
+
+    circuit_copy = Circuit()
+
+    for instr in circuit.instructions:
+        op = instr.operator
+        op_name = getattr(op, "name", type(op).__name__).lower()
+
+        if op_name in ("measure", "measurement"):
+            continue
+
+        targets = [int(q) for q in instr.target]
+        angle = getattr(op, "angle", None)
+
+        gate_fn = getattr(circuit_copy, op_name, None)
+        if gate_fn is not None:
+            if angle is not None:
+                gate_fn(*targets, angle)
+            else:
+                gate_fn(*targets)
+
+    return circuit_copy
+
+
+# =============================================================================
+# Text Conversion
+# =============================================================================
+
+
 def circuit_to_text(circuit: Any, index: int = 0) -> str:
     """
     Convert circuit to human-readable text format.
@@ -285,6 +290,57 @@ def circuits_to_text(circuits: list[Any]) -> str:
         Combined human-readable representation.
     """
     return "\n\n".join(circuit_to_text(c, i) for i, c in enumerate(circuits))
+
+
+# =============================================================================
+# Circuit Summary
+# =============================================================================
+
+
+def summarize_circuit(circuit: Any) -> CircuitSummary:
+    """
+    Generate a summary of a Braket circuit.
+
+    Extracts gate counts, depth, qubit count, and classification
+    information from the circuit.
+
+    Parameters
+    ----------
+    circuit : braket.circuits.Circuit
+        Braket circuit to summarize.
+
+    Returns
+    -------
+    CircuitSummary
+        Circuit summary with statistics and gate counts.
+    """
+    gate_counts: Counter[str] = Counter()
+
+    for instr in circuit.instructions:
+        op = instr.operator
+        gate_name = getattr(op, "name", type(op).__name__).lower()
+        gate_counts[gate_name] += 1
+
+    stats = _classifier.classify_counts(dict(gate_counts))
+
+    return CircuitSummary(
+        num_qubits=circuit.qubit_count,
+        depth=circuit.depth,
+        gate_count_1q=stats["gate_count_1q"],
+        gate_count_2q=stats["gate_count_2q"],
+        gate_count_multi=stats["gate_count_multi"],
+        gate_count_measure=stats["gate_count_measure"],
+        gate_count_total=sum(gate_counts.values()),
+        gate_types=dict(gate_counts),
+        is_clifford=stats["is_clifford"],
+        source_format=CircuitFormat.JAQCD,
+        sdk=SDK.BRAKET,
+    )
+
+
+# =============================================================================
+# Loader and Serializer Classes
+# =============================================================================
 
 
 class BraketCircuitLoader:

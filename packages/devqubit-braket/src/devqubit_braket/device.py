@@ -2,13 +2,10 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Device snapshot creation for Braket devices.
+Device handling for Braket adapter.
 
-Creates structured DeviceSnapshot objects from Braket devices, capturing:
-- identity and raw properties
-- topology (num_qubits + connectivity)
-- native gates (best-effort)
-- calibration (via devqubit_braket.calibration)
+Creates structured DeviceSnapshot objects from Braket devices, capturing
+identity, topology, native gates, and calibration data.
 
 Notes
 -----
@@ -21,14 +18,20 @@ In particular:
 from __future__ import annotations
 
 import logging
+from statistics import median
 from typing import TYPE_CHECKING, Any
 
-from devqubit_braket.calibration import extract_calibration_from_device
 from devqubit_braket.utils import (
     braket_version,
     get_backend_name,
     get_nested,
     obj_to_dict,
+    to_float,
+)
+from devqubit_engine.uec.models.calibration import (
+    DeviceCalibration,
+    GateCalibration,
+    QubitCalibration,
 )
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.utils.common import utc_now_iso
@@ -38,6 +41,186 @@ if TYPE_CHECKING:
     from devqubit_engine.tracking.run import Run
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Calibration Extraction
+# =============================================================================
+
+
+def _parse_qubit_key(qubits_key: str) -> list[int]:
+    """
+    Parse a qubit key string to a list of qubit indices.
+
+    Handles formats like "0-1", "(0,1)", "[0,1]", "0,1".
+
+    Parameters
+    ----------
+    qubits_key : str
+        Qubit key string.
+
+    Returns
+    -------
+    list of int
+        Parsed qubit indices.
+    """
+    try:
+        cleaned = qubits_key.translate(str.maketrans("()-[]", ",,,,,", " "))
+        return [int(t) for t in cleaned.split(",") if t]
+    except Exception:
+        return []
+
+
+def _extract_fidelity_entries(
+    container: Any,
+    candidate_keys: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """
+    Extract a list of fidelity entries from a container.
+
+    Parameters
+    ----------
+    container : Any
+        Dict-like or object-like container.
+    candidate_keys : tuple of str
+        Candidate keys that may store a list of fidelities.
+
+    Returns
+    -------
+    list of dict
+        List entries, each expected to contain gateName and fidelity.
+    """
+    d = obj_to_dict(container) or {}
+    if not isinstance(d, dict):
+        return []
+
+    for k in candidate_keys:
+        v = d.get(k)
+        if isinstance(v, list):
+            return [x for x in v if isinstance(x, dict)]
+
+    return []
+
+
+def _gate_name_and_fidelity(entry: dict[str, Any]) -> tuple[str | None, float | None]:
+    """Extract (gate_name, fidelity) from a fidelity entry dict."""
+    gname = entry.get("gateName") or entry.get("gate_name") or entry.get("name")
+    fidelity = to_float(entry.get("fidelity"))
+    return (str(gname) if gname else None), fidelity
+
+
+def extract_calibration(device: Any) -> DeviceCalibration | None:
+    """
+    Extract DeviceCalibration from Braket device properties.
+
+    Parameters
+    ----------
+    device : Any
+        Braket device instance (AwsDevice, LocalSimulator, etc.)
+
+    Returns
+    -------
+    DeviceCalibration or None
+        Calibration bundle when standardized calibration metrics are found.
+
+    Notes
+    -----
+    Prefers standardized properties (gate fidelities). For each fidelity entry,
+    this maps to a devqubit GateCalibration with:
+
+        error = 1 - fidelity
+
+    This keeps your schema consistent with "lower is better" error-style metrics.
+    """
+    try:
+        props_obj = getattr(device, "properties", None)
+    except Exception:
+        return None
+
+    props = obj_to_dict(props_obj)
+    if not isinstance(props, dict) or not props:
+        return None
+
+    cal_time = get_nested(props, ("service", "updatedAt"))
+    cal_time = str(cal_time) if cal_time else utc_now_iso()
+
+    std = obj_to_dict(get_nested(props, ("standardized",)))
+    if not isinstance(std, dict) or not std:
+        return None
+
+    oneq_props = std.get("oneQubitProperties")
+    twoq_props = std.get("twoQubitProperties")
+
+    gates: list[GateCalibration] = []
+    qubit_errors: dict[int, list[float]] = {}
+
+    # 1Q fidelities -> GateCalibration + per-qubit aggregation
+    if isinstance(oneq_props, dict):
+        for q_key, q_entry in oneq_props.items():
+            try:
+                q = int(q_key)
+            except Exception:
+                continue
+
+            entries = _extract_fidelity_entries(
+                q_entry,
+                candidate_keys=("oneQubitGateFidelity", "one_qubit_gate_fidelity"),
+            )
+            for e in entries:
+                gname, fidelity = _gate_name_and_fidelity(e)
+                if not gname or fidelity is None:
+                    continue
+                err = max(0.0, 1.0 - float(fidelity))
+                gates.append(GateCalibration(gate=gname, qubits=(q,), error=err))
+                qubit_errors.setdefault(q, []).append(err)
+
+    # 2Q fidelities -> GateCalibration
+    if isinstance(twoq_props, dict):
+        for edge_key, edge_entry in twoq_props.items():
+            if not isinstance(edge_key, str):
+                continue
+            qubits = _parse_qubit_key(edge_key)
+            if len(qubits) != 2:
+                continue
+            qpair = tuple(qubits)
+
+            entries = _extract_fidelity_entries(
+                edge_entry,
+                candidate_keys=("twoQubitGateFidelity", "two_qubit_gate_fidelity"),
+            )
+            for e in entries:
+                gname, fidelity = _gate_name_and_fidelity(e)
+                if not gname or fidelity is None:
+                    continue
+                err = max(0.0, 1.0 - float(fidelity))
+                gates.append(GateCalibration(gate=gname, qubits=qpair, error=err))
+
+    if not gates:
+        return None
+
+    # Build QubitCalibration records with derived 1Q error medians
+    qubits_out: list[QubitCalibration] = []
+    for q, errs in sorted(qubit_errors.items()):
+        if errs:
+            try:
+                qubits_out.append(
+                    QubitCalibration(qubit=q, gate_error_1q=float(median(errs)))
+                )
+            except Exception:
+                qubits_out.append(QubitCalibration(qubit=q))
+
+    cal = DeviceCalibration(
+        calibration_time=cal_time,
+        qubits=qubits_out,
+        gates=gates,
+    )
+    cal.compute_medians()
+    return cal
+
+
+# =============================================================================
+# Device Snapshot Creation
+# =============================================================================
 
 
 def _detect_physical_provider(device: Any) -> str:
@@ -60,15 +243,12 @@ def _detect_physical_provider(device: Any) -> str:
     class_name = device.__class__.__name__.lower()
     module_name = getattr(device, "__module__", "").lower()
 
-    # Local simulator
     if "local" in class_name or "localsimulator" in class_name:
         return "local"
 
-    # Check module for local
     if "local" in module_name:
         return "local"
 
-    # Check ARN for AWS device
     try:
         arn = getattr(device, "arn", None)
         if arn:
@@ -78,7 +258,6 @@ def _detect_physical_provider(device: Any) -> str:
     except Exception:
         pass
 
-    # Check device type
     try:
         device_type = getattr(device, "type", None)
         if device_type is not None:
@@ -88,7 +267,6 @@ def _detect_physical_provider(device: Any) -> str:
     except Exception:
         pass
 
-    # Default: AWS Braket (since most non-local devices are AWS)
     return "aws_braket"
 
 
@@ -108,11 +286,9 @@ def _resolve_backend_type(device: Any) -> str:
     """
     class_name = device.__class__.__name__.lower()
 
-    # Check class name for simulator indicators
     if any(s in class_name for s in ("simulator", "sim", "local")):
         return "simulator"
 
-    # Check device type attribute if available
     try:
         device_type = getattr(device, "type", None)
         if device_type is not None:
@@ -124,7 +300,6 @@ def _resolve_backend_type(device: Any) -> str:
     except Exception:
         pass
 
-    # Check ARN for simulator pattern
     try:
         arn = getattr(device, "arn", None)
         if arn and "simulator" in str(arn).lower():
@@ -132,12 +307,12 @@ def _resolve_backend_type(device: Any) -> str:
     except Exception:
         pass
 
-    # Default to hardware for AwsDevice, simulator otherwise
     return "hardware" if "awsdevice" in class_name else "simulator"
 
 
 def _extract_native_gates(
-    device: Any, props_dict: dict[str, Any] | None
+    device: Any,
+    props_dict: dict[str, Any] | None,
 ) -> list[str] | None:
     """
     Extract native gates supported by the device (best-effort).
@@ -159,7 +334,6 @@ def _extract_native_gates(
     list of str or None
         Native gate names (or supported operations fallback), if found.
     """
-    # Try attribute path first
     try:
         props_obj = getattr(device, "properties", None)
         ng = get_nested(props_obj, ("paradigm", "nativeGateSet"))
@@ -168,13 +342,11 @@ def _extract_native_gates(
     except Exception:
         pass
 
-    # Try dict paths
     if isinstance(props_dict, dict):
         ng = get_nested(props_dict, ("paradigm", "nativeGateSet"))
         if isinstance(ng, list) and ng:
             return [str(x) for x in ng]
 
-        # Fallback: supported operations
         ops = get_nested(
             props_dict,
             ("action", "braket.ir.openqasm.program", "supportedOperations"),
@@ -236,7 +408,6 @@ def _extract_topology(
     except Exception:
         props_obj = None
 
-    # num_qubits from qubitCount
     qc = get_nested(props_obj, ("paradigm", "qubitCount"))
     if qc is None and isinstance(props_dict, dict):
         qc = get_nested(props_dict, ("paradigm", "qubitCount"))
@@ -324,12 +495,10 @@ def _build_raw_properties(
         "device_module": getattr(device, "__module__", ""),
     }
 
-    # ARN
     arn = _extract_backend_id(device)
     if arn:
         raw_properties["arn"] = arn
 
-    # Device type
     try:
         device_type = getattr(device, "type", None)
         if device_type is not None:
@@ -337,17 +506,14 @@ def _build_raw_properties(
     except Exception:
         pass
 
-    # Provider name (from ARN or properties)
     try:
         if arn and ":" in arn:
-            # ARN format: arn:aws:braket:<region>::device/<provider>/<device_name>
             parts = arn.split("/")
             if len(parts) >= 2:
                 raw_properties["provider_name"] = parts[1]
     except Exception:
         pass
 
-    # Status (for AwsDevice)
     try:
         status = getattr(device, "status", None)
         if status is not None:
@@ -355,7 +521,6 @@ def _build_raw_properties(
     except Exception:
         pass
 
-    # Include full properties dict if available
     if props_dict:
         raw_properties["properties"] = props_dict
 
@@ -405,7 +570,6 @@ def create_device_snapshot(
     backend_id = _extract_backend_id(device)
     sdk_version = braket_version()
 
-    # Get properties dict for fallback lookups
     try:
         props_obj = getattr(device, "properties", None)
         props_dict = obj_to_dict(props_obj) if props_obj else None
@@ -413,28 +577,24 @@ def create_device_snapshot(
         logger.debug("Failed to get device properties: %s", e)
         props_dict = None
 
-    # Topology
     try:
         num_qubits, connectivity = _extract_topology(device, props_dict)
     except Exception as e:
         logger.debug("Failed to extract topology: %s", e)
         num_qubits, connectivity = None, None
 
-    # Native gates (best-effort)
     try:
         native_gates = _extract_native_gates(device, props_dict)
     except Exception as e:
         logger.debug("Failed to extract native gates: %s", e)
         native_gates = None
 
-    # Calibration (from standardized fidelities, etc.)
     try:
-        calibration = extract_calibration_from_device(device)
+        calibration = extract_calibration(device)
     except Exception as e:
         logger.debug("Failed to extract calibration: %s", e)
         calibration = None
 
-    # Log raw_properties as artifact if tracker is provided
     raw_properties_ref = None
     if tracker is not None:
         raw_properties = _build_raw_properties(device, props_dict)

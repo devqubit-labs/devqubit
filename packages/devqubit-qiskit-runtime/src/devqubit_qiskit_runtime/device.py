@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Device snapshot creation for Qiskit Runtime primitives.
+Device snapshot and envelope utilities for Qiskit Runtime adapter.
 
 Creates structured DeviceSnapshot objects from Runtime primitives,
 capturing backend configuration, calibration, and primitive frontend
@@ -14,8 +14,9 @@ The UEC uses a multi-layer stack model where:
 
 This module composes:
 1. A FrontendConfig describing the primitive layer
-2. A DeviceSnapshot from the underlying backend (reusing devqubit_qiskit.snapshot)
+2. A DeviceSnapshot from the underlying backend (reusing devqubit_qiskit.device)
 3. Runtime-specific metadata (options, session info)
+4. Envelope lifecycle management (finalization, failure handling)
 """
 
 from __future__ import annotations
@@ -24,9 +25,11 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from devqubit_engine.uec.models.device import DeviceSnapshot, FrontendConfig
+from devqubit_engine.uec.models.envelope import ExecutionEnvelope
+from devqubit_engine.uec.models.result import ResultSnapshot
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
-from devqubit_qiskit.snapshot import create_device_snapshot as create_backend_snapshot
+from devqubit_qiskit.device import create_device_snapshot as create_backend_snapshot
 from devqubit_qiskit_runtime.utils import (
     collect_sdk_versions,
     get_backend_name,
@@ -41,7 +44,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _detect_physical_provider(primitive: Any) -> str:
+# =============================================================================
+# Provider Detection
+# =============================================================================
+
+
+def detect_provider(primitive: Any) -> str:
     """
     Detect physical provider from Runtime primitive (not SDK).
 
@@ -56,7 +64,23 @@ def _detect_physical_provider(primitive: Any) -> str:
     Returns
     -------
     str
-        Physical provider: "ibm_quantum", "fake", or "local".
+        Physical provider: "ibm_quantum", "fake", "aer", or "local".
+
+    Notes
+    -----
+    This function examines the backend object attached to the primitive
+    to determine the physical provider. The logic is:
+
+    1. If no backend is found, check primitive module for "ibm" string
+    2. Check backend module and name for IBM, fake, or Aer indicators
+    3. Default to "local" if no provider can be determined
+
+    Examples
+    --------
+    >>> from qiskit_ibm_runtime import SamplerV2
+    >>> sampler = SamplerV2(backend)
+    >>> detect_provider(sampler)
+    'ibm_quantum'
     """
     backend = get_backend_obj(primitive)
     if backend is None:
@@ -83,50 +107,17 @@ def _detect_physical_provider(primitive: Any) -> str:
     return "local"
 
 
-def _extract_backend_id(primitive: Any) -> str | None:
-    """
-    Extract a stable backend identifier from a Runtime primitive.
-
-    Parameters
-    ----------
-    primitive : Any
-        Runtime primitive instance.
-
-    Returns
-    -------
-    str or None
-        Backend ID if available.
-    """
-    backend = get_backend_obj(primitive)
-    if backend is None:
-        return None
-
-    # Try IBM-specific backend_id
-    try:
-        if hasattr(backend, "backend_id"):
-            bid = backend.backend_id
-            if callable(bid):
-                bid = bid()
-            if bid:
-                return str(bid)
-    except Exception:
-        pass
-
-    # Try instance ID
-    try:
-        if hasattr(backend, "instance"):
-            inst = backend.instance
-            if inst:
-                return str(inst)
-    except Exception:
-        pass
-
-    return None
+# =============================================================================
+# Frontend Configuration
+# =============================================================================
 
 
 def _build_frontend_config(primitive: Any) -> FrontendConfig:
     """
     Build FrontendConfig for the Runtime primitive layer.
+
+    The frontend configuration captures information about the primitive
+    that the user interacts with, including options and SDK version.
 
     Parameters
     ----------
@@ -136,7 +127,20 @@ def _build_frontend_config(primitive: Any) -> FrontendConfig:
     Returns
     -------
     FrontendConfig
-        Configuration describing the primitive frontend.
+        Configuration describing the primitive frontend with:
+        - name: Primitive class name (e.g., "SamplerV2")
+        - sdk: "qiskit-ibm-runtime"
+        - sdk_version: Version of qiskit_ibm_runtime
+        - config: Primitive options (resilience_level, default_shots, etc.)
+
+    Notes
+    -----
+    The config dictionary includes:
+    - primitive_type: "sampler" or "estimator"
+    - resilience_level: Error mitigation level (if set)
+    - default_shots: Default shot count (if set)
+    - optimization_level: Transpilation optimization level (if set)
+    - Nested option groups (resilience, execution, twirling)
     """
     primitive_class = primitive.__class__.__name__
     primitive_type = get_primitive_type(primitive)
@@ -171,9 +175,61 @@ def _build_frontend_config(primitive: Any) -> FrontendConfig:
     )
 
 
+# =============================================================================
+# Property Extraction Helpers
+# =============================================================================
+
+
+def _extract_backend_id(primitive: Any) -> str | None:
+    """
+    Extract a stable backend identifier from a Runtime primitive.
+
+    Parameters
+    ----------
+    primitive : Any
+        Runtime primitive instance.
+
+    Returns
+    -------
+    str or None
+        Backend ID if available, None otherwise.
+
+    Notes
+    -----
+    Tries multiple approaches in order:
+    1. backend.backend_id (IBM-specific)
+    2. backend.instance (IBM Cloud instance ID)
+    """
+    backend = get_backend_obj(primitive)
+    if backend is None:
+        return None
+
+    # Try IBM-specific backend_id
+    try:
+        if hasattr(backend, "backend_id"):
+            bid = backend.backend_id
+            if callable(bid):
+                bid = bid()
+            if bid:
+                return str(bid)
+    except Exception:
+        pass
+
+    # Try instance ID
+    try:
+        if hasattr(backend, "instance"):
+            inst = backend.instance
+            if inst:
+                return str(inst)
+    except Exception:
+        pass
+
+    return None
+
+
 def _extract_options(primitive: Any) -> dict[str, Any]:
     """
-    Extract primitive options for raw_properties.
+    Extract primitive options for raw_properties artifact.
 
     Parameters
     ----------
@@ -183,7 +239,12 @@ def _extract_options(primitive: Any) -> dict[str, Any]:
     Returns
     -------
     dict
-        Options properties (JSON-serializable).
+        Options properties (JSON-serializable) including:
+        - options_resilience: Resilience settings
+        - options_execution: Execution settings
+        - options_twirling: Twirling settings
+        - optimization_level: Transpilation optimization level
+        - default_shots: Default shot count
     """
     props: dict[str, Any] = {}
 
@@ -225,7 +286,7 @@ def _extract_options(primitive: Any) -> dict[str, Any]:
 
 def _extract_session_info(primitive: Any) -> dict[str, Any] | None:
     """
-    Extract session information.
+    Extract session information from a Runtime primitive.
 
     Parameters
     ----------
@@ -235,7 +296,11 @@ def _extract_session_info(primitive: Any) -> dict[str, Any] | None:
     Returns
     -------
     dict or None
-        Session info or None if no session.
+        Session info dictionary with keys:
+        - session_id: Unique session identifier
+        - backend: Backend name for the session
+        - max_time: Maximum session duration
+        Returns None if no session is active.
     """
     session = getattr(primitive, "session", None)
     if session is None:
@@ -259,7 +324,7 @@ def _extract_session_info(primitive: Any) -> dict[str, Any] | None:
 
 def _extract_mode_info(primitive: Any) -> dict[str, Any] | None:
     """
-    Extract mode information (Session/Batch/Backend).
+    Extract mode information (Session/Batch/Backend) from primitive.
 
     Parameters
     ----------
@@ -269,7 +334,11 @@ def _extract_mode_info(primitive: Any) -> dict[str, Any] | None:
     Returns
     -------
     dict or None
-        Mode info or None if not available.
+        Mode info dictionary with keys:
+        - type: Mode class name (Session, Batch, or Backend)
+        - id: Session/Batch ID if available
+        - max_time: Maximum time if available
+        Returns None if no mode is set.
     """
     mode = getattr(primitive, "mode", None)
     if mode is None:
@@ -303,11 +372,16 @@ def _extract_mode_info(primitive: Any) -> dict[str, Any] | None:
     return mode_info if len(mode_info) > 1 else None
 
 
+# =============================================================================
+# Device Snapshot Creation
+# =============================================================================
+
+
 def create_device_snapshot(
     primitive: Any,
     *,
     refresh_properties: bool = False,
-    tracker: Run | None = None,
+    tracker: "Run | None" = None,
 ) -> DeviceSnapshot:
     """
     Create a DeviceSnapshot from a Runtime primitive.
@@ -322,8 +396,11 @@ def create_device_snapshot(
         Runtime primitive instance (Sampler/Estimator).
     refresh_properties : bool, optional
         If True, attempt to refresh backend calibration properties.
+        Default is False.
     tracker : Run, optional
         Tracker instance for logging raw_properties as artifact.
+        If provided, raw backend and primitive properties are logged
+        as a separate artifact for lossless capture.
 
     Returns
     -------
@@ -339,10 +416,25 @@ def create_device_snapshot(
     -----
     When ``tracker`` is provided, raw backend and primitive properties are
     logged as a separate artifact for lossless capture. This includes:
+
     - Primitive class and module info
     - Backend properties from the resolved backend
     - Primitive options (resilience, execution, twirling)
     - Session/mode information
+
+    The snapshot reuses ``devqubit_qiskit.device.create_device_snapshot``
+    for the backend layer, ensuring consistent calibration extraction
+    across both Qiskit adapters.
+
+    Examples
+    --------
+    >>> from qiskit_ibm_runtime import SamplerV2
+    >>> sampler = SamplerV2(backend)
+    >>> snapshot = create_device_snapshot(sampler)
+    >>> snapshot.provider
+    'ibm_quantum'
+    >>> snapshot.frontend.sdk
+    'qiskit-ibm-runtime'
     """
     if primitive is None:
         raise ValueError("Cannot create device snapshot from None primitive")
@@ -414,7 +506,7 @@ def create_device_snapshot(
             logger.warning("Failed to log raw_properties artifact: %s", e)
 
     # Detect physical provider (not SDK)
-    physical_provider = _detect_physical_provider(primitive)
+    physical_provider = detect_provider(primitive)
 
     return DeviceSnapshot(
         captured_at=captured_at,
@@ -432,12 +524,19 @@ def create_device_snapshot(
     )
 
 
+# =============================================================================
+# Backend Resolution
+# =============================================================================
+
+
 def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
     """
     Resolve the physical backend from a Runtime primitive.
 
     This is the Runtime implementation of the universal backend resolution
-    helper specified in the UEC.
+    helper specified in the UEC. It provides a consistent interface for
+    obtaining backend information regardless of how the primitive was
+    constructed.
 
     Parameters
     ----------
@@ -447,7 +546,24 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
     Returns
     -------
     dict or None
-        Dictionary with resolved backend information, or None if resolution fails.
+        Dictionary with resolved backend information:
+        - provider: Physical provider name
+        - backend_name: Backend name string
+        - backend_id: Backend identifier (if available)
+        - backend_type: "hardware" or "simulator"
+        - backend_obj: The actual backend object
+        - primitive_type: "sampler" or "estimator"
+        Returns None if resolution fails.
+
+    Examples
+    --------
+    >>> from qiskit_ibm_runtime import SamplerV2
+    >>> sampler = SamplerV2(backend)
+    >>> info = resolve_runtime_backend(sampler)
+    >>> info["provider"]
+    'ibm_quantum'
+    >>> info["primitive_type"]
+    'sampler'
     """
     if executor is None:
         return None
@@ -482,10 +598,119 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
         primitive_type = "unknown"
 
     return {
-        "provider": _detect_physical_provider(executor),
+        "provider": detect_provider(executor),
         "backend_name": backend_name,
         "backend_id": backend_id,
         "backend_type": backend_type,
         "backend_obj": backend,
         "primitive_type": primitive_type,
     }
+
+
+# =============================================================================
+# Envelope Lifecycle Management
+# =============================================================================
+
+
+def create_failure_result_snapshot(
+    exception: BaseException,
+    backend_name: str,
+    primitive_type: str,
+) -> ResultSnapshot:
+    """
+    Create a ResultSnapshot for a failed execution.
+
+    Used when job.result() raises an exception. Ensures envelope
+    is always created even on failures (UEC requirement).
+
+    Parameters
+    ----------
+    exception : BaseException
+        The exception that caused the failure.
+    backend_name : str
+        Backend name for metadata.
+    primitive_type : str
+        Type of primitive ('sampler' or 'estimator').
+
+    Returns
+    -------
+    ResultSnapshot
+        Failed result snapshot with error details including:
+        - success: False
+        - status: "failed"
+        - error: Exception type and message
+        - metadata: Backend and primitive info
+
+    Notes
+    -----
+    The UEC requires that an envelope be created for every execution
+    attempt, even if the execution fails. This function creates the
+    appropriate failure snapshot that can be attached to the envelope.
+
+    Examples
+    --------
+    >>> try:
+    ...     result = job.result()
+    ... except Exception as e:
+    ...     snapshot = create_failure_result_snapshot(
+    ...         e, "ibm_brisbane", "sampler"
+    ...     )
+    """
+    return ResultSnapshot.create_failed(
+        exception=exception,
+        metadata={
+            "backend_name": backend_name,
+            "primitive_type": primitive_type,
+        },
+    )
+
+
+def finalize_envelope_with_result(
+    tracker: "Run",
+    envelope: ExecutionEnvelope,
+    result_snapshot: ResultSnapshot,
+) -> None:
+    """
+    Finalize envelope with result and log as artifact.
+
+    This function completes the envelope lifecycle by attaching the
+    result snapshot and logging the complete envelope to the tracker.
+
+    Parameters
+    ----------
+    tracker : Run
+        Tracker instance for logging the envelope.
+    envelope : ExecutionEnvelope
+        Envelope to finalize. Must not be None.
+    result_snapshot : ResultSnapshot
+        Result to add to envelope. May be None (warning logged).
+
+    Raises
+    ------
+    ValueError
+        If envelope is None.
+
+    Notes
+    -----
+    This function:
+    1. Attaches the result snapshot to the envelope
+    2. Sets the completion timestamp on the execution snapshot
+    3. Validates and logs the envelope using the tracker's canonical method
+
+    The envelope is logged as a "devqubit.envelope.json" artifact.
+    """
+    if envelope is None:
+        raise ValueError("Cannot finalize None envelope")
+
+    if result_snapshot is None:
+        logger.warning("Finalizing envelope with None result_snapshot")
+
+    # Add result to envelope
+    envelope.result = result_snapshot
+
+    # Set completion time
+    if envelope.execution is not None:
+        envelope.execution.completed_at = utc_now_iso()
+
+    # Validate and log envelope using tracker's canonical method
+    tracker.log_envelope(envelope=envelope)

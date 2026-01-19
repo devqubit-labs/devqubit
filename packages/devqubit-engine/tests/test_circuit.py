@@ -48,17 +48,18 @@ requires_cirq = pytest.mark.skipif(
     reason="Cirq not installed",
 )
 
+requires_pennylane = pytest.mark.skipif(
+    not sdk_available("pennylane"),
+    reason="Pennylane not installed",
+)
+
 
 class TestCircuitPipeline:
     """End-to-end tests for circuit extraction and summarization."""
 
     @requires_qiskit
     def test_qiskit_qpy_full_pipeline(self, run_factory, store, artifact_factory):
-        """
-        Full pipeline: QPY artifact → extract → load → summarize.
-
-        This is the realistic flow when processing a Qiskit run.
-        """
+        """Full pipeline: QPY artifact → extract → load → summarize."""
         from qiskit import QuantumCircuit, qpy
 
         # Create a realistic circuit
@@ -99,11 +100,13 @@ class TestCircuitPipeline:
 
     @requires_qiskit
     def test_qasm2_full_pipeline(
-        self, run_factory, store, artifact_factory, bell_qasm2
+        self,
+        run_factory,
+        store,
+        artifact_factory,
+        bell_qasm2,
     ):
-        """
-        Full pipeline: OpenQASM2 artifact → extract → load → summarize.
-        """
+        """Full pipeline: OpenQASM2 artifact → extract → load → summarize."""
         artifact = artifact_factory(
             data=bell_qasm2.encode("utf-8"),
             kind="source.openqasm2",
@@ -124,9 +127,7 @@ class TestCircuitPipeline:
 
     @requires_braket
     def test_braket_jaqcd_full_pipeline(self, run_factory, store, artifact_factory):
-        """
-        Full pipeline: JAQCD artifact → extract → load → summarize.
-        """
+        """Full pipeline: JAQCD artifact → extract → load → summarize."""
         from braket.circuits import Circuit
 
         circuit = Circuit().h(0).cnot(0, 1).h(1)
@@ -156,6 +157,97 @@ class TestCircuitPipeline:
 
         assert summary.num_qubits == 2
         assert summary.gate_count_2q == 1  # CNOT
+
+    @requires_cirq
+    def test_cirq_json_full_pipeline(self, run_factory, store, artifact_factory):
+        """Full pipeline: Cirq JSON artifact → extract → load → summarize."""
+        import cirq
+
+        # Create a Bell state circuit
+        q0, q1 = cirq.LineQubit.range(2)
+        circuit = cirq.Circuit(
+            [
+                cirq.H(q0),
+                cirq.CNOT(q0, q1),
+                cirq.measure(q0, q1, key="result"),
+            ]
+        )
+
+        # Serialize to JSON
+        circuit_json = cirq.to_json(circuit)
+
+        artifact = artifact_factory(
+            data=circuit_json.encode("utf-8"),
+            kind="cirq.json",
+            role="program",
+            media_type="application/json",
+        )
+        record = run_factory(adapter="devqubit-cirq", artifacts=[artifact])
+
+        circuit_data = extract_circuit(record, store)
+
+        assert circuit_data is not None
+        assert circuit_data.format == CircuitFormat.CIRQ_JSON
+        assert circuit_data.sdk == SDK.CIRQ
+
+        summary = summarize_circuit_data(circuit_data)
+
+        assert summary.num_qubits == 2
+        assert summary.gate_count_1q == 1  # H
+        assert summary.gate_count_2q == 1  # CNOT
+        assert summary.gate_count_measure == 1
+
+    @requires_pennylane
+    def test_pennylane_json_full_pipeline(self, run_factory, store, artifact_factory):
+        """Full pipeline: PennyLane JSON artifact → extract → load → summarize."""
+        import json
+
+        import pennylane as qml
+
+        # Create a simple circuit and serialize tape structure
+        dev = qml.device("default.qubit", wires=2)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.Hadamard(wires=0)
+            qml.CNOT(wires=[0, 1])
+            return qml.expval(qml.PauliZ(0))
+
+        # Execute to build tape
+        circuit()
+
+        # Serialize tape to JSON (adapter-specific format)
+        tape_json = json.dumps(
+            {
+                "operations": [
+                    {"name": "Hadamard", "wires": [0], "params": []},
+                    {"name": "CNOT", "wires": [0, 1], "params": []},
+                ],
+                "observables": [
+                    {"name": "PauliZ", "wires": [0]},
+                ],
+                "num_wires": 2,
+            }
+        )
+
+        artifact = artifact_factory(
+            data=tape_json.encode("utf-8"),
+            kind="pennylane.tape.json",
+            role="program",
+            media_type="application/json",
+        )
+        record = run_factory(adapter="devqubit-pennylane", artifacts=[artifact])
+
+        circuit_data = extract_circuit(record, store)
+
+        assert circuit_data is not None
+        assert circuit_data.sdk == SDK.PENNYLANE
+
+        summary = summarize_circuit_data(circuit_data)
+
+        assert summary.num_qubits == 2
+        assert summary.gate_count_1q >= 1  # H
+        assert summary.gate_count_2q >= 1  # CNOT
 
 
 class TestSDKDetection:

@@ -511,36 +511,3 @@ def _compute_hashes(
             )
 
     return hash_circuit_pair(all_ops, total_nq, total_nc)
-
-
-def circuits_to_text(circuits: list[Any]) -> str:
-    """
-    Convert circuits to human-readable text diagrams.
-
-    Parameters
-    ----------
-    circuits : list
-        List of Cirq Circuit objects.
-
-    Returns
-    -------
-    str
-        Combined text representation of all circuits.
-    """
-    parts: list[str] = []
-
-    for i, circuit in enumerate(circuits):
-        if i > 0:
-            parts.append("")
-            parts.append("=" * 60)
-            parts.append("")
-
-        parts.append(f"[Circuit {i}]")
-
-        try:
-            # Use Cirq's native circuit diagram
-            parts.append(str(circuit))
-        except Exception:
-            parts.append(f"<Circuit with {_get_num_qubits(circuit)} qubits>")
-
-    return "\n".join(parts)

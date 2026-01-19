@@ -15,6 +15,11 @@ from typing import Any
 import qiskit
 
 
+# =============================================================================
+# Version Utilities
+# =============================================================================
+
+
 def qiskit_version() -> str:
     """
     Get installed Qiskit version.
@@ -28,13 +33,25 @@ def qiskit_version() -> str:
 
 
 def get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
+    """
+    Get adapter version dynamically from package metadata.
+
+    Returns
+    -------
+    str
+        Adapter version or "unknown" if unavailable.
+    """
     try:
         from importlib.metadata import version
 
         return version("devqubit-qiskit")
     except Exception:
         return "unknown"
+
+
+# =============================================================================
+# Backend Utilities
+# =============================================================================
 
 
 def get_backend_name(backend: Any) -> str:
@@ -90,6 +107,11 @@ def extract_job_id(job: Any) -> str | None:
         return str(job_id_attr)
     except Exception:
         return None
+
+
+# =============================================================================
+# Type Conversion Utilities
+# =============================================================================
 
 
 def to_float(x: Any) -> float | None:
@@ -173,6 +195,10 @@ def as_int_tuple(seq: Any) -> tuple[int, ...] | None:
     return tuple(out)
 
 
+# =============================================================================
+# Unit Conversion Utilities
+# =============================================================================
+
 # Time to microseconds conversion factors
 _TIME_TO_US: dict[str, float] = {
     "s": 1e6,
@@ -224,7 +250,6 @@ def convert_time_to_us(val: float, unit: str | None) -> float:
         Time in microseconds.
     """
     if unit is None:
-        # Qiskit commonly uses microseconds for T1/T2
         return float(val)
     u = str(unit).strip().lower()
     factor = _TIME_TO_US.get(u)
@@ -276,56 +301,3 @@ def convert_freq_to_ghz(val: float, unit: str | None) -> float:
     u = str(unit).strip().lower()
     factor = _FREQ_TO_GHZ.get(u)
     return float(val) * factor if factor is not None else float(val)
-
-
-def count_circuit_operations(circuit: Any) -> dict[str, int]:
-    """
-    Count operations in a Qiskit QuantumCircuit.
-
-    Parameters
-    ----------
-    circuit : Any
-        Qiskit QuantumCircuit instance.
-
-    Returns
-    -------
-    dict
-        Mapping of operation name to count.
-    """
-    counts: dict[str, int] = {}
-    try:
-        for instr in circuit.data:
-            op_name = instr.operation.name.lower()
-            counts[op_name] = counts.get(op_name, 0) + 1
-    except Exception:
-        pass
-    return counts
-
-
-def get_circuit_metadata(circuit: Any) -> dict[str, Any]:
-    """
-    Extract metadata from a Qiskit QuantumCircuit.
-
-    Parameters
-    ----------
-    circuit : Any
-        Qiskit QuantumCircuit instance.
-
-    Returns
-    -------
-    dict
-        Circuit metadata including name, qubits, clbits, depth.
-    """
-    metadata: dict[str, Any] = {}
-
-    try:
-        metadata["name"] = getattr(circuit, "name", None)
-        metadata["num_qubits"] = circuit.num_qubits
-        metadata["num_clbits"] = circuit.num_clbits
-        metadata["depth"] = circuit.depth()
-        metadata["num_operations"] = len(circuit.data)
-        metadata["num_parameters"] = circuit.num_parameters
-    except Exception:
-        pass
-
-    return metadata

@@ -8,13 +8,6 @@ Provides integration with Qiskit backends, enabling automatic
 tracking of quantum circuit execution, results, and device configurations
 following the devqubit Uniform Execution Contract (UEC).
 
-The adapter produces an ExecutionEnvelope containing four canonical snapshots:
-
-- DeviceSnapshot: Backend state and calibration
-- ProgramSnapshot: Logical circuit artifacts
-- ExecutionSnapshot: Submission and job metadata
-- ResultSnapshot: Normalized measurement results
-
 Supported Backends
 ------------------
 This adapter supports Qiskit BackendV2 implementations including:
@@ -62,12 +55,12 @@ from devqubit_qiskit.circuits import (
     materialize_circuits,
     serialize_and_log_circuits,
 )
+from devqubit_qiskit.device import detect_provider
 from devqubit_qiskit.envelope import (
     create_execution_snapshot,
     create_failure_result_snapshot,
     create_program_snapshot,
     create_result_snapshot,
-    detect_physical_provider,
     finalize_envelope_with_result,
     log_device_snapshot,
 )
@@ -83,14 +76,18 @@ from qiskit.providers.backend import BackendV2
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# TrackedJob
+# =============================================================================
+
+
 @dataclass
 class TrackedJob:
     """
     Wrapper for Qiskit job that tracks result retrieval.
 
-    This class wraps a Qiskit job and logs artifacts when
-    results are retrieved, producing a ResultSnapshot and
-    creating the ExecutionEnvelope.
+    This class wraps a Qiskit job and logs artifacts when results are
+    retrieved, producing a ResultSnapshot and creating the ExecutionEnvelope.
 
     Parameters
     ----------
@@ -104,11 +101,6 @@ class TrackedJob:
         Whether to log results for this job.
     envelope_data : dict or None, default=None
         Components for creating envelope: device, program, execution, producer.
-
-    Attributes
-    ----------
-    result_snapshot : ResultSnapshot or None
-        Captured result snapshot after result() is called.
     """
 
     job: Any
@@ -117,7 +109,7 @@ class TrackedJob:
     should_log_results: bool = True
     envelope_data: dict[str, Any] | None = None
 
-    # Internal state (not exposed in __init__)
+    # Internal state
     result_snapshot: ResultSnapshot | None = field(default=None, init=False, repr=False)
     _result_logged: bool = field(default=False, init=False, repr=False)
 
@@ -126,17 +118,7 @@ class TrackedJob:
         Retrieve job result and log artifacts.
 
         Always creates an envelope - even when job.result() fails.
-        This is a UEC requirement: envelope must exist for
-        failure cases to enable debugging and telemetry.
-
         Idempotent: calling result() multiple times will only log once.
-
-        Parameters
-        ----------
-        *args : Any
-            Positional arguments passed to job.result().
-        **kwargs : Any
-            Keyword arguments passed to job.result().
 
         Returns
         -------
@@ -149,109 +131,63 @@ class TrackedJob:
             Re-raises any exception from job.result() after logging
             the failure envelope.
         """
-        # Try to get result - may raise exception
         try:
             result = self.job.result(*args, **kwargs)
         except Exception as exc:
-            # ALWAYS create failure envelope before re-raising
             if self.should_log_results and not self._result_logged:
                 self._result_logged = True
                 self._log_failure(exc)
-            raise  # Re-raise original exception with original traceback
+            raise
 
-        # Happy path - log successful result
         if self.should_log_results and not self._result_logged:
             self._result_logged = True
-
-            try:
-                # Create result snapshot
-                self.result_snapshot = create_result_snapshot(
-                    self.tracker,
-                    self.backend_name,
-                    result,
-                )
-
-                # Create and finalize envelope
-                if self.envelope_data is not None and self.result_snapshot is not None:
-                    envelope = ExecutionEnvelope(
-                        envelope_id=uuid.uuid4().hex[:26],
-                        created_at=utc_now_iso(),
-                        producer=self.envelope_data["producer"],
-                        result=self.result_snapshot,
-                        device=self.envelope_data["device"],
-                        program=self.envelope_data["program"],
-                        execution=self.envelope_data["execution"],
-                    )
-                    finalize_envelope_with_result(
-                        self.tracker,
-                        envelope,
-                        self.result_snapshot,
-                    )
-
-                # Update tracker record
-                if self.result_snapshot is not None:
-                    self.tracker.record["results"] = {
-                        "completed_at": utc_now_iso(),
-                        "backend_name": self.backend_name,
-                        "success": self.result_snapshot.success,
-                        "status": self.result_snapshot.status,
-                        "num_items": len(self.result_snapshot.items),
-                        **self.result_snapshot.metadata,
-                    }
-
-                logger.debug("Logged results on %s", self.backend_name)
-
-            except Exception as e:
-                # Log error but don't fail - result retrieval should succeed
-                logger.warning(
-                    "Failed to log results for %s: %s",
-                    self.backend_name,
-                    e,
-                )
-                self.tracker.record.setdefault("warnings", []).append(
-                    {
-                        "type": "result_logging_failed",
-                        "message": str(e),
-                        "backend_name": self.backend_name,
-                    }
-                )
+            self._log_success(result)
 
         return result
 
-    def _log_failure(self, exc: Exception) -> None:
-        """
-        Log failure envelope when job.result() raises an exception.
-
-        Parameters
-        ----------
-        exc : Exception
-            The exception that was raised.
-        """
+    def _log_success(self, result: Any) -> None:
+        """Log successful result and create envelope."""
         try:
-            # Create failure result snapshot
+            self.result_snapshot = create_result_snapshot(
+                self.tracker, self.backend_name, result
+            )
+
+            if self.envelope_data is not None and self.result_snapshot is not None:
+                self._create_and_log_envelope()
+
+            if self.result_snapshot is not None:
+                self.tracker.record["results"] = {
+                    "completed_at": utc_now_iso(),
+                    "backend_name": self.backend_name,
+                    "success": self.result_snapshot.success,
+                    "status": self.result_snapshot.status,
+                    "num_items": len(self.result_snapshot.items),
+                    **self.result_snapshot.metadata,
+                }
+
+            logger.debug("Logged results on %s", self.backend_name)
+
+        except Exception as e:
+            logger.warning("Failed to log results for %s: %s", self.backend_name, e)
+            self.tracker.record.setdefault("warnings", []).append(
+                {
+                    "type": "result_logging_failed",
+                    "message": str(e),
+                    "backend_name": self.backend_name,
+                }
+            )
+
+    def _log_failure(self, exc: Exception) -> None:
+        """Log failure envelope when job.result() raises an exception."""
+        try:
             self.result_snapshot = create_failure_result_snapshot(
                 exception=exc,
                 backend_name=self.backend_name,
             )
 
-            # Create and finalize envelope with failure result
             if self.envelope_data is not None:
-                envelope = ExecutionEnvelope(
-                    envelope_id=uuid.uuid4().hex[:26],
-                    created_at=utc_now_iso(),
-                    producer=self.envelope_data["producer"],
-                    result=self.result_snapshot,
-                    device=self.envelope_data["device"],
-                    program=self.envelope_data["program"],
-                    execution=self.envelope_data["execution"],
-                )
-                finalize_envelope_with_result(
-                    self.tracker,
-                    envelope,
-                    self.result_snapshot,
-                )
+                self._create_and_log_envelope()
 
-            # Update tracker record with failure info
             self.tracker.record["results"] = {
                 "completed_at": utc_now_iso(),
                 "backend_name": self.backend_name,
@@ -268,31 +204,43 @@ class TrackedJob:
             )
 
         except Exception as log_error:
-            # Last resort - don't let logging failure mask original error
             logger.error(
                 "Failed to log failure envelope for %s: %s",
                 self.backend_name,
                 log_error,
             )
 
+    def _create_and_log_envelope(self) -> None:
+        """Create envelope and log it."""
+        envelope = ExecutionEnvelope(
+            envelope_id=uuid.uuid4().hex[:26],
+            created_at=utc_now_iso(),
+            producer=self.envelope_data["producer"],
+            result=self.result_snapshot,
+            device=self.envelope_data["device"],
+            program=self.envelope_data["program"],
+            execution=self.envelope_data["execution"],
+        )
+        finalize_envelope_with_result(self.tracker, envelope, self.result_snapshot)
+
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped job."""
         return getattr(self.job, name)
 
     def __repr__(self) -> str:
-        """Return string representation."""
         job_id = extract_job_id(self.job) or "unknown"
         return f"TrackedJob(backend={self.backend_name!r}, job_id={job_id!r})"
+
+
+# =============================================================================
+# TrackedBackend
+# =============================================================================
 
 
 @dataclass
 class TrackedBackend:
     """
     Wrapper for Qiskit backend that tracks circuit execution.
-
-    This class wraps a Qiskit backend and logs circuits,
-    execution parameters, and device snapshots when circuits
-    are submitted, following the UEC with minimal overhead.
 
     Parameters
     ----------
@@ -309,19 +257,6 @@ class TrackedBackend:
         Auto-log new circuit structures.
     stats_update_interval : int, default=1000
         Update execution stats every N executions.
-
-    Notes
-    -----
-    Logging Behavior for Parameter Sweeps
-    -------------------------------------
-    The default settings (log_every_n=0, log_new_circuits=True) log the
-    first execution and any new circuit structures. For parameter sweeps
-    where the same circuit is executed with different parameter values,
-    only the first execution is logged since the structural hash
-    ignores parameter values.
-
-    To log all parameter sweep points, use log_every_n=-1 or set
-    log_every_n to a positive value for sampling.
     """
 
     backend: Any
@@ -330,7 +265,7 @@ class TrackedBackend:
     log_new_circuits: bool = True
     stats_update_interval: int = 1000
 
-    # Internal state (not exposed in __init__)
+    # Internal state
     _snapshot_logged: bool = field(default=False, init=False, repr=False)
     _execution_count: int = field(default=0, init=False, repr=False)
     _logged_execution_count: int = field(default=0, init=False, repr=False)
@@ -341,16 +276,11 @@ class TrackedBackend:
     _program_snapshot_cache: dict[str, ProgramSnapshot] = field(
         default_factory=dict, init=False, repr=False
     )
-
-    # Cached device snapshot
     device_snapshot: DeviceSnapshot | None = field(default=None, init=False, repr=False)
 
     def run(self, circuits: Any, *args: Any, **kwargs: Any) -> TrackedJob:
         """
         Execute circuits and log artifacts based on sampling settings.
-
-        Produces ExecutionEnvelope with DeviceSnapshot, ProgramSnapshot,
-        and ExecutionSnapshot following the UEC.
 
         Parameters
         ----------
@@ -359,7 +289,7 @@ class TrackedBackend:
         *args : Any
             Additional positional args passed to backend.run().
         **kwargs : Any
-            Additional keyword args passed to backend.run() (e.g., shots).
+            Additional keyword args (e.g., shots).
 
         Returns
         -------
@@ -369,19 +299,17 @@ class TrackedBackend:
         backend_name = get_backend_name(self.backend)
         submitted_at = utc_now_iso()
 
-        # Materialize once to avoid consuming generators during logging
+        # Materialize circuits
         circuit_list, was_single = materialize_circuits(circuits)
-
-        # Payload for backend.run(): single circuit if user gave single, else list
         run_payload: Any = (
             circuit_list[0] if was_single and circuit_list else circuit_list
         )
 
-        # Increment execution counter
+        # Update execution counter
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute hashes for structure detection and exact match
+        # Compute hashes
         structural_hash, parametric_hash = compute_circuit_hashes(circuit_list)
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
@@ -389,46 +317,98 @@ class TrackedBackend:
         if structural_hash:
             self._seen_circuit_hashes.add(structural_hash)
 
-        # Determine what to log based on settings
+        # Determine logging behavior
+        should_log_structure, should_log_results = self._determine_logging(
+            exec_count, structural_hash, is_new_circuit
+        )
+
+        # Fast path: nothing to log
+        if not should_log_structure and not should_log_results:
+            return self._execute_fast_path(
+                run_payload, backend_name, exec_count, *args, **kwargs
+            )
+
+        # Full logging path
+        return self._execute_with_logging(
+            run_payload=run_payload,
+            circuit_list=circuit_list,
+            backend_name=backend_name,
+            submitted_at=submitted_at,
+            exec_count=exec_count,
+            structural_hash=structural_hash,
+            parametric_hash=parametric_hash,
+            should_log_structure=should_log_structure,
+            should_log_results=should_log_results,
+            args=args,
+            kwargs=kwargs,
+        )
+
+    def _determine_logging(
+        self,
+        exec_count: int,
+        structural_hash: str | None,
+        is_new_circuit: bool,
+    ) -> tuple[bool, bool]:
+        """Determine what to log based on settings."""
         should_log_structure = False
         should_log_results = False
 
         if self.log_every_n == -1:
-            # Log all: structure if not logged, results always
             should_log_structure = structural_hash not in self._logged_circuit_hashes
             should_log_results = True
         elif exec_count == 1:
-            # First execution: log everything
             should_log_structure = True
             should_log_results = True
         elif self.log_new_circuits and is_new_circuit:
-            # New circuit structure: log structure + first result
             should_log_structure = True
             should_log_results = True
         elif self.log_every_n > 0 and exec_count % self.log_every_n == 0:
-            # Sampling: log results only
             should_log_results = True
 
-        # Fast path: nothing to log
-        if not should_log_structure and not should_log_results:
-            job = self.backend.run(run_payload, *args, **kwargs)
+        return should_log_structure, should_log_results
 
-            if (
-                self.stats_update_interval > 0
-                and exec_count % self.stats_update_interval == 0
-            ):
-                self._update_stats()
+    def _execute_fast_path(
+        self,
+        run_payload: Any,
+        backend_name: str,
+        exec_count: int,
+        *args: Any,
+        **kwargs: Any,
+    ) -> TrackedJob:
+        """Execute without logging (fast path)."""
+        job = self.backend.run(run_payload, *args, **kwargs)
 
-            return TrackedJob(
-                job=job,
-                tracker=self.tracker,
-                backend_name=backend_name,
-                should_log_results=False,
-                envelope_data=None,
-            )
+        if (
+            self.stats_update_interval > 0
+            and exec_count % self.stats_update_interval == 0
+        ):
+            self._update_stats()
 
-        # Detect physical provider (not SDK)
-        detected_provider = detect_physical_provider(self.backend)
+        return TrackedJob(
+            job=job,
+            tracker=self.tracker,
+            backend_name=backend_name,
+            should_log_results=False,
+            envelope_data=None,
+        )
+
+    def _execute_with_logging(
+        self,
+        *,
+        run_payload: Any,
+        circuit_list: list[Any],
+        backend_name: str,
+        submitted_at: str,
+        exec_count: int,
+        structural_hash: str | None,
+        parametric_hash: str | None,
+        should_log_structure: bool,
+        should_log_results: bool,
+        args: tuple,
+        kwargs: dict,
+    ) -> TrackedJob:
+        """Execute with full logging."""
+        detected_provider = detect_provider(self.backend)
 
         # Set tags
         self.tracker.set_tag("backend_name", backend_name)
@@ -436,7 +416,7 @@ class TrackedBackend:
         self.tracker.set_tag("adapter", "devqubit-qiskit")
         self.tracker.set_tag("provider", detected_provider)
 
-        # Log device snapshot (once per run)
+        # Log device snapshot once
         if not self._snapshot_logged:
             self.device_snapshot = log_device_snapshot(self.backend, self.tracker)
             self._snapshot_logged = True
@@ -444,70 +424,30 @@ class TrackedBackend:
         # Build program snapshot
         program_snapshot: ProgramSnapshot | None = None
         if should_log_structure and circuit_list:
-            # Log execution parameters
-            shots = kwargs.get("shots")
-            if shots is not None:
-                self.tracker.log_param("shots", int(shots))
-            self.tracker.log_param("num_circuits", int(len(circuit_list)))
-
-            # Check for parameter_binds (parameter sweep indicator)
-            if kwargs.get("parameter_binds"):
-                self.tracker.log_param(
-                    "parameter_binds_count",
-                    len(kwargs["parameter_binds"]),
-                )
-
-            # Log circuits
-            program_artifacts = serialize_and_log_circuits(
-                self.tracker,
+            program_snapshot = self._log_program(
                 circuit_list,
                 backend_name,
                 structural_hash,
-            )
-
-            if structural_hash:
-                self._logged_circuit_hashes.add(structural_hash)
-
-            # Create program snapshot (UEC v1.0)
-            program_snapshot = create_program_snapshot(
-                program_artifacts,
-                structural_hash,
                 parametric_hash,
-                len(circuit_list),
+                detected_provider,
+                kwargs,
             )
-
-            # Cache program snapshot for reuse in results-only logging
-            if structural_hash:
-                self._program_snapshot_cache[structural_hash] = program_snapshot
-
-            # Update tracker record (used by fingerprint computation)
-            self.tracker.record["backend"] = {
-                "name": backend_name,
-                "type": self.backend.__class__.__name__,
-                "provider": detected_provider,
-                "sdk": "qiskit",
-            }
-
-            self._logged_execution_count += 1
 
         # Reuse cached program snapshot when only logging results
         elif should_log_results and structural_hash in self._program_snapshot_cache:
             program_snapshot = self._program_snapshot_cache[structural_hash]
 
-        # Build ExecutionSnapshot
+        # Build execution snapshot
         shots = kwargs.get("shots")
         execution_snapshot = create_execution_snapshot(
             submitted_at=submitted_at,
             shots=int(shots) if shots is not None else None,
             exec_count=exec_count,
-            job_ids=[],  # Will be updated after job creation
-            options={
-                "args": to_jsonable(list(args)),
-                "kwargs": to_jsonable(kwargs),
-            },
+            job_ids=[],
+            options={"args": to_jsonable(list(args)), "kwargs": to_jsonable(kwargs)},
         )
 
-        # Update tracker record (used by fingerprint computation)
+        # Update tracker record
         self.tracker.record["execute"] = {
             "sdk": "qiskit",
             "submitted_at": submitted_at,
@@ -520,53 +460,25 @@ class TrackedBackend:
             "kwargs": to_jsonable(kwargs),
         }
 
-        logger.debug(
-            "Submitting %d circuits to %s",
-            len(circuit_list),
-            backend_name,
-        )
-
-        # Execute on actual backend
+        # Execute
         job = self.backend.run(run_payload, *args, **kwargs)
 
-        # Log job ID if available
+        # Log job ID
         job_id = extract_job_id(job)
         if job_id:
             self.tracker.record["execute"]["job_ids"] = [job_id]
             execution_snapshot.job_ids = [job_id]
-            logger.debug("Job ID: %s", job_id)
 
-        # Create envelope data (envelope will be created in TrackedJob.result())
-        envelope_data: dict[str, Any] | None = None
-        if should_log_results and self.device_snapshot is not None:
-            # Use existing or create minimal program snapshot
-            if program_snapshot is None:
-                program_snapshot = ProgramSnapshot(
-                    logical=[],
-                    physical=[],
-                    structural_hash=structural_hash,
-                    parametric_hash=parametric_hash,
-                    num_circuits=len(circuit_list),
-                )
+        # Build envelope data
+        envelope_data = self._build_envelope_data(
+            program_snapshot,
+            execution_snapshot,
+            circuit_list,
+            structural_hash,
+            parametric_hash,
+            should_log_results,
+        )
 
-            # Create ProducerInfo for SDK stack tracking
-            producer = ProducerInfo.create(
-                adapter="devqubit-qiskit",
-                adapter_version=get_adapter_version(),
-                sdk="qiskit",
-                sdk_version=qiskit_version(),
-                frontends=["qiskit"],
-            )
-
-            # Store envelope components - envelope created in result()
-            envelope_data = {
-                "device": self.device_snapshot,
-                "program": program_snapshot,
-                "execution": execution_snapshot,
-                "producer": producer,
-            }
-
-        # Update stats
         self._update_stats()
 
         return TrackedJob(
@@ -576,6 +488,88 @@ class TrackedBackend:
             should_log_results=should_log_results,
             envelope_data=envelope_data,
         )
+
+    def _log_program(
+        self,
+        circuit_list: list[Any],
+        backend_name: str,
+        structural_hash: str | None,
+        parametric_hash: str | None,
+        detected_provider: str,
+        kwargs: dict,
+    ) -> ProgramSnapshot:
+        """Log program artifacts and create snapshot."""
+        shots = kwargs.get("shots")
+        if shots is not None:
+            self.tracker.log_param("shots", int(shots))
+        self.tracker.log_param("num_circuits", int(len(circuit_list)))
+
+        if kwargs.get("parameter_binds"):
+            self.tracker.log_param(
+                "parameter_binds_count", len(kwargs["parameter_binds"])
+            )
+
+        program_artifacts = serialize_and_log_circuits(
+            self.tracker, circuit_list, backend_name, structural_hash
+        )
+
+        if structural_hash:
+            self._logged_circuit_hashes.add(structural_hash)
+
+        program_snapshot = create_program_snapshot(
+            program_artifacts, structural_hash, parametric_hash, len(circuit_list)
+        )
+
+        if structural_hash:
+            self._program_snapshot_cache[structural_hash] = program_snapshot
+
+        self.tracker.record["backend"] = {
+            "name": backend_name,
+            "type": self.backend.__class__.__name__,
+            "provider": detected_provider,
+            "sdk": "qiskit",
+        }
+
+        self._logged_execution_count += 1
+
+        return program_snapshot
+
+    def _build_envelope_data(
+        self,
+        program_snapshot: ProgramSnapshot | None,
+        execution_snapshot: Any,
+        circuit_list: list[Any],
+        structural_hash: str | None,
+        parametric_hash: str | None,
+        should_log_results: bool,
+    ) -> dict[str, Any] | None:
+        """Build envelope data for TrackedJob."""
+        if not should_log_results or self.device_snapshot is None:
+            return None
+
+        if program_snapshot is None:
+            program_snapshot = ProgramSnapshot(
+                logical=[],
+                physical=[],
+                structural_hash=structural_hash,
+                parametric_hash=parametric_hash,
+                num_circuits=len(circuit_list),
+            )
+
+        producer = ProducerInfo.create(
+            adapter="devqubit-qiskit",
+            adapter_version=get_adapter_version(),
+            sdk="qiskit",
+            sdk_version=qiskit_version(),
+            frontends=["qiskit"],
+        )
+
+        return {
+            "device": self.device_snapshot,
+            "program": program_snapshot,
+            "execution": execution_snapshot,
+            "producer": producer,
+        }
 
     def _update_stats(self) -> None:
         """Update execution statistics in tracker record."""
@@ -592,10 +586,14 @@ class TrackedBackend:
         return getattr(self.backend, name)
 
     def __repr__(self) -> str:
-        """Return string representation."""
         backend_name = get_backend_name(self.backend)
         run_id = getattr(self.tracker, "run_id", "unknown")
         return f"TrackedBackend(backend={backend_name!r}, run_id={run_id!r})"
+
+
+# =============================================================================
+# QiskitAdapter
+# =============================================================================
 
 
 class QiskitAdapter:
@@ -618,15 +616,6 @@ class QiskitAdapter:
 
     For Runtime primitives (SamplerV2, EstimatorV2), use the ``qiskit-runtime``
     adapter instead.
-
-    Examples
-    --------
-    >>> from qiskit_aer import AerSimulator
-    >>> adapter = QiskitAdapter()
-    >>> assert adapter.supports_executor(AerSimulator())
-    >>> desc = adapter.describe_executor(AerSimulator())
-    >>> print(desc["name"])
-    'aer_simulator'
     """
 
     name: str = "qiskit"
@@ -664,7 +653,7 @@ class QiskitAdapter:
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": detect_physical_provider(executor),
+            "provider": detect_provider(executor),
             "sdk": "qiskit",
         }
 
@@ -700,13 +689,6 @@ class QiskitAdapter:
         -------
         TrackedBackend
             Wrapped backend that logs execution artifacts.
-
-        Notes
-        -----
-        For parameter sweeps (same circuit with different parameter values),
-        the default settings will only log the first execution since circuit
-        structure hashing ignores parameter values. Use ``log_every_n=-1``
-        to log all executions, or ``log_every_n=N`` for sampling.
         """
         return TrackedBackend(
             backend=executor,

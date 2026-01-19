@@ -84,7 +84,6 @@ def extract_measurement_counts(
     if result is None:
         return None
 
-    # Try common attribute names for measurement counts
     for key in ("measurement_counts", "counts", "measurementCounts"):
         try:
             if hasattr(result, key):
@@ -143,41 +142,9 @@ def extract_counts_payload(
         return None
 
     # Try Program Set result structure (has .entries)
-    try:
-        top_entries = getattr(result, "entries", None)
-        if isinstance(top_entries, list) and top_entries:
-            experiments: list[dict[str, Any]] = []
-            idx = 0
-            for program_index, composite in enumerate(top_entries):
-                inner_entries = getattr(composite, "entries", None)
-                if not isinstance(inner_entries, list):
-                    continue
-                for executable_index, measured in enumerate(inner_entries):
-                    counts_obj = getattr(measured, "counts", None)
-                    counts = _to_counts_dict(counts_obj, canonicalize=canonicalize)
-                    if counts is None:
-                        # Fallback: see if measured itself has measurement_counts
-                        counts = extract_measurement_counts(
-                            measured, canonicalize=canonicalize
-                        )
-
-                    if counts is None:
-                        continue
-
-                    experiments.append(
-                        {
-                            "index": idx,
-                            "program_index": int(program_index),
-                            "executable_index": int(executable_index),
-                            "counts": counts,
-                        }
-                    )
-                    idx += 1
-
-            if experiments:
-                return {"experiments": experiments}
-    except Exception:
-        pass
+    experiments = _extract_program_set_experiments(result, canonicalize)
+    if experiments:
+        return {"experiments": experiments}
 
     # Single-result fallback
     try:
@@ -189,3 +156,63 @@ def extract_counts_payload(
         return None
 
     return {"experiments": [{"index": 0, "counts": counts}]}
+
+
+def _extract_program_set_experiments(
+    result: Any,
+    canonicalize: bool,
+) -> list[dict[str, Any]] | None:
+    """
+    Extract experiments from a Program Set result structure.
+
+    Parameters
+    ----------
+    result : Any
+        Result object with potential .entries attribute.
+    canonicalize : bool
+        Whether to canonicalize bitstrings.
+
+    Returns
+    -------
+    list or None
+        List of experiment dicts if Program Set, None otherwise.
+    """
+    try:
+        top_entries = getattr(result, "entries", None)
+        if not isinstance(top_entries, list) or not top_entries:
+            return None
+
+        experiments: list[dict[str, Any]] = []
+        idx = 0
+
+        for program_index, composite in enumerate(top_entries):
+            inner_entries = getattr(composite, "entries", None)
+            if not isinstance(inner_entries, list):
+                continue
+
+            for executable_index, measured in enumerate(inner_entries):
+                counts_obj = getattr(measured, "counts", None)
+                counts = _to_counts_dict(counts_obj, canonicalize=canonicalize)
+
+                if counts is None:
+                    counts = extract_measurement_counts(
+                        measured, canonicalize=canonicalize
+                    )
+
+                if counts is None:
+                    continue
+
+                experiments.append(
+                    {
+                        "index": idx,
+                        "program_index": int(program_index),
+                        "executable_index": int(executable_index),
+                        "counts": counts,
+                    }
+                )
+                idx += 1
+
+        return experiments if experiments else None
+
+    except Exception:
+        return None

@@ -4,16 +4,24 @@
 """
 Utility functions for Qiskit Runtime adapter.
 
-Provides version utilities and common helpers used across
-the adapter components following the devqubit Uniform Execution
-Contract (UEC).
+Provides version utilities, common helpers used across the adapter components
+following the devqubit Uniform Execution Contract (UEC).
 """
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import qiskit
+
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# SDK Version Utilities
+# =============================================================================
 
 
 def collect_sdk_versions() -> dict[str, str]:
@@ -55,6 +63,29 @@ def collect_sdk_versions() -> dict[str, str]:
     return versions
 
 
+def get_adapter_version() -> str:
+    """
+    Get adapter version dynamically from package metadata.
+
+    Returns
+    -------
+    str
+        Version string of the devqubit-qiskit-runtime package,
+        or "unknown" if not installed.
+    """
+    try:
+        from importlib.metadata import version
+
+        return version("devqubit-qiskit-runtime")
+    except Exception:
+        return "unknown"
+
+
+# =============================================================================
+# Backend Utilities
+# =============================================================================
+
+
 def get_backend_obj(primitive: Any) -> Any | None:
     """
     Best-effort extraction of the backend object from a Runtime primitive.
@@ -71,6 +102,14 @@ def get_backend_obj(primitive: Any) -> Any | None:
     -------
     Any or None
         Backend-like object if found, else None.
+
+    Notes
+    -----
+    Tries multiple approaches in order:
+    1. backend() method call
+    2. backend attribute access
+    3. mode attribute (V2 primitives can use Backend/Session/Batch as mode)
+    4. mode.backend attribute/method
     """
     # Try backend() method
     backend_fn = getattr(primitive, "backend", None)
@@ -146,14 +185,9 @@ def get_backend_name(primitive: Any) -> str:
     return primitive.__class__.__name__
 
 
-def get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
-    try:
-        from importlib.metadata import version
-
-        return version("devqubit-qiskit-runtime")
-    except Exception:
-        return "unknown"
+# =============================================================================
+# Primitive Utilities
+# =============================================================================
 
 
 def get_primitive_type(executor: Any) -> str:
@@ -179,35 +213,6 @@ def get_primitive_type(executor: Any) -> str:
     """
     cls = executor.__class__.__name__.lower()
     return "estimator" if "estimator" in cls else "sampler"
-
-
-def extract_job_id(job: Any) -> str | None:
-    """
-    Extract job ID from a Runtime job instance.
-
-    Parameters
-    ----------
-    job : Any
-        Runtime job instance.
-
-    Returns
-    -------
-    str or None
-        Job ID if available, None otherwise.
-
-    Examples
-    --------
-    >>> job = sampler.run([circuit])
-    >>> extract_job_id(job)
-    'cq1234567890'
-    """
-    try:
-        jid = getattr(job, "job_id", None)
-        if jid is None:
-            return None
-        return str(jid() if callable(jid) else jid)
-    except Exception:
-        return None
 
 
 def is_runtime_primitive(executor: Any) -> bool:
@@ -240,29 +245,30 @@ def is_runtime_primitive(executor: Any) -> bool:
     return "sampler" in cls or "estimator" in cls
 
 
-def get_session_id(primitive: Any) -> str | None:
+def extract_job_id(job: Any) -> str | None:
     """
-    Extract session ID from a Runtime primitive if in a session.
+    Extract job ID from a Runtime job instance.
 
     Parameters
     ----------
-    primitive : Any
-        Runtime primitive instance.
+    job : Any
+        Runtime job instance.
 
     Returns
     -------
     str or None
-        Session ID if available, None otherwise.
+        Job ID if available, None otherwise.
+
+    Examples
+    --------
+    >>> job = sampler.run([circuit])
+    >>> extract_job_id(job)
+    'cq1234567890'
     """
-    session = getattr(primitive, "session", None)
-    if session is None:
-        return None
-
     try:
-        sid = getattr(session, "session_id", None)
-        if sid is not None:
-            return str(sid() if callable(sid) else sid)
+        jid = getattr(job, "job_id", None)
+        if jid is None:
+            return None
+        return str(jid() if callable(jid) else jid)
     except Exception:
-        pass
-
-    return None
+        return None

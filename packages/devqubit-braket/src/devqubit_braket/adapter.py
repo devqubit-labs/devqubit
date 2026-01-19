@@ -28,16 +28,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_braket.circuits import (
-    compute_parametric_hash,
-    compute_structural_hash,
-)
-from devqubit_braket.envelope import (
-    create_envelope,
-    log_submission_failure,
-)
+from devqubit_braket.circuits import compute_parametric_hash, compute_structural_hash
+from devqubit_braket.envelope import create_envelope, log_submission_failure
+from devqubit_braket.execution import TrackedTask, TrackedTaskBatch
 from devqubit_braket.serialization import is_braket_circuit
-from devqubit_braket.tracked import TrackedTask, TrackedTaskBatch
 from devqubit_braket.utils import extract_task_id, get_backend_name
 from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
@@ -46,6 +40,11 @@ from devqubit_engine.utils.serialization import to_jsonable
 
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# ProgramSet Utilities
+# =============================================================================
 
 
 def _is_program_set(obj: Any) -> bool:
@@ -68,16 +67,13 @@ def _is_program_set(obj: Any) -> bool:
     if obj is None:
         return False
 
-    # Check for ProgramSet-specific attributes
     has_entries = hasattr(obj, "entries")
     has_to_ir = hasattr(obj, "to_ir")
     has_total_executables = hasattr(obj, "total_executables")
 
-    # Must have entries and at least one other characteristic
     if has_entries and (has_to_ir or has_total_executables):
         return True
 
-    # Check type name as fallback
     return "programset" in type(obj).__name__.lower()
 
 
@@ -102,14 +98,12 @@ def _extract_circuits_from_program_set(program_set: Any) -> list[Any]:
             return circuits
 
         for entry in entries:
-            # Each entry may have a circuit/program attribute
             for attr in ("circuit", "program", "task_specification"):
                 circ = getattr(entry, attr, None)
                 if circ is not None and is_braket_circuit(circ):
                     circuits.append(circ)
                     break
             else:
-                # Entry itself might be a circuit
                 if is_braket_circuit(entry):
                     circuits.append(entry)
     except Exception as e:
@@ -173,28 +167,28 @@ def _materialize_task_spec(
     if task_specification is None:
         return None, [], False, None
 
-    # Handle ProgramSet: send as-is, but extract circuits for logging
     if _is_program_set(task_specification):
         circuits = _extract_circuits_from_program_set(task_specification)
         meta = _get_program_set_metadata(task_specification)
         return task_specification, circuits, False, meta
 
-    # Single circuit
     if is_braket_circuit(task_specification):
         return task_specification, [task_specification], True, None
 
-    # List/tuple of circuits
     if isinstance(task_specification, (list, tuple)):
         circuit_list = list(task_specification)
         return circuit_list, circuit_list, False, None
 
-    # Unknown iterable - try to materialize
     try:
         circuit_list = list(task_specification)
         return circuit_list, circuit_list, False, None
     except TypeError:
-        # Not iterable, treat as single item
         return task_specification, [task_specification], True, None
+
+
+# =============================================================================
+# TrackedDevice
+# =============================================================================
 
 
 @dataclass
@@ -225,8 +219,6 @@ class TrackedDevice:
     log_new_circuits: bool = True
     stats_update_interval: int = 1000
 
-    # Internal state (explicitly typed)
-    _snapshot_logged: bool = field(default=False, init=False, repr=False)
     _execution_count: int = field(default=0, init=False, repr=False)
     _logged_execution_count: int = field(default=0, init=False, repr=False)
     _seen_circuit_hashes: set[str] = field(default_factory=set, init=False, repr=False)
@@ -272,36 +264,12 @@ class TrackedDevice:
         if was_single and isinstance(run_payload, list) and len(run_payload) == 1:
             run_payload = run_payload[0]
 
-        # Increment execution counter
-        self._execution_count += 1
-        exec_count = self._execution_count
-
-        # Compute hashes
-        # structural_hash: ignores parameter values (for deduplication)
-        # parametric_hash: includes parameter values from inputs (for exact match)
-        structural_hash = compute_structural_hash(circuits_for_logging)
-
-        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
-        inputs = kwargs.get("inputs")
-        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
-
-        is_new_circuit = (
-            structural_hash and structural_hash not in self._seen_circuit_hashes
+        # Prepare execution context
+        ctx = self._prepare_execution_context(
+            circuits_for_logging=circuits_for_logging,
+            kwargs=kwargs,
+            extra_meta=extra_meta,
         )
-        if structural_hash:
-            self._seen_circuit_hashes.add(structural_hash)
-
-        # Determine logging behavior
-        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
-
-        # Build execution options
-        options: dict[str, Any] = {}
-        if args:
-            options["args"] = to_jsonable(list(args))
-        if kwargs:
-            options["kwargs"] = to_jsonable(kwargs)
-        if extra_meta:
-            options.update(extra_meta)
 
         # Execute on actual device
         task: Any = None
@@ -311,7 +279,7 @@ class TrackedDevice:
             else:
                 task = self.device.run(run_payload, shots=shots, *args, **kwargs)
         except Exception as e:
-            if should_log and circuits_for_logging:
+            if ctx["should_log"] and circuits_for_logging:
                 log_submission_failure(
                     self.tracker,
                     device_name,
@@ -328,61 +296,22 @@ class TrackedDevice:
 
         # Create envelope if logging
         envelope: ExecutionEnvelope | None = None
-        if should_log and circuits_for_logging:
-            envelope = create_envelope(
-                tracker=self.tracker,
-                device=self.device,
+        if ctx["should_log"] and circuits_for_logging:
+            envelope = self._create_and_log_envelope(
+                device_name=device_name,
                 circuits=circuits_for_logging,
                 shots=shots,
                 task_ids=task_ids,
                 submitted_at=submitted_at,
-                structural_hash=structural_hash,
-                parametric_hash=parametric_hash,
-                execution_index=exec_count,
-                options=options if options else None,
+                structural_hash=ctx["structural_hash"],
+                parametric_hash=ctx["parametric_hash"],
+                exec_count=ctx["exec_count"],
+                options=ctx["options"],
+                is_batch=False,
             )
 
-            if structural_hash:
-                self._logged_circuit_hashes.add(structural_hash)
-
-            self._logged_execution_count += 1
-
-            # Set tracker tags/params
-            self.tracker.set_tag("backend_name", device_name)
-            self.tracker.set_tag("provider", "aws_braket")
-            self.tracker.set_tag("adapter", "devqubit-braket")
-
-            if shots is not None:
-                self.tracker.log_param("shots", int(shots))
-            self.tracker.log_param("num_circuits", len(circuits_for_logging))
-
-            # Update tracker record
-            self.tracker.record["backend"] = {
-                "name": device_name,
-                "type": self.device.__class__.__name__,
-                "provider": "aws_braket",
-            }
-
-            self.tracker.record["execute"] = {
-                "submitted_at": submitted_at,
-                "backend_name": device_name,
-                "sdk": "braket",
-                "num_circuits": len(circuits_for_logging),
-                "execution_count": exec_count,
-                "structural_hash": structural_hash,
-                "parametric_hash": parametric_hash,
-                "shots": shots,
-                "task_ids": task_ids,
-            }
-
-            logger.debug("Created envelope for task %s on %s", task_id, device_name)
-
-        # Update stats periodically
-        if (
-            self.stats_update_interval > 0
-            and exec_count % self.stats_update_interval == 0
-        ):
-            self._update_stats()
+        # Periodic stats update
+        self._maybe_update_stats(ctx["exec_count"])
 
         return TrackedTask(
             task=task,
@@ -390,7 +319,7 @@ class TrackedDevice:
             device_name=device_name,
             envelope=envelope,
             shots=shots,
-            should_log_results=should_log,
+            should_log_results=ctx["should_log"],
         )
 
     def run_batch(
@@ -424,39 +353,16 @@ class TrackedDevice:
         """
         device_name = get_backend_name(self.device)
         submitted_at = utc_now_iso()
-
-        # Flatten for logging (batch is always multiple)
         circuits_for_logging = list(task_specifications)
 
-        # Increment execution counter
-        self._execution_count += 1
-        exec_count = self._execution_count
-
-        # Compute hashes
-        structural_hash = compute_structural_hash(circuits_for_logging)
-
-        # Extract inputs for parametric hash (Braket's FreeParameter bindings)
-        inputs = kwargs.get("inputs")
-        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
-
-        is_new_circuit = (
-            structural_hash and structural_hash not in self._seen_circuit_hashes
+        # Prepare execution context
+        ctx = self._prepare_execution_context(
+            circuits_for_logging=circuits_for_logging,
+            kwargs=kwargs,
+            extra_meta=None,
         )
-        if structural_hash:
-            self._seen_circuit_hashes.add(structural_hash)
-
-        # Determine logging behavior
-        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
-
-        # Build execution options
-        options: dict[str, Any] = {
-            "batch": True,
-            "batch_size": len(circuits_for_logging),
-        }
-        if args:
-            options["args"] = to_jsonable(list(args))
-        if kwargs:
-            options["kwargs"] = to_jsonable(kwargs)
+        ctx["options"]["batch"] = True
+        ctx["options"]["batch_size"] = len(circuits_for_logging)
 
         # Execute batch
         batch: Any = None
@@ -468,7 +374,7 @@ class TrackedDevice:
                     task_specifications, shots=shots, *args, **kwargs
                 )
         except Exception as e:
-            if should_log and circuits_for_logging:
+            if ctx["should_log"] and circuits_for_logging:
                 log_submission_failure(
                     self.tracker,
                     device_name,
@@ -481,63 +387,22 @@ class TrackedDevice:
 
         # Create envelope if logging
         envelope: ExecutionEnvelope | None = None
-        if should_log and circuits_for_logging:
-            envelope = create_envelope(
-                tracker=self.tracker,
-                device=self.device,
+        if ctx["should_log"] and circuits_for_logging:
+            envelope = self._create_and_log_envelope(
+                device_name=device_name,
                 circuits=circuits_for_logging,
                 shots=shots,
                 task_ids=[],  # Batch doesn't have a single ID upfront
                 submitted_at=submitted_at,
-                structural_hash=structural_hash,
-                parametric_hash=parametric_hash,
-                execution_index=exec_count,
-                options=options,
+                structural_hash=ctx["structural_hash"],
+                parametric_hash=ctx["parametric_hash"],
+                exec_count=ctx["exec_count"],
+                options=ctx["options"],
+                is_batch=True,
             )
 
-            if structural_hash:
-                self._logged_circuit_hashes.add(structural_hash)
-
-            self._logged_execution_count += 1
-
-            # Set tracker tags/params
-            self.tracker.set_tag("backend_name", device_name)
-            self.tracker.set_tag("provider", "aws_braket")
-            self.tracker.set_tag("adapter", "devqubit-braket")
-            self.tracker.set_tag("batch_execution", "true")
-
-            if shots is not None:
-                self.tracker.log_param("shots", int(shots))
-            self.tracker.log_param("num_circuits", len(circuits_for_logging))
-            self.tracker.log_param("batch_size", len(circuits_for_logging))
-
-            # Update tracker record
-            self.tracker.record["backend"] = {
-                "name": device_name,
-                "type": self.device.__class__.__name__,
-                "provider": "aws_braket",
-            }
-
-            self.tracker.record["execute"] = {
-                "submitted_at": submitted_at,
-                "backend_name": device_name,
-                "sdk": "braket",
-                "num_circuits": len(circuits_for_logging),
-                "execution_count": exec_count,
-                "structural_hash": structural_hash,
-                "parametric_hash": parametric_hash,
-                "shots": shots,
-                "batch": True,
-            }
-
-            logger.debug("Created envelope for batch on %s", device_name)
-
-        # Update stats periodically
-        if (
-            self.stats_update_interval > 0
-            and exec_count % self.stats_update_interval == 0
-        ):
-            self._update_stats()
+        # Periodic stats update
+        self._maybe_update_stats(ctx["exec_count"])
 
         return TrackedTaskBatch(
             batch=batch,
@@ -545,8 +410,127 @@ class TrackedDevice:
             device_name=device_name,
             envelope=envelope,
             shots=shots,
-            should_log_results=should_log,
+            should_log_results=ctx["should_log"],
         )
+
+    def _prepare_execution_context(
+        self,
+        circuits_for_logging: list[Any],
+        kwargs: dict[str, Any],
+        extra_meta: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """
+        Prepare common execution context for run() and run_batch().
+
+        Returns a dict with: exec_count, structural_hash, parametric_hash,
+        should_log, options.
+        """
+        self._execution_count += 1
+        exec_count = self._execution_count
+
+        # Compute hashes
+        structural_hash = compute_structural_hash(circuits_for_logging)
+        inputs = kwargs.get("inputs")
+        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
+
+        is_new_circuit = (
+            structural_hash and structural_hash not in self._seen_circuit_hashes
+        )
+        if structural_hash:
+            self._seen_circuit_hashes.add(structural_hash)
+
+        should_log = self._should_log(exec_count, structural_hash, is_new_circuit)
+
+        # Build execution options
+        options: dict[str, Any] = {}
+        if kwargs:
+            options["kwargs"] = to_jsonable(kwargs)
+        if extra_meta:
+            options.update(extra_meta)
+
+        return {
+            "exec_count": exec_count,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
+            "should_log": should_log,
+            "options": options,
+        }
+
+    def _create_and_log_envelope(
+        self,
+        device_name: str,
+        circuits: list[Any],
+        shots: int | None,
+        task_ids: list[str],
+        submitted_at: str,
+        structural_hash: str | None,
+        parametric_hash: str | None,
+        exec_count: int,
+        options: dict[str, Any],
+        is_batch: bool,
+    ) -> ExecutionEnvelope:
+        """Create envelope and update tracker state."""
+        envelope = create_envelope(
+            tracker=self.tracker,
+            device=self.device,
+            circuits=circuits,
+            shots=shots,
+            task_ids=task_ids,
+            submitted_at=submitted_at,
+            structural_hash=structural_hash,
+            parametric_hash=parametric_hash,
+            execution_index=exec_count,
+            options=options if options else None,
+        )
+
+        if structural_hash:
+            self._logged_circuit_hashes.add(structural_hash)
+        self._logged_execution_count += 1
+
+        # Set tracker tags/params
+        self.tracker.set_tag("backend_name", device_name)
+        self.tracker.set_tag("provider", "aws_braket")
+        self.tracker.set_tag("adapter", "devqubit-braket")
+
+        if is_batch:
+            self.tracker.set_tag("batch_execution", "true")
+
+        if shots is not None:
+            self.tracker.log_param("shots", int(shots))
+        self.tracker.log_param("num_circuits", len(circuits))
+
+        if is_batch:
+            self.tracker.log_param("batch_size", len(circuits))
+
+        # Update tracker record
+        self.tracker.record["backend"] = {
+            "name": device_name,
+            "type": self.device.__class__.__name__,
+            "provider": "aws_braket",
+        }
+
+        self.tracker.record["execute"] = {
+            "submitted_at": submitted_at,
+            "backend_name": device_name,
+            "sdk": "braket",
+            "num_circuits": len(circuits),
+            "execution_count": exec_count,
+            "structural_hash": structural_hash,
+            "parametric_hash": parametric_hash,
+            "shots": shots,
+            "batch": is_batch,
+        }
+
+        if not is_batch and task_ids:
+            self.tracker.record["execute"]["task_ids"] = task_ids
+
+        logger.debug(
+            "Created envelope for %s on %s",
+            "batch" if is_batch else f"task {task_ids}",
+            device_name,
+        )
+
+        return envelope
 
     def _should_log(
         self,
@@ -565,15 +549,19 @@ class TrackedDevice:
             return True
         return False
 
-    def _update_stats(self) -> None:
-        """Update execution statistics in tracker record."""
-        self.tracker.record["execution_stats"] = {
-            "total_executions": self._execution_count,
-            "logged_executions": self._logged_execution_count,
-            "unique_circuits": len(self._seen_circuit_hashes),
-            "logged_circuits": len(self._logged_circuit_hashes),
-            "last_execution_at": utc_now_iso(),
-        }
+    def _maybe_update_stats(self, exec_count: int) -> None:
+        """Update stats if interval has passed."""
+        if (
+            self.stats_update_interval > 0
+            and exec_count % self.stats_update_interval == 0
+        ):
+            self.tracker.record["execution_stats"] = {
+                "total_executions": self._execution_count,
+                "logged_executions": self._logged_execution_count,
+                "unique_circuits": len(self._seen_circuit_hashes),
+                "logged_circuits": len(self._logged_circuit_hashes),
+                "last_execution_at": utc_now_iso(),
+            }
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped device."""
@@ -583,6 +571,11 @@ class TrackedDevice:
         """Return string representation."""
         device_name = get_backend_name(self.device)
         return f"TrackedDevice(device={device_name!r}, run_id={self.tracker.run_id!r})"
+
+
+# =============================================================================
+# BraketAdapter
+# =============================================================================
 
 
 class BraketAdapter:

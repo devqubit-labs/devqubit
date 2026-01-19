@@ -14,7 +14,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from devqubit_braket.envelope import finalize_envelope
 from devqubit_braket.results import extract_counts_payload
 from devqubit_braket.utils import extract_task_id
 
@@ -23,11 +22,10 @@ if TYPE_CHECKING:
     from devqubit_engine.tracking.run import Run
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 
-
 logger = logging.getLogger(__name__)
 
 
-def combine_batch_results(results_list: list[Any]) -> dict[str, Any]:
+def _combine_batch_results(results_list: list[Any]) -> dict[str, Any]:
     """
     Combine batch results into a single structure for logging.
 
@@ -39,7 +37,7 @@ def combine_batch_results(results_list: list[Any]) -> dict[str, Any]:
     Returns
     -------
     dict
-        Combined result structure.
+        Combined result structure with experiments list.
     """
     experiments: list[dict[str, Any]] = []
 
@@ -97,7 +95,7 @@ class TrackedTask:
         Retrieve task result and finalize envelope.
 
         Handles exceptions gracefully, logging failure information
-        before re-raising the ORIGINAL exception (P0 fix: preserve exception type).
+        before re-raising the ORIGINAL exception (preserves exception type).
 
         Parameters
         ----------
@@ -116,6 +114,9 @@ class TrackedTask:
         Exception
             Re-raises original exception from underlying result() after logging.
         """
+        # Import here to avoid circular imports
+        from devqubit_braket.envelope import finalize_envelope
+
         result = None
 
         try:
@@ -123,7 +124,6 @@ class TrackedTask:
         except Exception as e:
             logger.warning("Task result() failed on %s: %s", self.device_name, e)
 
-            # Log failure envelope before re-raising original exception
             if self.should_log_results and self.envelope and not self._result_logged:
                 self._result_logged = True
                 try:
@@ -141,10 +141,8 @@ class TrackedTask:
                         self.device_name,
                         log_err,
                     )
-
             raise
 
-        # Log successful result
         if self.should_log_results and self.envelope and not self._result_logged:
             self._result_logged = True
             try:
@@ -162,7 +160,6 @@ class TrackedTask:
                     self.device_name,
                     log_err,
                 )
-                # Record error in tracker for visibility
                 self.tracker.record.setdefault("warnings", []).append(
                     {
                         "type": "result_logging_failed",
@@ -238,6 +235,8 @@ class TrackedTaskBatch:
         Exception
             Re-raises original exception from underlying results() after logging.
         """
+        from devqubit_braket.envelope import finalize_envelope
+
         results_list: list[Any] = []
         partial_error: Exception | None = None
 
@@ -263,10 +262,9 @@ class TrackedTaskBatch:
                         self.device_name,
                         log_err,
                     )
-
             raise
 
-        # Check for partial failures (None in results)
+        # Check for partial failures
         failed_count = sum(1 for r in results_list if r is None)
         if failed_count > 0:
             logger.warning(
@@ -279,12 +277,10 @@ class TrackedTaskBatch:
                 f"Partial failure: {failed_count}/{len(results_list)} tasks failed"
             )
 
-        # Aggregate successful results for logging
         if self.should_log_results and self.envelope and not self._results_logged:
             self._results_logged = True
             try:
-                combined_result = combine_batch_results(results_list)
-
+                combined_result = _combine_batch_results(results_list)
                 finalize_envelope(
                     self.tracker,
                     self.envelope,
@@ -300,7 +296,6 @@ class TrackedTaskBatch:
                     self.device_name,
                     log_err,
                 )
-                # Record error in tracker for visibility
                 self.tracker.record.setdefault("warnings", []).append(
                     {
                         "type": "batch_result_logging_failed",

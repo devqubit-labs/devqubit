@@ -2,10 +2,10 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Circuit handling utilities for Braket adapter.
+Circuit hashing utilities for Braket adapter.
 
-This module provides functions for hashing and converting Braket
-Circuit objects for logging purposes.
+This module provides functions for hashing Braket Circuit objects for
+deduplication and tracking purposes.
 
 Hashing Contract
 ----------------
@@ -46,7 +46,6 @@ def circuit_to_op_stream(circuit: Any) -> list[dict[str, Any]]:
         - qubits: list of qubit indices (order preserved)
         - clbits: list of classical bit indices (empty for Braket)
         - params: dict with p0, p1, ... for parameter values/names
-        - condition: always None for Braket (no classical conditioning)
 
     Notes
     -----
@@ -74,50 +73,10 @@ def circuit_to_op_stream(circuit: Any) -> list[dict[str, Any]]:
             op_name = type(instr).__name__.lower()
 
         # Target qubits as integer indices (order preserved!)
-        qubits: list[int] = []
-        tgt = getattr(instr, "target", None)
-        if tgt is not None:
-            try:
-                for q in tgt:
-                    idx = getattr(q, "index", None)
-                    if idx is not None:
-                        qubits.append(int(idx))
-                    else:
-                        # Try to convert directly
-                        qubits.append(int(q))
-            except (TypeError, ValueError):
-                # Single target or non-iterable
-                idx = getattr(tgt, "index", None)
-                if idx is not None:
-                    qubits.append(int(idx))
+        qubits = _extract_qubits(instr)
 
         # Parameter handling
-        params: dict[str, Any] = {}
-        if op is not None:
-            param_values: list[Any] = []
-            for attr in ("parameters", "params", "angles", "angle"):
-                val = getattr(op, attr, None)
-                if val is not None:
-                    if isinstance(val, (list, tuple)):
-                        param_values = list(val)
-                    else:
-                        # Single parameter (e.g., angle for Rx)
-                        param_values = [val]
-                    break
-
-            for i, p in enumerate(param_values):
-                key = f"p{i}"
-                if hasattr(p, "name"):
-                    # FreeParameter - store as unbound
-                    params[key] = None
-                    params[f"{key}_name"] = str(p.name)
-                else:
-                    # Numeric value
-                    try:
-                        params[key] = float(p)
-                    except (TypeError, ValueError):
-                        params[key] = None
-                        params[f"{key}_expr"] = str(p)[:100]
+        params = _extract_params(op)
 
         op_dict: dict[str, Any] = {
             "gate": op_name,
@@ -128,12 +87,88 @@ def circuit_to_op_stream(circuit: Any) -> list[dict[str, Any]]:
         if params:
             op_dict["params"] = params
 
-        # Braket doesn't support classical conditioning
-        # op_dict["condition"] = None  # Omit for cleaner payload
-
         ops.append(op_dict)
 
     return ops
+
+
+def _extract_qubits(instr: Any) -> list[int]:
+    """
+    Extract qubit indices from an instruction.
+
+    Parameters
+    ----------
+    instr : Any
+        Braket instruction object.
+
+    Returns
+    -------
+    list of int
+        Qubit indices (order preserved for directional gates).
+    """
+    qubits: list[int] = []
+    tgt = getattr(instr, "target", None)
+    if tgt is None:
+        return qubits
+
+    try:
+        for q in tgt:
+            idx = getattr(q, "index", None)
+            if idx is not None:
+                qubits.append(int(idx))
+            else:
+                qubits.append(int(q))
+    except (TypeError, ValueError):
+        # Single target or non-iterable
+        idx = getattr(tgt, "index", None)
+        if idx is not None:
+            qubits.append(int(idx))
+
+    return qubits
+
+
+def _extract_params(op: Any) -> dict[str, Any]:
+    """
+    Extract parameters from an operator.
+
+    Parameters
+    ----------
+    op : Any
+        Braket operator object.
+
+    Returns
+    -------
+    dict
+        Parameter dictionary with p0, p1, ... keys and optional _name/_expr suffixes.
+    """
+    params: dict[str, Any] = {}
+    if op is None:
+        return params
+
+    param_values: list[Any] = []
+    for attr in ("parameters", "params", "angles", "angle"):
+        val = getattr(op, attr, None)
+        if val is not None:
+            if isinstance(val, (list, tuple)):
+                param_values = list(val)
+            else:
+                param_values = [val]
+            break
+
+    for i, p in enumerate(param_values):
+        key = f"p{i}"
+        if hasattr(p, "name"):
+            # FreeParameter - store as unbound
+            params[key] = None
+            params[f"{key}_name"] = str(p.name)
+        else:
+            try:
+                params[key] = float(p)
+            except (TypeError, ValueError):
+                params[key] = None
+                params[f"{key}_expr"] = str(p)[:100]
+
+    return params
 
 
 def compute_circuit_hashes(
@@ -253,7 +288,6 @@ def _compute_hashes(
 
     for circuit in circuits:
         try:
-            # Determine circuit dimensions
             nq = _get_num_qubits(circuit)
             nc = 0  # Braket doesn't have classical bits at circuit level
             total_nq += nq
@@ -268,10 +302,8 @@ def _compute_hashes(
                 }
             )
 
-            # Convert circuit to op_stream
             ops = circuit_to_op_stream(circuit)
 
-            # Apply input bindings if provided
             if inputs:
                 ops = _apply_inputs_to_ops(ops, inputs)
 
@@ -279,7 +311,6 @@ def _compute_hashes(
 
         except Exception as e:
             logger.debug("Failed to convert circuit to op_stream: %s", e)
-            # Fallback: use string representation
             all_ops.append(
                 {
                     "gate": "__fallback__",
@@ -305,7 +336,6 @@ def _get_num_qubits(circuit: Any) -> int:
     int
         Number of qubits (max index + 1 from instructions).
     """
-    # Try qubit_count attribute first
     qc = getattr(circuit, "qubit_count", None)
     if qc is not None:
         try:
@@ -313,7 +343,6 @@ def _get_num_qubits(circuit: Any) -> int:
         except (TypeError, ValueError):
             pass
 
-    # Fall back to scanning instructions
     max_idx = -1
     instrs = getattr(circuit, "instructions", None)
     if instrs is not None:
@@ -361,50 +390,14 @@ def _apply_inputs_to_ops(
         new_op = dict(op)
         new_params = dict(op["params"])
 
-        # Find unbound parameters and substitute
         for key in list(new_params.keys()):
             if key.endswith("_name"):
-                base_key = key[:-5]  # Remove "_name" suffix
+                base_key = key[:-5]
                 param_name = new_params[key]
                 if param_name in inputs:
-                    # Substitute the value
                     new_params[base_key] = float(inputs[param_name])
-                    # Keep the name for tracking
-                    # del new_params[key]  # Optionally remove the name
 
         new_op["params"] = new_params
         result.append(new_op)
 
     return result
-
-
-def circuits_to_text(circuits: list[Any]) -> str:
-    """
-    Convert circuits to human-readable text diagrams.
-
-    Parameters
-    ----------
-    circuits : list
-        List of Braket Circuit objects.
-
-    Returns
-    -------
-    str
-        Combined text diagram of all circuits.
-    """
-    parts: list[str] = []
-
-    for i, circuit in enumerate(circuits):
-        if i > 0:
-            parts.append("")
-
-        name = getattr(circuit, "name", None) or f"circuit_{i}"
-        parts.append(f"[{i}] {name}")
-
-        try:
-            # Braket circuits have __str__ that produces a diagram
-            parts.append(str(circuit))
-        except Exception:
-            parts.append(f"<Circuit with {_get_num_qubits(circuit)} qubits>")
-
-    return "\n".join(parts)

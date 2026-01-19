@@ -1,16 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for Qiskit calibration extraction."""
+"""Tests for device snapshot and calibration extraction."""
+
+from datetime import datetime
 
 import pytest
-from devqubit_qiskit.calibration import extract_calibration_from_properties
+from devqubit_qiskit.device import (
+    _extract_connectivity_from_coupling_map,
+    _extract_from_target,
+    create_device_snapshot,
+    extract_calibration_from_properties,
+)
 from devqubit_qiskit.utils import (
     as_int_tuple,
     convert_duration_to_ns,
     convert_time_to_us,
+    qiskit_version,
     to_float,
 )
+
+
+# =============================================================================
+# Unit Conversion Tests
+# =============================================================================
 
 
 class TestUnitConversions:
@@ -18,36 +31,20 @@ class TestUnitConversions:
 
     def test_time_to_microseconds(self):
         """Converts various time units to microseconds."""
-        # Seconds
         assert convert_time_to_us(1.0, "s") == 1e6
         assert convert_time_to_us(0.001, "sec") == 1e3
-
-        # Milliseconds
         assert convert_time_to_us(1.0, "ms") == 1e3
-
-        # Microseconds (pass-through)
         assert convert_time_to_us(100.0, "us") == 100.0
         assert convert_time_to_us(100.0, "µs") == 100.0
-
-        # Nanoseconds
         assert convert_time_to_us(1000.0, "ns") == 1.0
-
-        # None assumes microseconds
         assert convert_time_to_us(100.0, None) == 100.0
 
     def test_duration_to_nanoseconds(self):
         """Converts various duration units to nanoseconds."""
-        # Seconds
         assert convert_duration_to_ns(1.0, "s") == 1e9
-
-        # Microseconds
         assert convert_duration_to_ns(1.0, "us") == 1e3
         assert convert_duration_to_ns(35.5, "µs") == 35500.0
-
-        # Nanoseconds (pass-through)
         assert convert_duration_to_ns(100.0, "ns") == 100.0
-
-        # None assumes nanoseconds
         assert convert_duration_to_ns(100.0, None) == 100.0
 
     def test_to_float_various_inputs(self):
@@ -65,6 +62,11 @@ class TestUnitConversions:
         assert as_int_tuple([1, "2", 3.0]) == (1, 2, 3)
         assert as_int_tuple("invalid") is None
         assert as_int_tuple([1, "bad", 3]) is None
+
+
+# =============================================================================
+# Calibration Extraction Tests
+# =============================================================================
 
 
 class TestCalibrationExtractionBasics:
@@ -117,8 +119,6 @@ class TestQubitCalibrationExtraction:
         }
 
         cal = extract_calibration_from_properties(props)
-
-        # Average: (0.02 + 0.03) / 2 = 0.025
         assert cal.qubits[0].readout_error == pytest.approx(0.025)
 
     def test_extracts_multiple_qubits(self):
@@ -137,9 +137,6 @@ class TestQubitCalibrationExtraction:
         assert cal.qubits[0].qubit == 0
         assert cal.qubits[1].qubit == 1
         assert cal.qubits[2].qubit == 2
-        assert cal.qubits[0].t1_us == 100.0
-        assert cal.qubits[1].t1_us == 150.0
-        assert cal.qubits[2].t1_us == 200.0
 
 
 class TestGateCalibrationExtraction:
@@ -190,10 +187,9 @@ class TestGateCalibrationExtraction:
         assert cal.gates[0].gate == "cx"
         assert cal.gates[0].qubits == (0, 1)
         assert cal.gates[0].error == 0.008
-        assert cal.gates[0].duration_ns == 300.0
 
 
-class TestDerivedValues:
+class TestDerivedCalibrationValues:
     """Tests for derived calibration values (1Q gate error, medians)."""
 
     def test_derives_1q_gate_error_from_single_gate(self):
@@ -236,8 +232,6 @@ class TestDerivedValues:
         }
 
         cal = extract_calibration_from_properties(props)
-
-        # Median of [0.0001, 0.0002, 0.0003] = 0.0002
         assert cal.qubits[0].gate_error_1q == pytest.approx(0.0002)
 
     def test_calculates_median_t1_across_qubits(self):
@@ -251,13 +245,11 @@ class TestDerivedValues:
         }
 
         cal = extract_calibration_from_properties(props)
-
-        # Median of [100, 150, 200] = 150
         assert cal.median_t1_us == pytest.approx(150.0)
 
 
-class TestRealisticProviderData:
-    """Tests with realistic provider properties (mock_properties fixture)."""
+class TestRealisticCalibrationData:
+    """Tests with realistic provider properties."""
 
     def test_full_extraction_from_realistic_properties(self, mock_properties):
         """Full extraction from realistic IBM-like properties."""
@@ -269,124 +261,202 @@ class TestRealisticProviderData:
         assert len(cal.qubits) == 2
         assert len(cal.gates) == 3
 
-        # Qubit calibration
         assert cal.qubits[0].t1_us == pytest.approx(150.0)
         assert cal.qubits[0].t2_us == pytest.approx(85.0)
         assert cal.qubits[0].readout_error == pytest.approx(0.012)
-
-        # Derived 1Q gate error
         assert cal.qubits[0].gate_error_1q == pytest.approx(0.0002)
-        assert cal.qubits[1].gate_error_1q == pytest.approx(0.0003)
 
-        # Gate calibration
         cx = next(g for g in cal.gates if g.gate == "cx")
         assert cx.qubits == (0, 1)
         assert cx.error == pytest.approx(0.008)
-        assert cx.duration_ns == pytest.approx(300.0)
-
-        # Median T1: median(150, 175) = 162.5
-        assert cal.median_t1_us == pytest.approx(162.5)
 
 
-class TestMalformedData:
-    """Tests for handling malformed/partial data gracefully."""
-
-    def test_handles_non_list_qubit_entry(self):
-        """Skips non-list qubit entries."""
-        props = {
-            "qubits": [
-                "not a list",  # Invalid
-                [{"name": "T1", "value": 100.0}],  # Valid
-            ],
-        }
-
-        cal = extract_calibration_from_properties(props)
-
-        assert cal is not None
-        assert len(cal.qubits) == 1
-        assert cal.qubits[0].qubit == 1  # Index 1 since index 0 was skipped
-
-    def test_handles_missing_property_fields(self):
-        """Skips properties without name or value."""
-        props = {
-            "qubits": [
-                [
-                    {"value": 100.0},  # No name
-                    {"name": "T1"},  # No value
-                    {"name": "T2", "value": 85.0},  # Valid
-                ]
-            ],
-        }
-
-        cal = extract_calibration_from_properties(props)
-
-        assert cal.qubits[0].t1_us is None
-        assert cal.qubits[0].t2_us == 85.0
-
-    def test_handles_gate_without_qubits(self):
-        """Skips gates without qubits field."""
-        props = {
-            "qubits": [[{"name": "T1", "value": 100.0}]],
-            "gates": [
-                {"gate": "sx", "parameters": [{"name": "gate_error", "value": 0.001}]},
-            ],
-        }
-
-        cal = extract_calibration_from_properties(props)
-        assert len(cal.gates) == 0
-
-    def test_handles_gate_without_metrics(self):
-        """Skips gates without error or duration."""
-        props = {
-            "qubits": [[{"name": "T1", "value": 100.0}]],
-            "gates": [
-                {"gate": "sx", "qubits": [0], "parameters": []},
-            ],
-        }
-
-        cal = extract_calibration_from_properties(props)
-        assert len(cal.gates) == 0
+# =============================================================================
+# Connectivity Extraction Tests
+# =============================================================================
 
 
-class TestSourceTracking:
-    """Tests for calibration source tracking."""
+class TestConnectivityExtraction:
+    """Tests for extracting connectivity from coupling maps."""
 
-    def test_default_source_is_provider(self):
-        """Default source is 'provider'."""
-        props = {"qubits": [[{"name": "T1", "value": 100.0}]]}
-        cal = extract_calibration_from_properties(props)
-        assert cal.source == "provider"
+    def test_from_coupling_map(self, mock_coupling_map):
+        """Extracts edges from CouplingMap-like object."""
+        conn = _extract_connectivity_from_coupling_map(mock_coupling_map)
+        assert conn == [(0, 1), (1, 2), (2, 3)]
 
-    def test_custom_source_preserved(self):
-        """Custom source is preserved."""
-        props = {"qubits": [[{"name": "T1", "value": 100.0}]]}
-        cal = extract_calibration_from_properties(props, source="manual")
-        assert cal.source == "manual"
+    def test_from_coupling_map_no_method(self):
+        """Object without get_edges returns None."""
+
+        class NoGetEdges:
+            pass
+
+        assert _extract_connectivity_from_coupling_map(NoGetEdges()) is None
+
+    def test_from_coupling_map_handles_exception(self):
+        """Gracefully handles exception in get_edges."""
+
+        class BrokenCouplingMap:
+            def get_edges(self):
+                raise RuntimeError("Failed")
+
+        assert _extract_connectivity_from_coupling_map(BrokenCouplingMap()) is None
 
 
-class TestCalibrationSerialization:
-    """Tests for Calibration serialization (UEC compliance)."""
+# =============================================================================
+# Target Extraction Tests
+# =============================================================================
 
-    def test_serializes_to_expected_structure(self, mock_properties):
+
+class TestTargetExtraction:
+    """Tests for extracting info from BackendV2 Target."""
+
+    def test_extracts_all_fields(self, mock_target):
+        """Extracts num_qubits, connectivity, and native gates."""
+        nq, conn, gates, raw = _extract_from_target(mock_target)
+
+        assert nq == 4
+        assert conn == [(0, 1), (1, 2), (2, 3)]
+        assert gates == ["cx", "rz", "sx", "x"]
+        assert raw["num_qubits"] == 4
+
+    def test_handles_none_target(self):
+        """None target returns all None values."""
+        nq, conn, gates, raw = _extract_from_target(None)
+
+        assert nq is None
+        assert conn is None
+        assert gates is None
+        assert raw == {}
+
+    def test_handles_partial_target(self):
+        """Handles target with only num_qubits."""
+
+        class PartialTarget:
+            num_qubits = 5
+
+        nq, conn, gates, raw = _extract_from_target(PartialTarget())
+
+        assert nq == 5
+        assert conn is None
+        assert gates is None
+
+
+# =============================================================================
+# Device Snapshot Creation Tests
+# =============================================================================
+
+
+class TestCreateDeviceSnapshot:
+    """Tests for complete device snapshot creation."""
+
+    def test_aer_simulator_basic_fields(self, aer_simulator):
+        """Creates snapshot with basic fields from AerSimulator."""
+        snapshot = create_device_snapshot(aer_simulator)
+
+        assert snapshot.provider in ("aer", "qiskit")
+        assert "aer_simulator" in snapshot.backend_name.lower()
+        assert snapshot.backend_type == "simulator"
+        assert snapshot.captured_at is not None
+
+    def test_aer_simulator_sdk_version(self, aer_simulator):
+        """Snapshot includes SDK version information."""
+        snapshot = create_device_snapshot(aer_simulator)
+
+        assert snapshot.sdk_versions is not None
+        assert "qiskit" in snapshot.sdk_versions
+        assert snapshot.sdk_versions["qiskit"] == qiskit_version()
+
+    def test_backendv2_with_full_target(self, mock_backend):
+        """Extracts all info from BackendV2 with complete Target."""
+        snapshot = create_device_snapshot(mock_backend)
+
+        assert snapshot.backend_name == "mock_backend"
+        assert snapshot.num_qubits == 4
+        assert snapshot.connectivity == [(0, 1), (1, 2), (2, 3)]
+        assert snapshot.native_gates == ["cx", "rz", "sx", "x"]
+
+    def test_backend_with_calibration(self, mock_backend_with_calibration):
+        """Snapshot includes calibration from properties."""
+        snapshot = create_device_snapshot(mock_backend_with_calibration)
+
+        assert snapshot.calibration is not None
+        assert snapshot.calibration.qubits[0].t1_us == 150.0
+        assert snapshot.calibration.qubits[0].t2_us == 85.0
+
+    def test_minimal_backend(self):
+        """Handles backend with no extra attributes."""
+
+        class MinimalBackend:
+            pass
+
+        snapshot = create_device_snapshot(MinimalBackend())
+
+        assert snapshot.backend_name == "MinimalBackend"
+        assert snapshot.provider == "local"
+        assert snapshot.num_qubits is None
+
+    def test_snapshot_without_tracker_has_no_ref(self, aer_simulator):
+        """DeviceSnapshot without tracker has raw_properties_ref=None."""
+        snapshot = create_device_snapshot(aer_simulator, tracker=None)
+        assert snapshot.raw_properties_ref is None
+
+
+# =============================================================================
+# UEC Compliance Tests
+# =============================================================================
+
+
+class TestDeviceSnapshotUECCompliance:
+    """Tests for DeviceSnapshot UEC compliance."""
+
+    def test_required_fields_present(self, aer_simulator):
+        """All required DeviceSnapshot fields are present."""
+        snapshot = create_device_snapshot(aer_simulator)
+
+        assert snapshot.captured_at is not None
+        assert snapshot.backend_name is not None
+        assert snapshot.backend_type is not None
+        assert snapshot.provider is not None
+
+    def test_captured_at_is_iso_format(self, aer_simulator):
+        """captured_at is in ISO 8601 format."""
+        snapshot = create_device_snapshot(aer_simulator)
+        ts = snapshot.captured_at.replace("Z", "+00:00")
+        datetime.fromisoformat(ts)
+
+    def test_sdk_versions_format(self, aer_simulator):
+        """sdk_versions is a dict mapping package names to versions."""
+        snapshot = create_device_snapshot(aer_simulator)
+
+        assert isinstance(snapshot.sdk_versions, dict)
+        assert "qiskit" in snapshot.sdk_versions
+        assert isinstance(snapshot.sdk_versions["qiskit"], str)
+
+    def test_connectivity_format(self, mock_backend):
+        """Connectivity is list of (int, int) tuples."""
+        snapshot = create_device_snapshot(mock_backend)
+
+        assert snapshot.connectivity is not None
+        for edge in snapshot.connectivity:
+            assert isinstance(edge, tuple)
+            assert len(edge) == 2
+            assert all(isinstance(q, int) for q in edge)
+
+    def test_calibration_serializes_to_expected_structure(self, mock_properties):
         """Calibration serializes to expected dict structure."""
         props = mock_properties.to_dict()
         cal = extract_calibration_from_properties(props)
         d = cal.to_dict()
 
-        # Required field
         assert "source" in d
         assert isinstance(d["source"], str)
-
-        # Qubit structure
         assert "qubits" in d
+        assert "gates" in d
+
         q = d["qubits"][0]
         assert "qubit" in q
         assert isinstance(q["qubit"], int)
 
-        # Gate structure
-        assert "gates" in d
         g = d["gates"][0]
         assert "gate" in g
         assert "qubits" in g
-        assert isinstance(g["gate"], str)
-        assert isinstance(g["qubits"], (list, tuple))

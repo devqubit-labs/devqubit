@@ -14,8 +14,7 @@ In UEC terminology this is ``cbit0_left``. The canonical UEC format
 is ``cbit0_right`` (little-endian, like Qiskit).
 
 By default, this adapter preserves Braket's native format and records
-``transformed=False`` in CountsFormat. Consumers should check the
-``bit_order`` field and transform if needed for cross-SDK comparison.
+``transformed=False`` in CountsFormat.
 """
 
 from __future__ import annotations
@@ -24,13 +23,14 @@ import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from devqubit_braket.device import create_device_snapshot
+from devqubit_braket.results import extract_counts_payload
 from devqubit_braket.serialization import (
     BraketCircuitSerializer,
     circuits_to_text,
     serialize_openqasm,
 )
-from devqubit_braket.snapshot import create_device_snapshot
-from devqubit_braket.utils import braket_version, get_adapter_version
+from devqubit_braket.utils import braket_version, get_adapter_version, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.storage.types import ArtifactRef
 from devqubit_engine.uec.models.device import DeviceSnapshot
@@ -56,11 +56,14 @@ from devqubit_engine.utils.serialization import to_jsonable
 if TYPE_CHECKING:
     from devqubit_engine.tracking.run import Run
 
-
 logger = logging.getLogger(__name__)
 
-# Module-level serializer instance
 _serializer = BraketCircuitSerializer()
+
+
+# =============================================================================
+# Counts Format
+# =============================================================================
 
 
 def _get_braket_counts_format(transformed: bool = False) -> dict[str, Any]:
@@ -74,27 +77,26 @@ def _get_braket_counts_format(transformed: bool = False) -> dict[str, Any]:
     ----------
     transformed : bool
         Whether counts have been transformed to canonical ``cbit0_right`` format.
-        Default False - Braket's native format is preserved.
 
     Returns
     -------
     dict
         CountsFormat as dictionary for JSON serialization.
-
-    Notes
-    -----
-    UEC canonical format is ``cbit0_right`` (like Qiskit). When ``transformed=False``,
-    consumers must reverse bitstrings themselves for cross-SDK comparison.
     """
     return CountsFormat(
         source_sdk="braket",
         source_key_format="bitstring",
-        bit_order="cbit0_left",  # Braket native: big-endian
+        bit_order="cbit0_left",
         transformed=transformed,
     ).to_dict()
 
 
-def serialize_and_log_circuits(
+# =============================================================================
+# Circuit Serialization and Logging
+# =============================================================================
+
+
+def _serialize_and_log_circuits(
     tracker: Run,
     circuits: list[Any],
     device_name: str,
@@ -103,7 +105,6 @@ def serialize_and_log_circuits(
     Serialize circuits and log as artifacts.
 
     Logs both JAQCD and OpenQASM formats for comprehensive coverage.
-    Returns ProgramArtifacts (not just refs) for proper UEC compliance.
 
     Parameters
     ----------
@@ -128,7 +129,7 @@ def serialize_and_log_circuits(
     for i, circuit in enumerate(circuits):
         circuit_name = getattr(circuit, "name", None) or f"circuit_{i}"
 
-        # Serialize JAQCD (native format)
+        # JAQCD (native format)
         try:
             jaqcd_data = _serializer.serialize(circuit, CircuitFormat.JAQCD, index=i)
             ref = tracker.log_bytes(
@@ -151,7 +152,7 @@ def serialize_and_log_circuits(
         except Exception as e:
             logger.debug("Failed to serialize circuit %d to JAQCD: %s", i, e)
 
-        # Serialize OpenQASM (canonical format, better for diffing)
+        # OpenQASM (canonical format)
         try:
             qasm_data = serialize_openqasm(circuit, index=i)
             ref = tracker.log_bytes(
@@ -174,7 +175,7 @@ def serialize_and_log_circuits(
         except Exception as e:
             logger.debug("Failed to serialize circuit %d to OpenQASM: %s", i, e)
 
-    # Log circuit diagrams (human-readable)
+    # Circuit diagrams (human-readable)
     try:
         diagram_text = circuits_to_text(circuits)
         ref = tracker.log_bytes(
@@ -200,7 +201,12 @@ def serialize_and_log_circuits(
     return artifacts
 
 
-def create_program_snapshot(
+# =============================================================================
+# Snapshot Creation
+# =============================================================================
+
+
+def _create_program_snapshot(
     circuits: list[Any],
     artifacts: list[ProgramArtifact],
     structural_hash: str | None,
@@ -225,7 +231,6 @@ def create_program_snapshot(
     ProgramSnapshot
         Program snapshot with logical artifacts and hashes.
     """
-    # If parametric_hash not provided, use structural_hash
     # UEC Contract: for circuits without params, parametric == structural
     effective_parametric_hash = parametric_hash or structural_hash
 
@@ -234,14 +239,13 @@ def create_program_snapshot(
         physical=[],  # Braket doesn't expose transpiled circuits
         structural_hash=structural_hash,
         parametric_hash=effective_parametric_hash,
-        # For Braket without transpilation, executed hashes equal logical
         executed_structural_hash=structural_hash,
         executed_parametric_hash=effective_parametric_hash,
         num_circuits=len(circuits),
     )
 
 
-def create_execution_snapshot(
+def _create_execution_snapshot(
     shots: int | None,
     task_ids: list[str],
     submitted_at: str,
@@ -256,7 +260,7 @@ def create_execution_snapshot(
     shots : int or None
         Number of shots (None means provider default).
     task_ids : list of str
-        Task identifiers (Braket-specific, not job_ids).
+        Task identifiers (Braket-specific).
     submitted_at : str
         ISO 8601 submission timestamp.
     execution_index : int
@@ -283,7 +287,7 @@ def create_execution_snapshot(
     )
 
 
-def create_result_snapshot(
+def _create_result_snapshot(
     result: Any,
     raw_result_ref: ArtifactRef | None,
     shots: int | None,
@@ -308,8 +312,6 @@ def create_result_snapshot(
     ResultSnapshot
         Result snapshot with items list and success status.
     """
-    from devqubit_braket.results import extract_counts_payload
-
     items: list[ResultItem] = []
     success = False
     status = "failed"
@@ -335,7 +337,6 @@ def create_result_snapshot(
                 counts_data = exp.get("counts", {})
                 item_success = bool(counts_data)
 
-                # Build counts structure
                 counts_obj = None
                 if counts_data:
                     counts_obj = {
@@ -352,7 +353,6 @@ def create_result_snapshot(
                     )
                 )
 
-            # Success = at least one item with non-empty counts
             success = any(item.success for item in items)
             status = "completed" if success else "partial"
 
@@ -360,13 +360,7 @@ def create_result_snapshot(
         if not items:
             batch_size = result.get("batch_size", 1) if isinstance(result, dict) else 1
             for i in range(batch_size):
-                items.append(
-                    ResultItem(
-                        item_index=i,
-                        success=False,
-                        counts=None,
-                    )
-                )
+                items.append(ResultItem(item_index=i, success=False, counts=None))
             status = "partial"
 
         # For shots=0 (analytical), may get statevector/other instead of counts
@@ -383,6 +377,11 @@ def create_result_snapshot(
         raw_result_ref=raw_result_ref,
         metadata={},
     )
+
+
+# =============================================================================
+# Public API
+# =============================================================================
 
 
 def create_envelope(
@@ -428,11 +427,9 @@ def create_envelope(
     ExecutionEnvelope
         Envelope with device, program, and execution snapshots.
     """
-    from devqubit_braket.utils import get_backend_name
-
     device_name = get_backend_name(device=device)
 
-    # Create device snapshot with tracker for raw_properties logging
+    # Create device snapshot
     try:
         device_snapshot = create_device_snapshot(device=device, tracker=tracker)
     except Exception as e:
@@ -459,22 +456,21 @@ def create_envelope(
     }
 
     # Log circuits and get artifacts
-    artifacts = serialize_and_log_circuits(
+    artifacts = _serialize_and_log_circuits(
         tracker=tracker,
         circuits=circuits,
         device_name=device_name,
     )
 
-    # Create program snapshot
-    program_snapshot = create_program_snapshot(
+    # Create snapshots
+    program_snapshot = _create_program_snapshot(
         circuits=circuits,
         artifacts=artifacts,
         structural_hash=structural_hash,
         parametric_hash=parametric_hash,
     )
 
-    # Create execution snapshot
-    execution_snapshot = create_execution_snapshot(
+    execution_snapshot = _create_execution_snapshot(
         shots=shots,
         task_ids=task_ids,
         submitted_at=submitted_at,
@@ -483,19 +479,18 @@ def create_envelope(
     )
 
     # Create ProducerInfo
-    sdk_version = braket_version()
     producer = ProducerInfo.create(
         adapter="devqubit-braket",
         adapter_version=get_adapter_version(),
         sdk="braket",
-        sdk_version=sdk_version,
+        sdk_version=braket_version(),
         frontends=["braket-sdk"],
     )
 
-    # Create pending result
+    # Create pending result (will be updated by finalize_envelope)
     pending_result = ResultSnapshot(
         success=False,
-        status="failed",  # Will be updated by finalize_envelope
+        status="failed",
         items=[],
         metadata={"state": "pending"},
     )
@@ -550,12 +545,10 @@ def finalize_envelope(
     ValueError
         If envelope is None.
     """
-    from devqubit_braket.results import extract_counts_payload
-
     if envelope is None:
         raise ValueError("Cannot finalize None envelope")
 
-    # Log raw result and get ref
+    # Log raw result
     raw_result_ref: ArtifactRef | None = None
     if result is not None:
         try:
@@ -588,13 +581,12 @@ def finalize_envelope(
             logger.warning("Failed to log error: %s", e)
 
     # Create result snapshot
-    result_snapshot = create_result_snapshot(result, raw_result_ref, shots, error)
+    result_snapshot = _create_result_snapshot(result, raw_result_ref, shots, error)
 
     # Update execution snapshot with completion time
     if envelope.execution:
         envelope.execution.completed_at = utc_now_iso()
 
-    # Add result to envelope
     envelope.result = result_snapshot
 
     # Extract counts for separate logging
@@ -636,7 +628,6 @@ def finalize_envelope(
         tracker.record["results"]["error_type"] = type(error).__name__
 
     logger.debug("Logged execution envelope for %s", device_name)
-
     return envelope
 
 

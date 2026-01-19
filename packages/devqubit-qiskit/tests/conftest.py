@@ -12,6 +12,11 @@ from qiskit.circuit import Parameter
 from qiskit_aer import AerSimulator
 
 
+# =============================================================================
+# Infrastructure Fixtures
+# =============================================================================
+
+
 @pytest.fixture
 def tracking_root(tmp_path):
     """Create temporary tracking directory."""
@@ -30,10 +35,20 @@ def registry(tracking_root):
     return create_registry(f"file://{tracking_root}")
 
 
+# =============================================================================
+# Backend Fixtures
+# =============================================================================
+
+
 @pytest.fixture
 def aer_simulator():
     """Create an AerSimulator backend."""
     return AerSimulator()
+
+
+# =============================================================================
+# Circuit Fixtures
+# =============================================================================
 
 
 @pytest.fixture
@@ -82,6 +97,11 @@ def batch_circuits():
         qc.measure_all()
         circuits.append(qc)
     return circuits
+
+
+# =============================================================================
+# Mock Fixtures
+# =============================================================================
 
 
 @pytest.fixture

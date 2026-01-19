@@ -397,6 +397,7 @@ def build_estimator_result_snapshot(
 
     # Build ResultItem list with NormalizedExpectation (UEC v1.0 compliant)
     items: list[ResultItem] = []
+    experiments_for_metadata: list[dict[str, Any]] = []
     num_experiments = 0
 
     if est_data:
@@ -410,6 +411,12 @@ def build_estimator_result_snapshot(
                 evs = [evs]
             if not isinstance(stds, list):
                 stds = [stds] if stds else []
+
+            # Build expectations list for metadata (used by adapter logging)
+            exp_metadata: dict[str, Any] = {
+                "index": item_index,
+                "expectations": [],
+            }
 
             # Create ResultItem for each observable
             for obs_idx, ev in enumerate(evs):
@@ -430,6 +437,16 @@ def build_estimator_result_snapshot(
                     )
                 )
 
+                # Add to metadata structure for adapter logging
+                exp_metadata["expectations"].append(
+                    {
+                        "value": float(ev) if ev is not None else 0.0,
+                        "std_error": float(std) if std is not None else None,
+                        "observable_index": obs_idx,
+                    }
+                )
+
+            experiments_for_metadata.append(exp_metadata)
             num_experiments += 1
 
     return ResultSnapshot(
@@ -441,55 +458,6 @@ def build_estimator_result_snapshot(
             "backend_name": backend_name,
             "primitive_type": "estimator",
             "num_experiments": num_experiments,
+            "experiments": experiments_for_metadata,
         },
     )
-
-
-def extract_quasi_distributions(result: Any) -> list[dict[str, float]] | None:
-    """
-    Extract quasi-probability distributions from a result.
-
-    This is primarily used for results that return quasi-distributions
-    rather than raw counts (e.g., with error mitigation).
-
-    Parameters
-    ----------
-    result : Any
-        Result object.
-
-    Returns
-    -------
-    list of dict or None
-        List of quasi-distributions (one per circuit), or None if not available.
-
-    Notes
-    -----
-    Quasi-distributions can have negative values for error-mitigated results.
-    """
-    if result is None:
-        return None
-
-    quasi_dists: list[dict[str, float]] = []
-
-    try:
-        if hasattr(result, "quasi_dists") and result.quasi_dists is not None:
-            for qd in result.quasi_dists:
-                if hasattr(qd, "binary_probabilities") and callable(
-                    qd.binary_probabilities
-                ):
-                    quasi_dists.append(dict(qd.binary_probabilities()))
-                elif isinstance(qd, dict):
-                    # Convert integer keys to binary strings
-                    if qd:
-                        num_bits = max(len(bin(k)) - 2 for k in qd.keys())
-                    else:
-                        num_bits = 1
-                    quasi_dists.append(
-                        {format(k, f"0{num_bits}b"): v for k, v in qd.items()}
-                    )
-            if quasi_dists:
-                return quasi_dists
-    except Exception:
-        pass
-
-    return None
