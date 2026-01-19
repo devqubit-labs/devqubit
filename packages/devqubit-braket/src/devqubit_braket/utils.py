@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Utility functions for Braket adapter.
+Common utilities for Braket adapter.
 
 Provides version utilities, bitstring canonicalization, and common helpers
 used across the adapter components.
