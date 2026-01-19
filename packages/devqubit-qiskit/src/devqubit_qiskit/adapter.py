@@ -9,6 +9,7 @@ tracking of quantum circuit execution, results, and device configurations
 following the devqubit Uniform Execution Contract (UEC).
 
 The adapter produces an ExecutionEnvelope containing four canonical snapshots:
+
 - DeviceSnapshot: Backend state and calibration
 - ProgramSnapshot: Logical circuit artifacts
 - ExecutionSnapshot: Submission and job metadata
@@ -89,7 +90,7 @@ class TrackedJob:
 
     This class wraps a Qiskit job and logs artifacts when
     results are retrieved, producing a ResultSnapshot and
-    finalizing the ExecutionEnvelope.
+    creating the ExecutionEnvelope.
 
     Parameters
     ----------
@@ -99,19 +100,13 @@ class TrackedJob:
         Tracker instance for logging.
     backend_name : str
         Name of the backend that created this job.
-    should_log_results : bool
+    should_log_results : bool, default=True
         Whether to log results for this job.
-    envelope : ExecutionEnvelope or None
-        Envelope to finalize when result() is called.
+    envelope_data : dict or None, default=None
+        Components for creating envelope: device, program, execution, producer.
 
     Attributes
     ----------
-    job : Any
-        The wrapped Qiskit job.
-    tracker : Run
-        The active run tracker.
-    backend_name : str
-        Backend name for metadata.
     result_snapshot : ResultSnapshot or None
         Captured result snapshot after result() is called.
     """
@@ -120,9 +115,9 @@ class TrackedJob:
     tracker: Run
     backend_name: str
     should_log_results: bool = True
-    envelope: ExecutionEnvelope | None = None
+    envelope_data: dict[str, Any] | None = None
 
-    # Set after result() is called
+    # Internal state (not exposed in __init__)
     result_snapshot: ResultSnapshot | None = field(default=None, init=False, repr=False)
     _result_logged: bool = field(default=False, init=False, repr=False)
 
@@ -176,11 +171,20 @@ class TrackedJob:
                     result,
                 )
 
-                # Finalize envelope with result
-                if self.envelope is not None and self.result_snapshot is not None:
+                # Create and finalize envelope
+                if self.envelope_data is not None and self.result_snapshot is not None:
+                    envelope = ExecutionEnvelope(
+                        envelope_id=uuid.uuid4().hex[:26],
+                        created_at=utc_now_iso(),
+                        producer=self.envelope_data["producer"],
+                        result=self.result_snapshot,
+                        device=self.envelope_data["device"],
+                        program=self.envelope_data["program"],
+                        execution=self.envelope_data["execution"],
+                    )
                     finalize_envelope_with_result(
                         self.tracker,
-                        self.envelope,
+                        envelope,
                         self.result_snapshot,
                     )
 
@@ -230,11 +234,20 @@ class TrackedJob:
                 backend_name=self.backend_name,
             )
 
-            # Finalize envelope with failure result
-            if self.envelope is not None:
+            # Create and finalize envelope with failure result
+            if self.envelope_data is not None:
+                envelope = ExecutionEnvelope(
+                    envelope_id=uuid.uuid4().hex[:26],
+                    created_at=utc_now_iso(),
+                    producer=self.envelope_data["producer"],
+                    result=self.result_snapshot,
+                    device=self.envelope_data["device"],
+                    program=self.envelope_data["program"],
+                    execution=self.envelope_data["execution"],
+                )
                 finalize_envelope_with_result(
                     self.tracker,
-                    self.envelope,
+                    envelope,
                     self.result_snapshot,
                 )
 
@@ -287,21 +300,15 @@ class TrackedBackend:
         Original Qiskit backend instance (must be BackendV2-compatible).
     tracker : Run
         Tracker instance for logging.
-    log_every_n : int
-        Logging frequency: 0=first only (default), N>0=every Nth, -1=all.
-    log_new_circuits : bool
-        Auto-log new circuit structures (default True).
-    stats_update_interval : int
-        Update stats every N executions (default 1000).
-
-    Attributes
-    ----------
-    backend : Any
-        The wrapped Qiskit backend.
-    tracker : Run
-        The active run tracker.
-    device_snapshot : DeviceSnapshot or None
-        Cached device snapshot (created once per run).
+    log_every_n : int, default=0
+        Logging frequency:
+        - 0: Log first execution only (default)
+        - N > 0: Log every Nth execution
+        - -1: Log all executions
+    log_new_circuits : bool, default=True
+        Auto-log new circuit structures.
+    stats_update_interval : int, default=1000
+        Update execution stats every N executions.
 
     Notes
     -----
@@ -310,7 +317,7 @@ class TrackedBackend:
     The default settings (log_every_n=0, log_new_circuits=True) log the
     first execution and any new circuit structures. For parameter sweeps
     where the same circuit is executed with different parameter values,
-    only the first execution is logged since the circuit structure hash
+    only the first execution is logged since the structural hash
     ignores parameter values.
 
     To log all parameter sweep points, use log_every_n=-1 or set
@@ -323,7 +330,7 @@ class TrackedBackend:
     log_new_circuits: bool = True
     stats_update_interval: int = 1000
 
-    # Internal state (not init params)
+    # Internal state (not exposed in __init__)
     _snapshot_logged: bool = field(default=False, init=False, repr=False)
     _execution_count: int = field(default=0, init=False, repr=False)
     _logged_execution_count: int = field(default=0, init=False, repr=False)
@@ -417,7 +424,7 @@ class TrackedBackend:
                 tracker=self.tracker,
                 backend_name=backend_name,
                 should_log_results=False,
-                envelope=None,
+                envelope_data=None,
             )
 
         # Detect physical provider (not SDK)
@@ -529,8 +536,8 @@ class TrackedBackend:
             execution_snapshot.job_ids = [job_id]
             logger.debug("Job ID: %s", job_id)
 
-        # Create envelope (will be finalized when result() is called)
-        envelope: ExecutionEnvelope | None = None
+        # Create envelope data (envelope will be created in TrackedJob.result())
+        envelope_data: dict[str, Any] | None = None
         if should_log_results and self.device_snapshot is not None:
             # Use existing or create minimal program snapshot
             if program_snapshot is None:
@@ -551,23 +558,13 @@ class TrackedBackend:
                 frontends=["qiskit"],
             )
 
-            # Create envelope with pending result (will be updated in result())
-            pending_result = ResultSnapshot(
-                success=False,
-                status="failed",  # Will be updated when result() completes
-                items=[],
-                metadata={"state": "pending"},
-            )
-
-            envelope = ExecutionEnvelope(
-                envelope_id=uuid.uuid4().hex[:26],
-                created_at=utc_now_iso(),
-                producer=producer,
-                result=pending_result,
-                device=self.device_snapshot,
-                program=program_snapshot,
-                execution=execution_snapshot,
-            )
+            # Store envelope components - envelope created in result()
+            envelope_data = {
+                "device": self.device_snapshot,
+                "program": program_snapshot,
+                "execution": execution_snapshot,
+                "producer": producer,
+            }
 
         # Update stats
         self._update_stats()
@@ -577,7 +574,7 @@ class TrackedBackend:
             tracker=self.tracker,
             backend_name=backend_name,
             should_log_results=should_log_results,
-            envelope=envelope,
+            envelope_data=envelope_data,
         )
 
     def _update_stats(self) -> None:
@@ -622,8 +619,8 @@ class QiskitAdapter:
     For Runtime primitives (SamplerV2, EstimatorV2), use the ``qiskit-runtime``
     adapter instead.
 
-    Example
-    -------
+    Examples
+    --------
     >>> from qiskit_aer import AerSimulator
     >>> adapter = QiskitAdapter()
     >>> assert adapter.supports_executor(AerSimulator())
@@ -689,12 +686,15 @@ class QiskitAdapter:
             Qiskit backend to wrap.
         tracker : Run
             Tracker instance for logging.
-        log_every_n : int
-            Logging frequency: 0=first only (default), N>0=every Nth, -1=all.
-        log_new_circuits : bool
-            Auto-log new circuit structures (default True).
-        stats_update_interval : int
-            Update stats every N executions (default 1000).
+        log_every_n : int, default=0
+            Logging frequency:
+            - 0: Log first execution only (default)
+            - N > 0: Log every Nth execution
+            - -1: Log all executions
+        log_new_circuits : bool, default=True
+            Auto-log new circuit structures.
+        stats_update_interval : int, default=1000
+            Update stats every N executions.
 
         Returns
         -------
