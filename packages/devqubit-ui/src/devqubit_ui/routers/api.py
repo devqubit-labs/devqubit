@@ -121,7 +121,7 @@ async def set_baseline(
     service.set_baseline(project, run_id)
 
     if redirect:
-        return RedirectResponse(url=f"/runs/{run_id}", status_code=303)
+        return RedirectResponse(url=f"/runs/{record.run_id}", status_code=303)
 
     return JSONResponse(
         content={
