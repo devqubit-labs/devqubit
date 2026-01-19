@@ -152,6 +152,7 @@ class TestApiRouter:
         """Test set baseline with redirect."""
         mock_run = Mock()
         mock_run.project = "test-project"
+        mock_run.run_id = "test-run-123"
         mock_registry.load.return_value = mock_run
 
         response = client.post(
