@@ -272,31 +272,3 @@ def extract_job_id(job: Any) -> str | None:
         return str(jid() if callable(jid) else jid)
     except Exception:
         return None
-
-
-def get_session_id(primitive: Any) -> str | None:
-    """
-    Extract session ID from a Runtime primitive if in a session.
-
-    Parameters
-    ----------
-    primitive : Any
-        Runtime primitive instance.
-
-    Returns
-    -------
-    str or None
-        Session ID if available, None otherwise.
-    """
-    session = getattr(primitive, "session", None)
-    if session is None:
-        return None
-
-    try:
-        sid = getattr(session, "session_id", None)
-        if sid is not None:
-            return str(sid() if callable(sid) else sid)
-    except Exception:
-        pass
-
-    return None
