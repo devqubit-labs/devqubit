@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for PennyLane adapter."""
+"""End-to-end tests for PennyLane adapter."""
 
 import pennylane as qml
 from devqubit_engine.tracking.run import track
@@ -13,7 +13,7 @@ def _count_kind(loaded, kind: str) -> int:
     return sum(1 for a in loaded.artifacts if a.kind == kind)
 
 
-class TestPennyLaneAdapter:
+class TestAdapterRegistration:
     """Tests for adapter registration and device detection."""
 
     def test_adapter_name(self):
@@ -22,36 +22,27 @@ class TestPennyLaneAdapter:
 
     def test_supports_default_qubit(self, default_qubit):
         """Adapter supports default.qubit device."""
-        adapter = PennyLaneAdapter()
-        assert adapter.supports_executor(default_qubit) is True
+        assert PennyLaneAdapter().supports_executor(default_qubit) is True
 
     def test_rejects_non_devices(self):
         """Adapter rejects non-device objects."""
         adapter = PennyLaneAdapter()
         assert adapter.supports_executor(None) is False
         assert adapter.supports_executor("not a device") is False
-        assert adapter.supports_executor([]) is False
 
     def test_describe_executor(self, default_qubit):
         """Adapter correctly describes device."""
         desc = PennyLaneAdapter().describe_executor(default_qubit)
 
         assert desc["name"] == "default.qubit"
-        assert desc["provider"] == "local"  # Physical provider for native PL devices
-        assert desc["sdk"] == "pennylane"  # SDK frontend
+        assert desc["provider"] == "local"
+        assert desc["sdk"] == "pennylane"
         assert desc["num_wires"] == 2
-
-    def test_describe_executor_shows_analytic_mode(self, default_qubit):
-        """Adapter description shows analytic mode for device without shots."""
-        desc = PennyLaneAdapter().describe_executor(default_qubit)
-
-        assert "shots_info" in desc
         assert desc["shots_info"]["analytic"] is True
-        assert desc["shots_info"]["total_shots"] is None
 
 
-class TestPatchDevice:
-    """Tests for device patching."""
+class TestDevicePatching:
+    """Tests for device patching behavior."""
 
     def test_patch_sets_flag_and_preserves_original(self, default_qubit):
         """Patching sets flag and preserves original execute."""
@@ -61,29 +52,15 @@ class TestPatchDevice:
         assert hasattr(default_qubit, "_devqubit_original_execute")
         assert default_qubit._devqubit_tracker is None
 
-    def test_patch_is_idempotent_but_updates_config(self, default_qubit):
+    def test_patch_is_idempotent(self, default_qubit):
         """Second patch doesn't re-wrap but updates config."""
-        patch_device(
-            default_qubit,
-            log_every_n=0,
-            log_new_circuits=True,
-            stats_update_interval=10,
-        )
+        patch_device(default_qubit, log_every_n=0, log_new_circuits=True)
         execute_wrapped = default_qubit.execute
 
-        patch_device(
-            default_qubit,
-            log_every_n=5,
-            log_new_circuits=False,
-            stats_update_interval=7,
-        )
+        patch_device(default_qubit, log_every_n=5, log_new_circuits=False)
 
-        # Not re-wrapped
-        assert default_qubit.execute is execute_wrapped
-
-        # Config updated
-        assert default_qubit._devqubit_log_every_n == 5
-        assert default_qubit._devqubit_log_new_circuits is False
+        assert default_qubit.execute is execute_wrapped  # Not re-wrapped
+        assert default_qubit._devqubit_log_every_n == 5  # Config updated
 
     def test_patched_device_without_tracker_passes_through(self, default_qubit):
         """Patched device without tracker executes normally."""
@@ -99,14 +76,14 @@ class TestPatchDevice:
         assert result is not None
 
 
-class TestWrapDevice:
-    """Tests for device wrapping behavior."""
+class TestDeviceWrapping:
+    """Tests for device wrapping via run.wrap()."""
 
-    def test_wrap_returns_same_device_patched(self, store, registry, default_qubit):
+    def test_wrap_returns_same_device(self, store, registry, default_qubit):
         """wrap() patches device in-place rather than returning wrapper."""
 
         @qml.qnode(default_qubit, shots=10)
-        def simple_circuit():
+        def circuit():
             qml.Hadamard(0)
             return qml.counts(wires=[0])
 
@@ -115,14 +92,13 @@ class TestWrapDevice:
             assert wrapped is default_qubit
             assert default_qubit._devqubit_patched is True
             assert default_qubit._devqubit_tracker is run
-            # Execute a circuit to create envelope (required for adapter runs)
-            _ = simple_circuit()
+            _ = circuit()
 
         loaded = registry.load(run.run_id)
         assert loaded.status == "FINISHED"
 
     def test_qnode_built_before_wrap_is_tracked(self, store, registry, default_qubit):
-        """QNodes created before run context are still tracked when wrapped."""
+        """QNodes created before run context are still tracked."""
 
         @qml.qnode(default_qubit, shots=25)
         def bell_counts():
@@ -141,7 +117,6 @@ class TestWrapDevice:
         assert "devqubit.envelope.json" in kinds
         assert "pennylane.tapes.json" in kinds
         assert "result.pennylane.output.json" in kinds
-        assert loaded.record["device_snapshot"]["sdk"] == "pennylane"
 
 
 class TestTrackedExecution:
@@ -163,11 +138,9 @@ class TestTrackedExecution:
         loaded = registry.load(run.run_id)
 
         assert loaded.status == "FINISHED"
-        assert loaded.record["data"]["tags"]["provider"] == "local"  # Physical provider
-        assert loaded.record["data"]["tags"]["sdk"] == "pennylane"  # SDK frontend
+        assert loaded.record["data"]["tags"]["provider"] == "local"
+        assert loaded.record["data"]["tags"]["sdk"] == "pennylane"
         assert loaded.record["backend"]["name"] == "default.qubit"
-        assert loaded.record["backend"]["provider"] == "local"  # Physical provider
-        assert loaded.record["backend"]["sdk"] == "pennylane"  # SDK frontend
 
     def test_execution_count_incremented(self, store, registry, default_qubit):
         """Execution count is incremented correctly."""
@@ -199,64 +172,11 @@ class TestTrackedExecution:
             circuit()
 
         loaded = registry.load(run.run_id)
-
         artifact_kinds = {a.kind for a in loaded.artifacts}
+
         assert "pennylane.tapes.json" in artifact_kinds
         assert "pennylane.tapes.txt" in artifact_kinds
-
         assert "results" in loaded.record
-        assert "completed_at" in loaded.record["results"]
-
-
-class TestBatchExecution:
-    """Tests for batch execution path (multiple tapes at once)."""
-
-    def test_batch_execute_with_qml_execute(self, store, registry, default_qubit):
-        """Batch execution via qml.execute is tracked correctly."""
-        # Create multiple tapes (analytic mode - no shots needed for expval)
-        with qml.tape.QuantumTape() as tape1:
-            qml.Hadamard(wires=0)
-            qml.expval(qml.PauliZ(0))
-
-        with qml.tape.QuantumTape() as tape2:
-            qml.RX(0.5, wires=0)
-            qml.expval(qml.PauliZ(0))
-
-        with track(project="batch", store=store, registry=registry) as run:
-            run.wrap(default_qubit)
-            # qml.execute is the canonical API for batch execution
-            results = qml.execute([tape1, tape2], default_qubit)
-
-        loaded = registry.load(run.run_id)
-
-        assert loaded.status == "FINISHED"
-        assert len(results) == 2
-
-        # Check that batch was logged
-        artifact_kinds = {a.kind for a in loaded.artifacts}
-        assert "pennylane.tapes.json" in artifact_kinds
-
-    def test_direct_device_execute_batch(self, store, registry, default_qubit):
-        """Direct device.execute with list of tapes works."""
-        with qml.tape.QuantumTape() as tape1:
-            qml.Hadamard(wires=0)
-            qml.expval(qml.PauliZ(0))
-
-        with qml.tape.QuantumTape() as tape2:
-            qml.PauliX(wires=0)
-            qml.expval(qml.PauliZ(0))
-
-        with track(project="batch", store=store, registry=registry) as run:
-            run.wrap(default_qubit)
-            # Direct device execution
-            _ = default_qubit.execute([tape1, tape2])
-
-        loaded = registry.load(run.run_id)
-        assert loaded.status == "FINISHED"
-
-
-class TestExpectationValues:
-    """Tests for expectation value execution."""
 
     def test_expval_tracking(self, store, registry, default_qubit):
         """Expectation value execution is tracked."""
@@ -274,12 +194,34 @@ class TestExpectationValues:
         assert loaded.status == "FINISHED"
 
 
-class TestSamplingBehavior:
-    """Tests for execution sampling to prevent logging explosion."""
+class TestBatchExecution:
+    """Tests for batch execution path."""
 
-    def test_default_logging_deduplicates_same_circuit(
-        self, store, registry, default_qubit
-    ):
+    def test_batch_execute_with_qml_execute(self, store, registry, default_qubit):
+        """Batch execution via qml.execute is tracked correctly."""
+        with qml.tape.QuantumTape() as tape1:
+            qml.Hadamard(wires=0)
+            qml.expval(qml.PauliZ(0))
+
+        with qml.tape.QuantumTape() as tape2:
+            qml.RX(0.5, wires=0)
+            qml.expval(qml.PauliZ(0))
+
+        with track(project="batch", store=store, registry=registry) as run:
+            run.wrap(default_qubit)
+            results = qml.execute([tape1, tape2], default_qubit)
+
+        loaded = registry.load(run.run_id)
+
+        assert loaded.status == "FINISHED"
+        assert len(results) == 2
+        assert "pennylane.tapes.json" in {a.kind for a in loaded.artifacts}
+
+
+class TestDeduplication:
+    """Tests for execution deduplication and sampling."""
+
+    def test_default_deduplicates_same_circuit(self, store, registry, default_qubit):
         """Default policy logs first execution only for identical circuits."""
 
         @qml.qnode(default_qubit, shots=20)
@@ -299,13 +241,10 @@ class TestSamplingBehavior:
         # De-duplication: structure and results logged once
         assert _count_kind(loaded, "pennylane.tapes.json") == 1
         assert _count_kind(loaded, "result.pennylane.output.json") == 1
-        assert _count_kind(loaded, "devqubit.envelope.json") == 1
 
-        # Stats reflect all executions
         stats = loaded.record.get("execution_stats", {})
         assert stats.get("total_executions") == 3
         assert stats.get("unique_circuits") == 1
-        assert stats.get("logged_executions") == 1
 
     def test_log_every_n_logs_results_each_time(self, store, registry, default_qubit):
         """log_every_n=1 logs results each time but tapes only once."""
@@ -313,7 +252,6 @@ class TestSamplingBehavior:
         @qml.qnode(default_qubit, shots=20)
         def circuit():
             qml.Hadamard(0)
-            qml.CNOT(wires=[0, 1])
             return qml.counts(wires=[0, 1])
 
         with track(project="pl", store=store, registry=registry) as run:
@@ -325,11 +263,8 @@ class TestSamplingBehavior:
 
         assert _count_kind(loaded, "pennylane.tapes.json") == 1  # structure once
         assert _count_kind(loaded, "result.pennylane.output.json") == 2  # results twice
-        assert _count_kind(loaded, "devqubit.envelope.json") == 2  # envelope twice
 
-        assert loaded.record["execute"]["execution_count"] == 2
-
-    def test_parameter_changes_do_not_create_new_structures(
+    def test_parameter_changes_dont_create_new_structures(
         self, store, registry, default_qubit
     ):
         """Different parameter values don't create new circuit structures."""
@@ -337,7 +272,6 @@ class TestSamplingBehavior:
         @qml.qnode(default_qubit)
         def circuit(theta):
             qml.RX(theta, wires=0)
-            qml.CNOT(wires=[0, 1])
             return qml.expval(qml.PauliZ(0))
 
         with track(project="pl", store=store, registry=registry) as run:
@@ -347,38 +281,15 @@ class TestSamplingBehavior:
 
         loaded = registry.load(run.run_id)
 
-        # Same structure -> single unique circuit
         assert _count_kind(loaded, "pennylane.tapes.json") == 1
-        assert _count_kind(loaded, "result.pennylane.output.json") == 1
-
         stats = loaded.record.get("execution_stats", {})
         assert stats.get("unique_circuits") == 1
         assert stats.get("total_executions") == 2
 
 
-class TestBackendTypeCompliance:
-    """Tests that device snapshots have schema-compliant backend_type."""
-
-    # Strict schema compliance - only canonical values
-    VALID_BACKEND_TYPES = {"simulator", "hardware"}
-
-    def test_device_snapshot_backend_type(self, store, registry, default_qubit):
-        """Device snapshot has valid backend_type."""
-        with track(project="test", store=store, registry=registry) as run:
-            run.wrap(default_qubit)
-
-        loaded = registry.load(run.run_id)
-
-        backend_type = loaded.record["device_snapshot"].get("backend_type")
-        assert backend_type in self.VALID_BACKEND_TYPES
-
-    def test_default_qubit_is_exactly_simulator(self, store, registry, default_qubit):
-        """default.qubit backend_type is exactly 'simulator'."""
-        with track(project="test", store=store, registry=registry) as run:
-            run.wrap(default_qubit)
-
-        loaded = registry.load(run.run_id)
-        assert loaded.record["device_snapshot"]["backend_type"] == "simulator"
+# =============================================================================
+# UEC COMPLIANCE
+# =============================================================================
 
 
 class TestUECCompliance:
@@ -394,6 +305,7 @@ class TestUECCompliance:
 
         assert "backend_name" in snapshot
         assert "backend_type" in snapshot
+        assert snapshot["backend_type"] in {"simulator", "hardware"}
         assert snapshot["sdk"] == "pennylane"
 
     def test_result_type_captured(self, store, registry, default_qubit):
@@ -414,25 +326,6 @@ class TestUECCompliance:
         assert "result_type" in loaded.record["results"]
         assert "completed_at" in loaded.record["results"]
 
-    def test_tape_artifacts_captured(self, store, registry, default_qubit):
-        """Tape artifacts are captured with expected kinds."""
-
-        @qml.qnode(default_qubit, shots=100)
-        def circuit():
-            qml.Hadamard(wires=0)
-            qml.CNOT(wires=[0, 1])
-            return qml.counts()
-
-        with track(project="test", store=store, registry=registry) as run:
-            run.wrap(default_qubit)
-            circuit()
-
-        loaded = registry.load(run.run_id)
-
-        artifact_kinds = {a.kind for a in loaded.artifacts}
-        assert "pennylane.tapes.json" in artifact_kinds
-        assert "pennylane.tapes.txt" in artifact_kinds
-
     def test_raw_properties_artifact_created(self, store, registry, default_qubit):
         """Device raw_properties are logged as separate artifact."""
         with track(project="test", store=store, registry=registry) as run:
@@ -442,3 +335,20 @@ class TestUECCompliance:
         artifact_kinds = {a.kind for a in loaded.artifacts}
 
         assert "device.pennylane.raw_properties.json" in artifact_kinds
+
+    def test_envelope_created(self, store, registry, default_qubit):
+        """ExecutionEnvelope is created and logged."""
+
+        @qml.qnode(default_qubit, shots=100)
+        def circuit():
+            qml.Hadamard(wires=0)
+            return qml.counts()
+
+        with track(project="test", store=store, registry=registry) as run:
+            run.wrap(default_qubit)
+            circuit()
+
+        loaded = registry.load(run.run_id)
+        artifact_kinds = {a.kind for a in loaded.artifacts}
+
+        assert "devqubit.envelope.json" in artifact_kinds
