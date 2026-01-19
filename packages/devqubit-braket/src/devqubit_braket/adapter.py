@@ -24,11 +24,14 @@ Example
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from devqubit_braket.circuits import (
+    compute_parametric_hash,
+    compute_structural_hash,
+)
 from devqubit_braket.envelope import (
     create_envelope,
     log_submission_failure,
@@ -43,10 +46,6 @@ from devqubit_engine.utils.serialization import to_jsonable
 
 
 logger = logging.getLogger(__name__)
-
-# ============================================================================
-# ProgramSet handling utilities
-# ============================================================================
 
 
 def _is_program_set(obj: Any) -> bool:
@@ -198,191 +197,6 @@ def _materialize_task_spec(
         return task_specification, [task_specification], True, None
 
 
-# ============================================================================
-# Circuit hashing
-# ============================================================================
-
-
-def _compute_structural_hash(circuits: list[Any]) -> str | None:
-    """
-    Compute a content hash for circuits.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Braket Circuit objects.
-
-    Returns
-    -------
-    str | None
-        SHA256 hash with prefix, or None if circuits is empty.
-    """
-    if not circuits:
-        return None
-
-    circuit_signatures: list[str] = []
-
-    for circuit in circuits:
-        try:
-            instrs = getattr(circuit, "instructions", None)
-            if instrs is None:
-                circuit_signatures.append(str(circuit)[:500])
-                continue
-
-            op_sigs: list[str] = []
-            for instr in instrs:
-                op = getattr(instr, "operator", None)
-                # Gate name
-                if op is not None:
-                    op_name = getattr(op, "name", None)
-                    op_name = (
-                        op_name
-                        if isinstance(op_name, str) and op_name
-                        else type(op).__name__
-                    )
-                else:
-                    op_name = type(instr).__name__
-
-                # Parameter arity
-                arity = 0
-                if op is not None:
-                    for attr in ("parameters", "params", "angles", "probabilities"):
-                        val = getattr(op, attr, None)
-                        if isinstance(val, (list, tuple)):
-                            arity = len(val)
-                            break
-
-                # Target qubits
-                tgt = getattr(instr, "target", None)
-                if tgt is not None:
-                    try:
-                        targets = tuple(
-                            str(getattr(q, "index", None) or q) for q in tgt
-                        )
-                    except Exception:
-                        targets = (str(tgt),)
-                else:
-                    targets = ()
-
-                op_sigs.append(f"{op_name}|p{arity}|t{targets}")
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _compute_parametric_hash(
-    circuits: list[Any],
-    inputs: dict[str, float] | None = None,
-) -> str | None:
-    """
-    Compute a parametric hash for Braket circuits.
-
-    Unlike structural hash, this includes actual parameter values,
-    making it suitable for identifying identical circuit executions.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Braket Circuit objects.
-    inputs : dict[str, float] or None
-        Parameter bindings for FreeParameters.
-
-    Returns
-    -------
-    str | None
-        SHA256 hash with prefix, or None if circuits is empty.
-
-    Notes
-    -----
-    Includes:
-    - All structural information (gate types, qubit topology)
-    - Resolved parameter values from inputs dict
-    - Unresolved FreeParameter names
-    """
-    if not circuits:
-        return None
-
-    circuit_signatures: list[str] = []
-
-    for circuit in circuits:
-        try:
-            instrs = getattr(circuit, "instructions", None)
-            if instrs is None:
-                circuit_signatures.append(str(circuit)[:500])
-                continue
-
-            op_sigs: list[str] = []
-            for instr in instrs:
-                op = getattr(instr, "operator", None)
-                # Gate name
-                if op is not None:
-                    op_name = getattr(op, "name", None)
-                    op_name = (
-                        op_name
-                        if isinstance(op_name, str) and op_name
-                        else type(op).__name__
-                    )
-                else:
-                    op_name = type(instr).__name__
-
-                # Get actual parameter values
-                param_strs: list[str] = []
-                if op is not None:
-                    for attr in ("parameters", "params", "angles"):
-                        val = getattr(op, attr, None)
-                        if isinstance(val, (list, tuple)):
-                            for p in val:
-                                try:
-                                    # Check if it's a FreeParameter
-                                    if hasattr(p, "name"):
-                                        if inputs and p.name in inputs:
-                                            param_strs.append(
-                                                f"{float(inputs[p.name]):.10f}"
-                                            )
-                                        else:
-                                            param_strs.append(f"<param:{p.name}>")
-                                    else:
-                                        param_strs.append(f"{float(p):.10f}")
-                                except (TypeError, ValueError):
-                                    param_strs.append(str(p)[:50])
-                            break
-
-                # Target qubits
-                tgt = getattr(instr, "target", None)
-                if tgt is not None:
-                    try:
-                        targets = tuple(
-                            str(getattr(q, "index", None) or q) for q in tgt
-                        )
-                    except Exception:
-                        targets = (str(tgt),)
-                else:
-                    targets = ()
-
-                params_suffix = (
-                    f"|params=[{','.join(param_strs)}]" if param_strs else ""
-                )
-                op_sigs.append(f"{op_name}{params_suffix}|t{targets}")
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-# ============================================================================
-# TrackedDevice - wraps Braket devices with tracking
-# ============================================================================
-
-
 @dataclass
 class TrackedDevice:
     """
@@ -465,11 +279,11 @@ class TrackedDevice:
         # Compute hashes
         # structural_hash: ignores parameter values (for deduplication)
         # parametric_hash: includes parameter values from inputs (for exact match)
-        structural_hash = _compute_structural_hash(circuits_for_logging)
+        structural_hash = compute_structural_hash(circuits_for_logging)
 
         # Extract inputs for parametric hash (Braket's FreeParameter bindings)
         inputs = kwargs.get("inputs")
-        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
@@ -619,11 +433,11 @@ class TrackedDevice:
         exec_count = self._execution_count
 
         # Compute hashes
-        structural_hash = _compute_structural_hash(circuits_for_logging)
+        structural_hash = compute_structural_hash(circuits_for_logging)
 
         # Extract inputs for parametric hash (Braket's FreeParameter bindings)
         inputs = kwargs.get("inputs")
-        parametric_hash = _compute_parametric_hash(circuits_for_logging, inputs)
+        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
@@ -769,11 +583,6 @@ class TrackedDevice:
         """Return string representation."""
         device_name = get_backend_name(self.device)
         return f"TrackedDevice(device={device_name!r}, run_id={self.tracker.run_id!r})"
-
-
-# ============================================================================
-# BraketAdapter - main adapter class
-# ============================================================================
 
 
 class BraketAdapter:

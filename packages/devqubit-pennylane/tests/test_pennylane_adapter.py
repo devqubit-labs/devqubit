@@ -5,11 +5,7 @@
 
 import pennylane as qml
 from devqubit_engine.tracking.run import track
-from devqubit_pennylane.adapter import (
-    PennyLaneAdapter,
-    _compute_structural_hash,
-    patch_device,
-)
+from devqubit_pennylane.adapter import PennyLaneAdapter, patch_device
 
 
 def _count_kind(loaded, kind: str) -> int:
@@ -358,70 +354,6 @@ class TestSamplingBehavior:
         stats = loaded.record.get("execution_stats", {})
         assert stats.get("unique_circuits") == 1
         assert stats.get("total_executions") == 2
-
-
-class TestCircuitHash:
-    """Tests for circuit structure hashing."""
-
-    def test_hash_is_structure_only(self):
-        """Hash depends on structure, not parameter values."""
-        with qml.tape.QuantumTape() as t1:
-            qml.RX(0.1, wires=0)
-            qml.CNOT(wires=[0, 1])
-            qml.expval(qml.PauliZ(0))
-
-        with qml.tape.QuantumTape() as t2:
-            qml.RX(2.3, wires=0)  # Different value
-            qml.CNOT(wires=[0, 1])
-            qml.expval(qml.PauliZ(0))
-
-        with qml.tape.QuantumTape() as t3:
-            qml.RY(2.3, wires=0)  # Different gate
-            qml.CNOT(wires=[0, 1])
-            qml.expval(qml.PauliZ(0))
-
-        assert _compute_structural_hash(t1) == _compute_structural_hash(t2)
-        assert _compute_structural_hash(t1) != _compute_structural_hash(t3)
-
-    def test_different_wires_different_hash(self):
-        """Different wire indices produce different hashes."""
-        with qml.tape.QuantumTape() as t1:
-            qml.Hadamard(wires=0)
-            qml.expval(qml.PauliZ(0))
-
-        with qml.tape.QuantumTape() as t2:
-            qml.Hadamard(wires=1)
-            qml.expval(qml.PauliZ(1))
-
-        assert _compute_structural_hash(t1) != _compute_structural_hash(t2)
-
-    def test_different_measurements_different_hash(self):
-        """Different measurement types produce different hashes."""
-        with qml.queuing.AnnotatedQueue() as q1:
-            qml.Hadamard(wires=0)
-            qml.expval(qml.PauliZ(0))
-        tape_expval = qml.tape.QuantumScript.from_queue(q1)
-
-        with qml.queuing.AnnotatedQueue() as q2:
-            qml.Hadamard(wires=0)
-            qml.probs(wires=0)
-        tape_probs = qml.tape.QuantumScript.from_queue(q2)
-
-        assert _compute_structural_hash(tape_expval) != _compute_structural_hash(
-            tape_probs
-        )
-
-    def test_single_tape_and_list_consistent(self):
-        """Single tape and list of one tape produce same hash."""
-        with qml.queuing.AnnotatedQueue() as q:
-            qml.Hadamard(wires=0)
-            qml.expval(qml.PauliZ(0))
-        tape = qml.tape.QuantumScript.from_queue(q)
-
-        h_single = _compute_structural_hash(tape)
-        h_list = _compute_structural_hash([tape])
-
-        assert h_single == h_list
 
 
 class TestBackendTypeCompliance:

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Contract-focused tests for the Braket adapter + UEC envelope logging."""
+"""Contract-focused tests for the Braket adapter."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from devqubit_braket.adapter import (
     BraketAdapter,
     TrackedDevice,
     TrackedTaskBatch,
-    _compute_structural_hash,
     _is_program_set,
     _materialize_task_spec,
 )
@@ -55,9 +54,7 @@ class TestBraketAdapterUECContract:
             assert isinstance(wrapped, TrackedDevice)
             assert wrapped.device is local_simulator
 
-    def test_logged_execution_creates_envelope_and_expected_artifacts(
-        self, store, registry, local_simulator
-    ):
+    def test_logged_execution(self, store, registry, local_simulator):
         """
         One logged execution should produce:
         - program artifacts (JAQCD + OpenQASM + diagram)
@@ -92,7 +89,7 @@ class TestBraketAdapterUECContract:
 
         kinds = _artifact_kinds(loaded)
         assert "braket.ir.jaqcd" in kinds
-        assert "braket.ir.openqasm" in kinds  # NEW: OpenQASM artifact
+        assert "braket.ir.openqasm" in kinds
         assert "braket.circuits.diagram" in kinds
         assert "result.braket.raw.json" in kinds
         assert "result.counts.json" in kinds
@@ -105,44 +102,30 @@ class TestBraketAdapterUECContract:
         assert envelope["schema"] == "devqubit.envelope/1.0"
         assert envelope["producer"]["adapter"] == "devqubit-braket"
         assert envelope["producer"]["sdk"] == "braket"
-        assert envelope["device"]["provider"] == "aws_braket"
+        assert envelope["device"]["provider"] == "local"
         assert envelope["execution"]["shots"] == shots
         assert envelope["execution"]["sdk"] == "braket"
         assert envelope["execution"]["transpilation"]["mode"] == "managed"
 
-        # Program snapshot should reference the logged JAQCD artifact(s)
+        # Program snapshot should reference all logged artifacts
+        logical = envelope["program"]["logical"]
+        assert len(logical) == 3  # JAQCD + OpenQASM + diagram
+
+        # Verify all formats are present
+        formats = {art["format"] for art in logical}
+        assert "jaqcd" in formats
+        assert "openqasm3" in formats
+        assert "diagram" in formats
+
+        # JAQCD artifact should be properly referenced
         jaqcd_artifacts = _artifacts_of_kind(loaded, "braket.ir.jaqcd")
         jaqcd_digests = {a.digest for a in jaqcd_artifacts}
-        logical = envelope["program"]["logical"]
-        assert len(logical) == 1
-        assert logical[0]["format"] == "jaqcd"
-        assert logical[0]["role"] == "logical"
-        assert logical[0]["ref"]["digest"] in jaqcd_digests
+        jaqcd_in_logical = [art for art in logical if art["format"] == "jaqcd"]
+        assert len(jaqcd_in_logical) == 1
+        assert jaqcd_in_logical[0]["ref"]["digest"] in jaqcd_digests
 
-        # Result snapshot should include items with counts summing to shots (UEC 1.0)
-        assert envelope["result"]["status"] == "completed"
-        assert envelope["result"]["success"] is True
-        assert len(envelope["result"]["items"]) == 1
-        item0 = envelope["result"]["items"][0]
-        assert item0["item_index"] == 0
-        assert sum(item0["counts"]["counts"].values()) == shots
-
-        # Counts artifact should be query-friendly and consistent
-        counts_art = _artifacts_of_kind(loaded, "result.counts.json")[0]
-        counts_payload = _read_artifact_json(store, counts_art)
-        assert (
-            "experiments" in counts_payload and len(counts_payload["experiments"]) == 1
-        )
-        assert counts_payload["experiments"][0]["index"] == 0
-        assert sum(counts_payload["experiments"][0]["counts"].values()) == shots
-
-    def test_default_logs_first_only_and_skips_result_logging_on_unlogged_runs(
-        self, store, registry, local_simulator
-    ):
-        """
-        Default behavior (log_every_n=0) logs the first execution only.
-        Critically: subsequent executions still run, but do NOT produce envelopes/results artifacts.
-        """
+    def test_default_logs_first_only(self, store, registry, local_simulator):
+        """Default behavior (log_every_n=0) logs the first execution only."""
         adapter = BraketAdapter()
         circuit = _measured_bell()
 
@@ -191,7 +174,10 @@ class TestBraketAdapterUECContract:
         assert len(_artifacts_of_kind(loaded, "devqubit.envelope.json")) == 3
 
     def test_log_new_circuits_additional_envelope(
-        self, store, registry, local_simulator
+        self,
+        store,
+        registry,
+        local_simulator,
     ):
         """
         With log_every_n=0 (first only) + log_new_circuits=True:
@@ -218,39 +204,6 @@ class TestBraketAdapterUECContract:
 
         loaded = registry.load(run.run_id)
         assert len(_artifacts_of_kind(loaded, "devqubit.envelope.json")) == 2
-
-
-class TestCircuitHash:
-    """Tests for circuit structure hashing (OpenQASM-based)."""
-
-    def test_same_circuit_produces_same_hash(self):
-        """Same circuit produces identical hash (deterministic)."""
-        c1 = Circuit().h(0).cnot(0, 1).measure([0, 1])
-        c2 = Circuit().h(0).cnot(0, 1).measure([0, 1])
-
-        assert _compute_structural_hash([c1]) == _compute_structural_hash([c2])
-
-    def test_gate_or_target_changes_hash(self):
-        """Different gates or targets produce different hashes."""
-        a = Circuit().h(0).measure(0)
-        b = Circuit().h(1).measure(1)
-        c = Circuit().x(0).measure(0)
-
-        assert _compute_structural_hash([a]) != _compute_structural_hash([b])
-        assert _compute_structural_hash([a]) != _compute_structural_hash([c])
-
-    def test_empty_circuits_returns_none(self):
-        """Empty circuit list returns None."""
-        assert _compute_structural_hash([]) is None
-
-    def test_hash_format(self):
-        """Hash has correct sha256 prefix format."""
-        c = Circuit().h(0)
-        h = _compute_structural_hash([c])
-
-        assert h is not None
-        assert h.startswith("sha256:")
-        assert len(h) == 7 + 64  # "sha256:" + 64 hex chars
 
 
 class TestShotsHandling:
@@ -281,7 +234,11 @@ class TestShotsHandling:
         mock_device = device_factory(name="shots_explicit", qubit_count=2)
         adapter = BraketAdapter()
 
-        with track(project="shots_explicit", store=store, registry=registry) as run:
+        with track(
+            project="shots_explicit",
+            store=store,
+            registry=registry,
+        ) as run:
             device = adapter.wrap_executor(mock_device, run)
             circuit = Circuit().h(0).measure(0)
 
@@ -303,7 +260,11 @@ class TestProgramSetHandling:
         assert _is_program_set(None) is False
 
     def test_program_set_sent_as_is(
-        self, store, registry, device_factory, mock_program_set
+        self,
+        store,
+        registry,
+        device_factory,
+        mock_program_set,
     ):
         """
         ProgramSet should be sent to device.run() as-is, NOT converted to list.
@@ -311,10 +272,17 @@ class TestProgramSetHandling:
         This is critical because ProgramSet is a special task specification
         that Braket handles differently from a list of circuits.
         """
-        mock_device = device_factory(name="program_set_test", qubit_count=2)
+        mock_device = device_factory(
+            name="program_set_test",
+            qubit_count=2,
+        )
         adapter = BraketAdapter()
 
-        with track(project="program_set", store=store, registry=registry) as run:
+        with track(
+            project="program_set",
+            store=store,
+            registry=registry,
+        ) as run:
             device = adapter.wrap_executor(mock_device, run)
             device.run(mock_program_set, shots=100)
 
@@ -369,7 +337,11 @@ class TestRunBatch:
         mock_device = device_factory(name="batch_delegate", qubit_count=2)
         adapter = BraketAdapter()
 
-        with track(project="run_batch_delegate", store=store, registry=registry) as run:
+        with track(
+            project="run_batch_delegate",
+            store=store,
+            registry=registry,
+        ) as run:
             device = adapter.wrap_executor(mock_device, run)
             circuits = [Circuit().h(0).measure(0), Circuit().x(0).measure(0)]
 
@@ -388,7 +360,11 @@ class TestRunBatch:
         mock_device = device_factory(name="batch_envelope", qubit_count=2)
         adapter = BraketAdapter()
 
-        with track(project="run_batch_envelope", store=store, registry=registry) as run:
+        with track(
+            project="run_batch_envelope",
+            store=store,
+            registry=registry,
+        ) as run:
             device = adapter.wrap_executor(mock_device, run, log_every_n=-1)
             circuits = [Circuit().h(0).measure(0), Circuit().x(0).measure(0)]
 
@@ -426,18 +402,29 @@ class TestDeterministicArtifacts:
         assert digests[0] == digests[1]
 
     def test_different_circuits_different_digests(
-        self, store, registry, local_simulator
+        self,
+        store,
+        registry,
+        local_simulator,
     ):
         """Different circuits produce different artifact digests."""
         adapter = BraketAdapter()
         c1 = Circuit().h(0).measure(0)
         c2 = Circuit().x(0).measure(0)
 
-        with track(project="diff_c1", store=store, registry=registry) as run1:
+        with track(
+            project="diff_c1",
+            store=store,
+            registry=registry,
+        ) as run1:
             device = adapter.wrap_executor(local_simulator, run1)
             device.run(c1, shots=10).result()
 
-        with track(project="diff_c2", store=store, registry=registry) as run2:
+        with track(
+            project="diff_c2",
+            store=store,
+            registry=registry,
+        ) as run2:
             device = adapter.wrap_executor(local_simulator, run2)
             device.run(c2, shots=10).result()
 

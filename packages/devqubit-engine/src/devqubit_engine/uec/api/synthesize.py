@@ -20,8 +20,10 @@ Synthesized envelopes have limitations:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
+from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
@@ -38,11 +40,6 @@ from devqubit_engine.uec.models.result import (
     ResultSnapshot,
 )
 from devqubit_engine.utils.common import is_manual_run_record
-
-
-if TYPE_CHECKING:
-    from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
-    from devqubit_engine.tracking.record import RunRecord
 
 
 logger = logging.getLogger(__name__)
@@ -347,6 +344,9 @@ def _build_result(
     elif status == "KILLED":
         success = False
         normalized_status = "cancelled"
+    elif status in ("RUNNING", "QUEUED"):
+        success = False
+        normalized_status = "running"
     else:
         success = False
         normalized_status = "failed"

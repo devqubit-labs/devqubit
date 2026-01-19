@@ -10,11 +10,7 @@ import json
 import cirq
 import pytest
 import sympy
-from devqubit_cirq.adapter import (
-    CirqAdapter,
-    _compute_structural_hash,
-    _materialize_circuits,
-)
+from devqubit_cirq.adapter import CirqAdapter, _materialize_circuits
 from devqubit_engine.tracking.run import track
 
 
@@ -405,62 +401,6 @@ class TestMaterializeCircuits:
         circuits2, was_single2 = _materialize_circuits([bell_circuit, ghz_circuit])
         assert was_single2 is False
         assert circuits2 == [bell_circuit, ghz_circuit]
-
-
-class TestCircuitHash:
-    """Tests for circuit structure hashing."""
-
-    def test_deterministic_and_parameter_invariant(self, parameterized_circuit):
-        """Hash is deterministic and parameter-invariant."""
-        circuits, _ = _materialize_circuits(parameterized_circuit)
-        h1 = _compute_structural_hash(circuits)
-        h2 = _compute_structural_hash(circuits)
-        assert h1 == h2
-        assert isinstance(h1, str) and h1.startswith("sha256:")
-
-        # Different parameter symbols should not change hash
-        q0 = cirq.LineQubit(0)
-        a = sympy.Symbol("a")
-        b = sympy.Symbol("b")
-        c1 = cirq.Circuit(cirq.rx(a)(q0), cirq.measure(q0, key="m"))
-        c2 = cirq.Circuit(cirq.rx(b)(q0), cirq.measure(q0, key="m"))
-        assert _compute_structural_hash([c1]) == _compute_structural_hash([c2])
-
-    @pytest.mark.parametrize(
-        "variant_builder",
-        [
-            # different gate type
-            lambda q0, q1: cirq.Circuit(
-                cirq.X(q0),
-                cirq.CNOT(q0, q1),
-                cirq.measure(q0, q1, key="m"),
-            ),
-            # different measurement key
-            lambda q0, q1: cirq.Circuit(
-                cirq.H(q0),
-                cirq.CNOT(q0, q1),
-                cirq.measure(q0, q1, key="other"),
-            ),
-            # extra operation
-            lambda q0, q1: cirq.Circuit(
-                cirq.H(q0),
-                cirq.CNOT(q0, q1),
-                cirq.Z(q1),
-                cirq.measure(q0, q1, key="m"),
-            ),
-        ],
-    )
-    def test_sensitive_to_structure(self, variant_builder):
-        """Hash changes when structure changes."""
-        q0, q1 = cirq.LineQubit.range(2)
-        base = cirq.Circuit(
-            cirq.H(q0),
-            cirq.CNOT(q0, q1),
-            cirq.measure(q0, q1, key="m"),
-        )
-        variant = variant_builder(q0, q1)
-
-        assert _compute_structural_hash([base]) != _compute_structural_hash([variant])
 
 
 class TestBackendTypeCompliance:

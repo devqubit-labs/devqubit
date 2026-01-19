@@ -26,7 +26,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from devqubit_engine.uec.api.synthesize import synthesize_envelope
-from devqubit_engine.uec.errors import MissingEnvelopeError
+from devqubit_engine.uec.errors import EnvelopeValidationError, MissingEnvelopeError
 from devqubit_engine.utils.common import is_manual_run_record
 
 
@@ -40,11 +40,12 @@ logger = logging.getLogger(__name__)
 
 
 def load_envelope(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
+    record: RunRecord,
+    store: ObjectStoreProtocol,
     *,
     include_invalid: bool = False,
-) -> "ExecutionEnvelope | None":
+    raise_on_error: bool = False,
+) -> ExecutionEnvelope | None:
     """
     Load ExecutionEnvelope from stored artifact.
 
@@ -60,11 +61,20 @@ def load_envelope(
         Object store for artifact retrieval.
     include_invalid : bool, default=False
         If True, also return invalid envelopes (kind contains "invalid").
+    raise_on_error : bool, default=False
+        If True, raise EnvelopeValidationError when envelope artifact
+        exists but cannot be parsed. If False, return None on parse error.
 
     Returns
     -------
     ExecutionEnvelope or None
         Loaded envelope if found, None otherwise.
+
+    Raises
+    ------
+    EnvelopeValidationError
+        If ``raise_on_error=True`` and envelope artifact exists but
+        cannot be parsed.
 
     Notes
     -----
@@ -100,10 +110,15 @@ def load_envelope(
     try:
         envelope_data = load_artifact_json(target_artifact, store)
         if not isinstance(envelope_data, dict):
+            error_msg = "Envelope artifact is not a dict"
             logger.warning(
-                "Envelope artifact is not a dict for run %s",
+                "%s for run %s",
+                error_msg,
                 record.run_id,
             )
+            if raise_on_error:
+                adapter = record.record.get("adapter", "unknown")
+                raise EnvelopeValidationError(str(adapter), [error_msg])
             return None
 
         envelope = ExecutionEnvelope.from_dict(envelope_data)
@@ -114,17 +129,23 @@ def load_envelope(
         )
         return envelope
 
+    except EnvelopeValidationError:
+        # Re-raise validation errors
+        raise
     except Exception as e:
         logger.warning("Failed to parse envelope for run %s: %s", record.run_id, e)
+        if raise_on_error:
+            adapter = record.record.get("adapter", "unknown")
+            raise EnvelopeValidationError(str(adapter), [str(e)]) from e
         return None
 
 
 def resolve_envelope(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
+    record: RunRecord,
+    store: ObjectStoreProtocol,
     *,
     include_invalid: bool = False,
-) -> "ExecutionEnvelope":
+) -> ExecutionEnvelope:
     """
     Resolve ExecutionEnvelope for a run (UEC-first with strict contract).
 
@@ -150,6 +171,8 @@ def resolve_envelope(
     ------
     MissingEnvelopeError
         If adapter run is missing envelope (adapter integration error).
+    EnvelopeValidationError
+        If adapter run has invalid/unparseable envelope (adapter bug).
 
     Notes
     -----
@@ -165,13 +188,20 @@ def resolve_envelope(
     >>> if envelope.metadata.get("synthesized_from_run"):
     ...     print("This is a synthesized envelope from manual run")
     """
-    envelope = load_envelope(record, store, include_invalid=include_invalid)
+    is_manual = is_manual_run_record(record.record)
+    adapter = record.record.get("adapter", "manual")
+
+    # For adapter runs, raise on parse errors (integration bug)
+    # For manual runs, silently return None on parse errors (fallback to synthesis)
+    envelope = load_envelope(
+        record,
+        store,
+        include_invalid=include_invalid,
+        raise_on_error=not is_manual,
+    )
 
     if envelope is not None:
         return envelope
-
-    is_manual = is_manual_run_record(record.record)
-    adapter = record.record.get("adapter", "manual")
 
     if not is_manual:
         raise MissingEnvelopeError(record.run_id, str(adapter))

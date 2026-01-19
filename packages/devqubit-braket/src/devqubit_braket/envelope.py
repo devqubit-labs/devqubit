@@ -98,11 +98,12 @@ def serialize_and_log_circuits(
     tracker: Run,
     circuits: list[Any],
     device_name: str,
-) -> list[ArtifactRef]:
+) -> list[ProgramArtifact]:
     """
     Serialize circuits and log as artifacts.
 
     Logs both JAQCD and OpenQASM formats for comprehensive coverage.
+    Returns ProgramArtifacts (not just refs) for proper UEC compliance.
 
     Parameters
     ----------
@@ -115,16 +116,18 @@ def serialize_and_log_circuits(
 
     Returns
     -------
-    list of ArtifactRef
-        References to logged circuit artifacts.
+    list of ProgramArtifact
+        Program artifacts for both JAQCD and OpenQASM formats.
     """
-    artifact_refs: list[ArtifactRef] = []
+    artifacts: list[ProgramArtifact] = []
     meta = {
         "backend_name": device_name,
         "braket_version": braket_version(),
     }
 
     for i, circuit in enumerate(circuits):
+        circuit_name = getattr(circuit, "name", None) or f"circuit_{i}"
+
         # Serialize JAQCD (native format)
         try:
             jaqcd_data = _serializer.serialize(circuit, CircuitFormat.JAQCD, index=i)
@@ -136,54 +139,82 @@ def serialize_and_log_circuits(
                 meta={**meta, "index": i},
             )
             if ref:
-                artifact_refs.append(ref)
+                artifacts.append(
+                    ProgramArtifact(
+                        ref=ref,
+                        role=ProgramRole.LOGICAL,
+                        format="jaqcd",
+                        name=circuit_name,
+                        index=i,
+                    )
+                )
         except Exception as e:
             logger.debug("Failed to serialize circuit %d to JAQCD: %s", i, e)
 
         # Serialize OpenQASM (canonical format, better for diffing)
         try:
             qasm_data = serialize_openqasm(circuit, index=i)
-            tracker.log_bytes(
+            ref = tracker.log_bytes(
                 kind="braket.ir.openqasm",
                 data=qasm_data.as_bytes(),
                 media_type="text/x-qasm; charset=utf-8",
                 role="program",
                 meta={**meta, "index": i, "format": "openqasm3"},
             )
+            if ref:
+                artifacts.append(
+                    ProgramArtifact(
+                        ref=ref,
+                        role=ProgramRole.LOGICAL,
+                        format="openqasm3",
+                        name=f"{circuit_name}_qasm",
+                        index=i,
+                    )
+                )
         except Exception as e:
             logger.debug("Failed to serialize circuit %d to OpenQASM: %s", i, e)
 
     # Log circuit diagrams (human-readable)
     try:
         diagram_text = circuits_to_text(circuits)
-        tracker.log_bytes(
+        ref = tracker.log_bytes(
             kind="braket.circuits.diagram",
             data=diagram_text.encode("utf-8"),
             media_type="text/plain; charset=utf-8",
             role="program",
             meta={"num_circuits": len(circuits)},
         )
+        if ref:
+            artifacts.append(
+                ProgramArtifact(
+                    ref=ref,
+                    role=ProgramRole.LOGICAL,
+                    format="diagram",
+                    name="circuits_diagram",
+                    index=0,
+                )
+            )
     except Exception as e:
         logger.debug("Failed to generate circuit diagrams: %s", e)
 
-    return artifact_refs
+    return artifacts
 
 
 def create_program_snapshot(
     circuits: list[Any],
-    artifact_refs: list[ArtifactRef],
+    artifacts: list[ProgramArtifact],
     structural_hash: str | None,
     parametric_hash: str | None = None,
 ) -> ProgramSnapshot:
     """
-    Create a ProgramSnapshot from circuits and their artifact refs.
+    Create a ProgramSnapshot from circuits and their artifacts.
 
     Parameters
     ----------
     circuits : list
         List of Braket circuits.
-    artifact_refs : list of ArtifactRef
-        References to logged circuit artifacts.
+    artifacts : list of ProgramArtifact
+        Program artifacts (JAQCD, OpenQASM, diagrams).
     structural_hash : str or None
         Structural hash (ignores parameter values).
     parametric_hash : str or None
@@ -194,28 +225,12 @@ def create_program_snapshot(
     ProgramSnapshot
         Program snapshot with logical artifacts and hashes.
     """
-    logical_artifacts: list[ProgramArtifact] = []
-
-    for i, ref in enumerate(artifact_refs):
-        circuit_name = None
-        if i < len(circuits):
-            circuit_name = getattr(circuits[i], "name", None)
-
-        logical_artifacts.append(
-            ProgramArtifact(
-                ref=ref,
-                role=ProgramRole.LOGICAL,
-                format="jaqcd",
-                name=circuit_name or f"circuit_{i}",
-                index=i,
-            )
-        )
-
     # If parametric_hash not provided, use structural_hash
+    # UEC Contract: for circuits without params, parametric == structural
     effective_parametric_hash = parametric_hash or structural_hash
 
     return ProgramSnapshot(
-        logical=logical_artifacts,
+        logical=artifacts,
         physical=[],  # Braket doesn't expose transpiled circuits
         structural_hash=structural_hash,
         parametric_hash=effective_parametric_hash,
@@ -241,7 +256,7 @@ def create_execution_snapshot(
     shots : int or None
         Number of shots (None means provider default).
     task_ids : list of str
-        Task identifiers.
+        Task identifiers (Braket-specific, not job_ids).
     submitted_at : str
         ISO 8601 submission timestamp.
     execution_index : int
@@ -257,7 +272,7 @@ def create_execution_snapshot(
     return ExecutionSnapshot(
         submitted_at=submitted_at,
         shots=shots,
-        job_ids=task_ids,
+        task_ids=task_ids,
         execution_count=execution_index,
         transpilation=TranspilationInfo(
             mode=TranspilationMode.MANAGED,
@@ -443,8 +458,8 @@ def create_envelope(
         "calibration_summary": device_snapshot.get_calibration_summary(),
     }
 
-    # Log circuits and get artifact refs
-    artifact_refs = serialize_and_log_circuits(
+    # Log circuits and get artifacts
+    artifacts = serialize_and_log_circuits(
         tracker=tracker,
         circuits=circuits,
         device_name=device_name,
@@ -453,7 +468,7 @@ def create_envelope(
     # Create program snapshot
     program_snapshot = create_program_snapshot(
         circuits=circuits,
-        artifact_refs=artifact_refs,
+        artifacts=artifacts,
         structural_hash=structural_hash,
         parametric_hash=parametric_hash,
     )

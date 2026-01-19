@@ -182,66 +182,133 @@ class TestSDKDetection:
 class TestCircuitHashing:
     """Test circuit hashing for reproducibility tracking."""
 
-    def test_structural_hash_ignores_param_values(self):
-        """
-        Structural hash should be the same for circuits with
-        different parameter values but same structure.
-        """
-        ops_v1 = [
-            {"gate": "h", "qubits": [0]},
-            {"gate": "rz", "qubits": [0], "params": {"theta": 0.5}},
-            {"gate": "cx", "qubits": [0, 1]},
+    def test_cx_direction_matters(self):
+        """CX(0,1) != CX(1,0)."""
+        h01 = hash_structural([{"gate": "cx", "qubits": [0, 1]}], 2, 0)
+        h10 = hash_structural([{"gate": "cx", "qubits": [1, 0]}], 2, 0)
+        assert h01 != h10
+
+    def test_negative_zero_normalized(self):
+        """-0.0 == 0.0."""
+        h_pos = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": 0.0}}],
+            1,
+            0,
+        )
+        h_neg = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": -0.0}}],
+            1,
+            0,
+        )
+        assert h_pos == h_neg
+
+    def test_nan_consistent(self):
+        """NaN hashes consistently."""
+        nan = float("nan")
+        h1 = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": nan}}],
+            1,
+            0,
+        )
+        h2 = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": nan}}],
+            1,
+            0,
+        )
+        assert h1 == h2
+
+    def test_inf_values_differ(self):
+        """+inf != -inf."""
+        h_pos = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": float("inf")}}],
+            1,
+            0,
+        )
+        h_neg = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": float("-inf")}}],
+            1,
+            0,
+        )
+        assert h_pos != h_neg
+
+    def test_no_params_hashes_equal(self):
+        """structural == parametric when no params."""
+        ops = [{"gate": "h", "qubits": [0]}, {"gate": "cx", "qubits": [0, 1]}]
+        s, p = hash_circuit_pair(ops, 2, 0)
+        assert s == p
+
+    def test_num_qubits_matters(self):
+        """Same gates, different num_qubits => different hash."""
+        ops = [{"gate": "h", "qubits": [0]}]
+        h2 = hash_structural(ops, 2, 0)
+        h3 = hash_structural(ops, 3, 0)
+        assert h2 != h3
+
+    def test_num_clbits_matters(self):
+        """Same ops, different num_clbits => different hash."""
+        ops = [{"gate": "measure", "qubits": [0], "clbits": [0]}]
+        h1 = hash_structural(ops, 1, 1)
+        h2 = hash_structural(ops, 1, 2)
+        assert h1 != h2
+
+    def test_condition_details_matter(self):
+        """Different condition values => different hash."""
+        ops1 = [
+            {
+                "gate": "x",
+                "qubits": [0],
+                "condition": {"register": "c", "value": 1},
+            }
         ]
-        ops_v2 = [
-            {"gate": "h", "qubits": [0]},
-            {"gate": "rz", "qubits": [0], "params": {"theta": 1.57}},  # different value
-            {"gate": "cx", "qubits": [0, 1]},
+        ops2 = [
+            {
+                "gate": "x",
+                "qubits": [0],
+                "condition": {"register": "c", "value": 2},
+            }
         ]
+        assert hash_structural(ops1, 1, 1) != hash_structural(ops2, 1, 1)
 
-        hash_v1 = hash_structural(ops_v1)
-        hash_v2 = hash_structural(ops_v2)
+    def test_param_values_affect_parametric(self):
+        """Different param values => different parametric hash."""
+        h1 = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": 0.5}}],
+            1,
+            0,
+        )
+        h2 = hash_parametric(
+            [{"gate": "rz", "qubits": [0], "params": {"t": 1.5}}],
+            1,
+            0,
+        )
+        assert h1 != h2
 
-        assert hash_v1 == hash_v2
-        assert hash_v1.startswith("sha256:")
+    def test_param_values_ignored_structural(self):
+        """Param values ignored in structural hash."""
+        h1 = hash_structural(
+            [{"gate": "rz", "qubits": [0], "params": {"t": 0.5}}],
+            1,
+            0,
+        )
+        h2 = hash_structural(
+            [{"gate": "rz", "qubits": [0], "params": {"t": 1.5}}],
+            1,
+            0,
+        )
+        assert h1 == h2
 
-    def test_parametric_hash_differs_with_param_values(self):
-        """
-        Parametric hash should differ when parameter values differ.
-        """
-        ops = [
-            {"gate": "h", "qubits": [0]},
-            {"gate": "rz", "qubits": [0], "params": {"theta": None}},
-        ]
+    def test_hash_format(self):
+        """Hash format is sha256:<64 hex>."""
+        h = hash_structural([{"gate": "h", "qubits": [0]}], 1, 0)
+        assert h.startswith("sha256:")
+        assert len(h) == 7 + 64
 
-        hash_v1 = hash_parametric(ops, {"theta": 0.5})
-        hash_v2 = hash_parametric(ops, {"theta": 1.57})
-
-        assert hash_v1 != hash_v2
-
-    def test_hash_circuit_pair_convenience(self):
-        """hash_circuit_pair returns both hashes."""
-        ops = [
-            {"gate": "h", "qubits": [0]},
-            {"gate": "cx", "qubits": [0, 1]},
-        ]
-
-        structural, parametric = hash_circuit_pair(ops)
-
-        assert structural.startswith("sha256:")
-        assert parametric.startswith("sha256:")
-
-    def test_hash_deterministic(self):
-        """Same input always produces same hash."""
-        ops = [
-            {"gate": "h", "qubits": [0]},
-            {"gate": "cx", "qubits": [0, 1]},
-            {"gate": "measure", "qubits": [0, 1], "clbits": [0, 1]},
-        ]
-
-        # Multiple calls
-        hashes = [hash_structural(ops) for _ in range(5)]
-
-        assert len(set(hashes)) == 1  # All identical
+    def test_deterministic(self):
+        """Same input => same hash."""
+        ops = [{"gate": "h", "qubits": [0]}, {"gate": "cx", "qubits": [0, 1]}]
+        h1 = hash_structural(ops, 2, 0)
+        h2 = hash_structural(ops, 2, 0)
+        assert h1 == h2
 
 
 class TestExtractFromRefs:

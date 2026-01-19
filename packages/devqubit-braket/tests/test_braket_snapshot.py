@@ -13,7 +13,7 @@ class TestSnapshotWithRealDevice:
         """Creates snapshot from real LocalSimulator."""
         snap = create_device_snapshot(local_simulator)
 
-        assert snap.provider == "aws_braket"
+        assert snap.provider == "local"
         assert snap.backend_name is not None
         assert snap.backend_type == "simulator"  # Schema-valid value
         assert snap.captured_at is not None
@@ -31,7 +31,7 @@ class TestSnapshotWithRealDevice:
         d = snap.to_dict()
 
         assert d["schema"] == "devqubit.device_snapshot/1.0"
-        assert d["provider"] == "aws_braket"
+        assert d["provider"] == "local"
         assert d["backend_type"] == "simulator"
         assert "sdk_versions" in d
         assert isinstance(d["sdk_versions"], dict)

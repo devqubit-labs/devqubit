@@ -6,6 +6,15 @@ Envelope and snapshot utilities for Qiskit adapter.
 
 This module provides functions for creating UEC snapshots and
 managing ExecutionEnvelope lifecycle.
+
+UEC Compliance
+--------------
+All snapshots follow devqubit Uniform Execution Contract:
+
+- DeviceSnapshot: Physical provider (not SDK), calibration state
+- ProgramSnapshot: Logical/physical artifacts with 4 hashes
+- ExecutionSnapshot: Job IDs, transpilation info
+- ResultSnapshot: Normalized counts with bit order metadata
 """
 
 from __future__ import annotations
@@ -93,13 +102,17 @@ def create_program_snapshot(
     -------
     ProgramSnapshot
         Program snapshot with artifact references and hashes.
+
+    Notes
+    -----
+    For the base Qiskit adapter (no transpilation), executed hashes
+    equal logical hashes since circuits are executed as-is.
     """
     return ProgramSnapshot(
         logical=program_artifacts,
-        physical=[],  # Base Qiskit adapter doesn't transpile
+        physical=[],
         structural_hash=structural_hash,
         parametric_hash=parametric_hash,
-        # For base Qiskit without transpilation, executed hashes equal logical
         executed_structural_hash=structural_hash,
         executed_parametric_hash=parametric_hash,
         num_circuits=num_circuits,
@@ -133,6 +146,11 @@ def create_execution_snapshot(
     -------
     ExecutionSnapshot
         Execution metadata snapshot.
+
+    Notes
+    -----
+    The base Qiskit adapter uses MANUAL transpilation mode since
+    users are expected to transpile circuits before submission.
     """
     return ExecutionSnapshot(
         submitted_at=submitted_at,
@@ -172,8 +190,12 @@ def create_result_snapshot(
     -------
     ResultSnapshot
         Structured result snapshot with items[].
+
+    Notes
+    -----
+    Qiskit uses little-endian bit order (cbit[0] on right), which
+    is the UEC canonical format. No transformation is needed.
     """
-    # Handle None result
     if result is None:
         return ResultSnapshot(
             success=False,
@@ -183,7 +205,6 @@ def create_result_snapshot(
             metadata={"backend_name": backend_name},
         )
 
-    # Serialize full result as artifact
     raw_result_ref: ArtifactRef | None = None
     try:
         if hasattr(result, "to_dict") and callable(result.to_dict):
@@ -200,11 +221,9 @@ def create_result_snapshot(
     except Exception as e:
         logger.debug("Failed to serialize result to dict: %s", e)
 
-    # Extract measurement counts
     counts_data = normalize_result_counts(result)
     experiments = counts_data.get("experiments", [])
 
-    # Log counts as separate artifact
     if experiments:
         tracker.log_json(
             name="counts",
@@ -213,23 +232,19 @@ def create_result_snapshot(
             kind="result.counts.json",
         )
 
-    # Qiskit counts format metadata
-    # Qiskit uses little-endian (cbit[0] on right) = UEC canonical
     counts_format = CountsFormat(
         source_sdk="qiskit",
         source_key_format="qiskit_little_endian",
-        bit_order="cbit0_right",  # Qiskit native = UEC canonical
-        transformed=False,  # No transformation needed
+        bit_order="cbit0_right",
+        transformed=False,
     )
 
-    # Build ResultItem list
     items: list[ResultItem] = []
     for exp in experiments:
         counts = exp.get("counts", {})
         shots = exp.get("shots")
         item_index = exp.get("index", 0)
 
-        # Ensure counts keys are strings and values are ints
         normalized_counts = {str(k): int(v) for k, v in counts.items()}
 
         items.append(
@@ -244,7 +259,6 @@ def create_result_snapshot(
             )
         )
 
-    # Extract metadata for status
     meta = extract_result_metadata(result)
     success = meta.get("success", True)
     status = "completed" if success else "failed"
@@ -318,14 +332,11 @@ def finalize_envelope_with_result(
     if result_snapshot is None:
         logger.warning("Finalizing envelope with None result_snapshot")
 
-    # Add result to envelope
     envelope.result = result_snapshot
 
-    # Set completion time
     if envelope.execution is not None:
         envelope.execution.completed_at = utc_now_iso()
 
-    # Validate and log envelope using tracker's canonical method
     tracker.log_envelope(envelope=envelope)
 
 
@@ -358,18 +369,14 @@ def create_minimal_device_snapshot(
     name_lower = backend_name.lower()
     type_lower = type(backend).__name__.lower()
 
-    # Determine backend type - default to simulator (safer fallback)
-    # Schema allows: "hardware", "simulator", "emulator"
     backend_type = "simulator"
     if any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
         backend_type = "hardware"
     elif any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
         backend_type = "simulator"
 
-    # Detect physical provider (not SDK)
     provider = detect_physical_provider(backend)
 
-    # Try to get num_qubits
     num_qubits = None
     try:
         num_qubits = backend.num_qubits
@@ -418,14 +425,12 @@ def log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
     captured_at = utc_now_iso()
 
     try:
-        # Create snapshot with tracker for raw_properties logging
         snapshot = create_device_snapshot(
             backend,
             refresh_properties=True,
             tracker=tracker,
         )
     except Exception as e:
-        # Generate minimal snapshot on failure instead of propagating
         logger.warning(
             "Full device snapshot failed for %s: %s. Using minimal snapshot.",
             backend_name,
@@ -435,7 +440,6 @@ def log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
             backend, captured_at, error_msg=str(e)
         )
 
-    # Update tracker record with summary (for querying and fingerprinting)
     tracker.record["device_snapshot"] = {
         "sdk": "qiskit",
         "backend_name": backend_name,

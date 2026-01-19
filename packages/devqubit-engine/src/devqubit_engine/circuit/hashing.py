@@ -2,292 +2,353 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Circuit hashing utilities.
+Canonical circuit hashing for cross-SDK consistency.
 
 This module provides canonical hashing functions for quantum circuits.
-All adapters should use these functions to ensure consistent hash computation
-across different SDKs.
+All adapters must use these functions to ensure identical circuits
+produce identical hashes regardless of SDK.
 
 Hash Types
 ----------
-- **structural_hash**: Hash of circuit structure (gates, qubits, controls).
-  Ignores parameter values. Same hash means same circuit template.
+- **structural_hash**: Hash of circuit structure (gates, qubits, conditions).
+  Ignores parameter values. Same hash = same circuit template.
 
 - **parametric_hash**: Hash of structure + bound parameter values.
-  Same hash means identical circuit for this specific execution.
+  Same hash = identical circuit execution.
 
-Usage
------
-Adapters map their SDK-specific circuit representations to a canonical
-operation stream, then use these functions:
+Contract
+--------
+For circuits without parameters: ``parametric_hash == structural_hash``
 
->>> from devqubit_engine.circuit.hashing import hash_structural, hash_parametric
->>>
->>> ops = [
-...     {"gate": "h", "qubits": [0]},
-...     {"gate": "cx", "qubits": [0, 1]},
-...     {"gate": "rz", "qubits": [0], "params": ["theta"]},
-... ]
->>> structural = hash_structural(ops)
->>>
->>> bound_params = {"theta": 1.5707963267948966}
->>> parametric = hash_parametric(ops, bound_params)
+Encoding
+--------
+- Floats: IEEE-754 binary64 big-endian hex
+- Negative zero: normalized to positive zero
+- NaN: encoded as "nan"
+- Infinity: encoded as "inf" or "-inf"
+- Unbound params: encoded as "__unbound__"
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
+import struct
 from typing import Any
 
-from devqubit_engine.utils.serialization import to_jsonable
 
-
-def _normalize_float(value: float, precision: int = 10) -> str:
+def _float_to_hex(value: float) -> str:
     """
-    Normalize float to deterministic string representation.
+    Convert float to IEEE-754 binary64 big-endian hex representation.
+
+    This encoding is deterministic across platforms and languages,
+    ensuring consistent hashing regardless of runtime environment.
 
     Parameters
     ----------
     value : float
-        Float value to normalize.
-    precision : int, default=10
-        Number of significant digits.
+        Float value to encode.
 
     Returns
     -------
     str
-        Normalized string representation.
+        Deterministic string representation:
+        - Normal floats: 16-character hex string
+        - NaN: "nan"
+        - +inf: "inf"
+        - -inf: "-inf"
+        - -0.0: same as 0.0 (normalized)
     """
+    if math.isnan(value):
+        return "nan"
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
     if value == 0.0:
-        return "0"
-    if abs(value) < 1e-15:
-        return "0"
-    return f"{value:.{precision}g}"
+        value = 0.0  # Normalize -0.0 to 0.0
+    return struct.pack(">d", value).hex()
 
 
-def _normalize_operation(
-    op: dict[str, Any],
-    include_params: bool = False,
-) -> dict:
+def _encode_value(value: Any) -> str:
+    """
+    Encode parameter value deterministically.
+
+    Parameters
+    ----------
+    value : Any
+        Parameter value (float, int, str, or None).
+
+    Returns
+    -------
+    str
+        Deterministic string representation.
+    """
+    if value is None:
+        return "__unbound__"
+    if isinstance(value, float):
+        return _float_to_hex(value)
+    if isinstance(value, int):
+        return _float_to_hex(float(value))
+    return str(value)
+
+
+def _normalize_op(op: dict[str, Any], with_values: bool) -> dict[str, Any]:
     """
     Normalize an operation dict for hashing.
+
+    Creates a minimal, deterministic representation of the operation
+    suitable for JSON serialization and hashing.
 
     Parameters
     ----------
     op : dict
-        Operation dictionary with keys like 'gate', 'qubits', 'params', 'controls'.
-    include_params : bool, default=False
-        If True, include parameter values. If False, only include param names.
+        Operation dictionary with keys:
+        - gate : str - Gate name
+        - qubits : list of int - Qubit indices (order preserved!)
+        - clbits : list of int, optional - Classical bit indices
+        - params : dict or list, optional - Parameters
+        - condition : dict or str, optional - Classical condition
+
+    with_values : bool
+        If True, include parameter values (for parametric hash).
+        If False, only include parameter arity (for structural hash).
 
     Returns
     -------
     dict
-        Normalized operation suitable for hashing.
+        Normalized operation with keys:
+        - g : str - Gate name (lowercase)
+        - q : list of int - Qubit indices
+        - c : list of int, optional - Classical bit indices
+        - p : dict or list, optional - Parameter values (if with_values)
+        - pa : int, optional - Parameter arity (if not with_values)
+        - cond : dict or str, optional - Condition
     """
-    normalized: dict[str, Any] = {
-        "gate": str(op.get("gate", "unknown")).lower(),
-        "qubits": sorted(int(q) for q in op.get("qubits", [])),
+    out: dict[str, Any] = {
+        "g": str(op.get("gate", "?")).lower(),
+        "q": [int(q) for q in op.get("qubits", [])],  # Order preserved!
     }
 
-    # Controls (for controlled gates)
-    if op.get("controls"):
-        normalized["controls"] = sorted(int(c) for c in op["controls"])
-
-    # Classical bits (for measurements)
+    # Classical bits - preserve order for measurement mapping
     if op.get("clbits"):
-        normalized["clbits"] = sorted(int(c) for c in op["clbits"])
+        out["c"] = [int(c) for c in op["clbits"]]
 
-    # Parameters - structural hash only includes names, parametric includes values
-    if op.get("params"):
-        params = op["params"]
-        if include_params:
-            # Include actual values (for parametric hash)
+    # Parameters
+    params = op.get("params")
+    if params:
+        if with_values:
+            # Parametric hash: include actual values
             if isinstance(params, dict):
-                normalized["params"] = {
-                    str(k): (
-                        _normalize_float(float(v))
-                        if isinstance(v, (int, float))
-                        else str(v)
-                    )
-                    for k, v in sorted(params.items())
-                }
-            elif isinstance(params, (list, tuple)):
-                normalized["params"] = [
-                    (
-                        _normalize_float(float(v))
-                        if isinstance(v, (int, float))
-                        else str(v)
-                    )
-                    for v in params
-                ]
+                out["p"] = {str(k): _encode_value(v) for k, v in sorted(params.items())}
+            else:
+                out["p"] = [_encode_value(v) for v in params]
         else:
-            # Only param names/positions (for structural hash)
-            if isinstance(params, dict):
-                normalized["param_names"] = sorted(str(k) for k in params.keys())
-            elif isinstance(params, (list, tuple)):
-                normalized["param_count"] = len(params)
+            # Structural hash: only record arity
+            out["pa"] = len(params) if isinstance(params, (dict, list, tuple)) else 1
 
-    # Condition (for conditional gates)
-    if op.get("condition"):
-        normalized["condition"] = to_jsonable(op["condition"])
+    # Classical condition
+    cond = op.get("condition")
+    if cond:
+        if isinstance(cond, dict):
+            out["cond"] = {str(k): v for k, v in sorted(cond.items())}
+        else:
+            out["cond"] = str(cond)
 
-    return normalized
+    return out
 
 
-def hash_structural(op_stream: list[dict[str, Any]]) -> str:
+def _compute_hash(
+    ops: list[dict[str, Any]],
+    with_values: bool,
+    num_qubits: int,
+    num_clbits: int,
+) -> str:
+    """
+    Compute hash from normalized operations.
+
+    Parameters
+    ----------
+    ops : list of dict
+        Operation stream.
+    with_values : bool
+        Include parameter values.
+    num_qubits : int
+        Total qubit count.
+    num_clbits : int
+        Total classical bit count.
+
+    Returns
+    -------
+    str
+        Hash in format "sha256:<hex>".
+    """
+    normalized = [_normalize_op(op, with_values) for op in ops]
+    payload = {
+        "nq": num_qubits,
+        "nc": num_clbits,
+        "ops": normalized,
+    }
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return f"sha256:{hashlib.sha256(canonical.encode()).hexdigest()}"
+
+
+def hash_structural(
+    op_stream: list[dict[str, Any]],
+    num_qubits: int,
+    num_clbits: int,
+) -> str:
     """
     Compute structural hash of circuit operation stream.
 
-    The structural hash captures the circuit template - gate types, qubit
-    connectivity, and parameter placeholders - but NOT parameter values.
-    Two circuits with the same structure but different parameter values
-    will have the same structural hash.
+    The structural hash captures the circuit template - gate types,
+    qubit connectivity, parameter arity, and conditions - but NOT
+    parameter values. Two circuits with the same structure but
+    different parameter values will have the same structural hash.
 
     Parameters
     ----------
     op_stream : list of dict
         List of operation dictionaries. Each operation should have:
-        - gate: Gate name (str)
-        - qubits: List of qubit indices
-        - params: Optional parameter names or values
-        - controls: Optional control qubit indices
-        - clbits: Optional classical bit indices
+
+        - gate : str
+            Gate name (case insensitive).
+        - qubits : list of int
+            Qubit indices (order preserved for directional gates).
+        - clbits : list of int, optional
+            Classical bit indices.
+        - params : dict or list, optional
+            Parameter placeholders or values.
+        - condition : dict or str, optional
+            Classical condition.
+
+    num_qubits : int
+        Total number of qubits in circuit. Required to prevent
+        collisions between circuits with idle qubits.
+    num_clbits : int
+        Total number of classical bits in circuit.
 
     Returns
     -------
     str
-        SHA-256 hash of normalized circuit structure.
+        SHA-256 hash in format "sha256:<hex>".
 
-    Examples
+    See Also
     --------
-    >>> ops = [
-    ...     {"gate": "h", "qubits": [0]},
-    ...     {"gate": "cx", "qubits": [0, 1]},
-    ...     {"gate": "rz", "qubits": [0], "params": {"theta": 0.5}},
-    ... ]
-    >>> hash_structural(ops)
-    'sha256:abc123...'
-
-    Notes
-    -----
-    Adapters should convert their SDK-specific circuit representations
-    to this canonical operation stream format before hashing.
+    hash_parametric : Hash including parameter values.
+    hash_circuit_pair : Compute both hashes at once.
     """
-    normalized_ops = [
-        _normalize_operation(op, include_params=False) for op in op_stream
-    ]
-
-    # Create deterministic JSON representation
-    canonical = json.dumps(
-        {"version": "1.0", "ops": normalized_ops},
-        sort_keys=True,
-        separators=(",", ":"),
+    return _compute_hash(
+        op_stream,
+        with_values=False,
+        num_qubits=num_qubits,
+        num_clbits=num_clbits,
     )
-
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
 
 
 def hash_parametric(
     op_stream: list[dict[str, Any]],
-    bound_params: dict[str, Any] | None = None,
+    num_qubits: int,
+    num_clbits: int,
 ) -> str:
     """
     Compute parametric hash of circuit with bound parameters.
 
-    The parametric hash captures both the circuit structure AND the bound
-    parameter values. Two circuits with the same structure but different
-    parameter values will have different parametric hashes.
+    The parametric hash captures both the circuit structure AND the
+    bound parameter values. Two circuits with the same structure but
+    different parameter values will have different parametric hashes.
 
     Parameters
     ----------
     op_stream : list of dict
-        List of operation dictionaries (same format as hash_structural).
-    bound_params : dict, optional
-        Dictionary mapping parameter names to values. If provided, these
-        values are merged with inline param values from op_stream.
+        List of operation dictionaries with bound parameter values.
+    num_qubits : int
+        Total number of qubits in circuit.
+    num_clbits : int
+        Total number of classical bits in circuit.
 
     Returns
     -------
     str
-        SHA-256 hash of normalized circuit with bound parameters.
+        SHA-256 hash in format "sha256:<hex>".
 
-    Examples
+    See Also
     --------
-    >>> ops = [
-    ...     {"gate": "h", "qubits": [0]},
-    ...     {"gate": "rz", "qubits": [0], "params": {"theta": None}},
-    ... ]
-    >>> bound = {"theta": 1.5707963267948966}
-    >>> hash_parametric(ops, bound)
-    'sha256:def456...'
-
-    Notes
-    -----
-    If circuit has no parameters, ``parametric_hash == structural_hash``.
-    This is the expected behavior per UEC spec.
+    hash_structural : Hash ignoring parameter values.
+    hash_circuit_pair : Compute both hashes at once.
     """
-    bound_params = bound_params or {}
-
-    # Apply bound params to operations
-    resolved_ops: list[dict[str, Any]] = []
+    # Check if any param has a value
+    has_values = False
     for op in op_stream:
-        resolved_op = dict(op)
-        if op.get("params"):
-            params = op["params"]
+        params = op.get("params")
+        if params:
             if isinstance(params, dict):
-                # Merge bound params
-                resolved_params = {}
-                for k, v in params.items():
-                    if v is None and k in bound_params:
-                        resolved_params[k] = bound_params[k]
-                    else:
-                        resolved_params[k] = v
-                resolved_op["params"] = resolved_params
-        resolved_ops.append(resolved_op)
+                if any(v is not None for v in params.values()):
+                    has_values = True
+                    break
+            elif isinstance(params, (list, tuple)) and params:
+                has_values = True
+                break
 
-    normalized_ops = [
-        _normalize_operation(op, include_params=True) for op in resolved_ops
-    ]
+    # If no values, return structural hash
+    if not has_values:
+        return hash_structural(op_stream, num_qubits, num_clbits)
 
-    # Create deterministic JSON representation
-    canonical = json.dumps(
-        {"version": "1.0", "ops": normalized_ops, "bound": to_jsonable(bound_params)},
-        sort_keys=True,
-        separators=(",", ":"),
+    return _compute_hash(
+        op_stream,
+        with_values=True,
+        num_qubits=num_qubits,
+        num_clbits=num_clbits,
     )
-
-    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
 
 
 def hash_circuit_pair(
     op_stream: list[dict[str, Any]],
-    bound_params: dict[str, Any] | None = None,
+    num_qubits: int,
+    num_clbits: int,
 ) -> tuple[str, str]:
     """
     Compute both structural and parametric hashes in one call.
 
-    Convenience function for adapters that need both hashes.
+    This is the preferred method when both hashes are needed,
+    as adapters typically need both for UEC compliance.
 
     Parameters
     ----------
     op_stream : list of dict
         List of operation dictionaries.
-    bound_params : dict, optional
-        Bound parameter values.
+    num_qubits : int
+        Total number of qubits in circuit.
+    num_clbits : int
+        Total number of classical bits in circuit.
 
     Returns
     -------
-    tuple of (str, str)
-        (structural_hash, parametric_hash)
+    structural_hash : str
+        Structure-only hash (ignores parameter values).
+    parametric_hash : str
+        Hash including bound parameter values.
+
+    See Also
+    --------
+    hash_structural : Compute only structural hash.
+    hash_parametric : Compute only parametric hash.
 
     Examples
     --------
     >>> ops = [{"gate": "rx", "qubits": [0], "params": {"theta": 0.5}}]
-    >>> struct, param = hash_circuit_pair(ops)
+    >>> structural, parametric = hash_circuit_pair(ops, num_qubits=1, num_clbits=0)
+    >>> structural != parametric  # Different because has params
+    True
+
+    >>> ops = [{"gate": "h", "qubits": [0]}]
+    >>> structural, parametric = hash_circuit_pair(ops, num_qubits=1, num_clbits=0)
+    >>> structural == parametric  # Same because no params
+    True
     """
-    structural = hash_structural(op_stream)
-    parametric = hash_parametric(op_stream, bound_params)
+    structural = hash_structural(op_stream, num_qubits, num_clbits)
+    parametric = hash_parametric(op_stream, num_qubits, num_clbits)
     return structural, parametric

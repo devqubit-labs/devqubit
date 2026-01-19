@@ -38,7 +38,7 @@ def detect_physical_provider(primitive: Any) -> str:
     Returns
     -------
     str
-        Physical provider: "ibm_quantum", "fake", or "local".
+        Physical provider: "ibm_quantum", "fake", "aer", or "local".
     """
     backend = get_backend_obj(primitive)
     if backend is None:
@@ -90,8 +90,6 @@ def create_failure_result_snapshot(
     ResultSnapshot
         Failed result snapshot with error details.
     """
-    from devqubit_engine.uec.result import ResultSnapshot
-
     return ResultSnapshot.create_failed(
         exception=exception,
         metadata={
