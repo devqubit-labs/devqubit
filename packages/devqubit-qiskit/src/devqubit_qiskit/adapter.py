@@ -57,8 +57,7 @@ from devqubit_engine.uec.models.result import ResultSnapshot
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_qiskit.circuits import (
-    compute_parametric_hash,
-    compute_structural_hash,
+    compute_circuit_hashes,
     materialize_circuits,
     serialize_and_log_circuits,
 )
@@ -376,8 +375,7 @@ class TrackedBackend:
         exec_count = self._execution_count
 
         # Compute hashes for structure detection and exact match
-        structural_hash = compute_structural_hash(circuit_list)
-        parametric_hash = compute_parametric_hash(circuit_list)
+        structural_hash, parametric_hash = compute_circuit_hashes(circuit_list)
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
         )
