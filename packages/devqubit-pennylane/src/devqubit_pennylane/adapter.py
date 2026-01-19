@@ -44,7 +44,6 @@ Example
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import traceback
 import types
@@ -65,6 +64,12 @@ from devqubit_engine.uec.models.program import (
 from devqubit_engine.uec.models.result import ResultSnapshot
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
+from devqubit_pennylane.circuits import (
+    _get_tapes,
+    _is_tape_like,
+    compute_parametric_hash,
+    compute_structural_hash,
+)
 from devqubit_pennylane.results import build_result_snapshot, extract_result_type
 from devqubit_pennylane.serialization import PennyLaneCircuitSerializer, tapes_to_text
 from devqubit_pennylane.snapshot import (
@@ -82,247 +87,6 @@ from devqubit_pennylane.utils import (
 
 logger = logging.getLogger(__name__)
 _serializer = PennyLaneCircuitSerializer()
-
-
-def _is_tape_like(obj: Any) -> bool:
-    """Check if object has tape-like interface."""
-    return hasattr(obj, "operations") and hasattr(obj, "measurements")
-
-
-def _compute_structural_hash(circuits: Any) -> str | None:
-    """
-    Compute a structure-only hash for PennyLane tapes.
-
-    Parameters
-    ----------
-    circuits : Any
-        A tape-like object or list of tapes.
-
-    Returns
-    -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if not tape-like.
-
-    Notes
-    -----
-    This is the STRUCTURAL hash - captures gate names, wires, parameter arity
-    but NOT parameter values. Use _compute_parametric_hash for full identity.
-    """
-    if circuits is None:
-        return None
-
-    if _is_tape_like(circuits):
-        tape_list = [circuits]
-    elif (
-        isinstance(circuits, (list, tuple))
-        and circuits
-        and all(_is_tape_like(t) for t in circuits)
-    ):
-        tape_list = list(circuits)
-    else:
-        return None
-
-    def _wires_to_tuple(wires: Any) -> tuple[str, ...]:
-        try:
-            return tuple(str(w) for w in list(wires))
-        except Exception:
-            try:
-                return (str(wires),)
-            except Exception:
-                return ("<wires>",)
-
-    def _param_arity(op: Any) -> int:
-        params = getattr(op, "parameters", None)
-        if isinstance(params, (list, tuple)):
-            return len(params)
-        data = getattr(op, "data", None)
-        if isinstance(data, (list, tuple)):
-            return len(data)
-        return 0
-
-    def _op_sig(op: Any) -> str:
-        name = getattr(op, "name", None)
-        op_name = name if isinstance(name, str) and name else type(op).__name__
-        wires = _wires_to_tuple(getattr(op, "wires", ()))
-        arity = _param_arity(op)
-        return f"{op_name}|p{arity}|w{wires}"
-
-    def _meas_sig(m: Any) -> str:
-        mtype = type(m).__name__
-        wires = _wires_to_tuple(getattr(m, "wires", ()))
-        rtype = getattr(m, "return_type", None)
-        rtype_s = str(rtype) if rtype is not None else ""
-        obs = getattr(m, "obs", None)
-        if obs is not None:
-            obs_name = getattr(obs, "name", None)
-            obs_s = (
-                obs_name
-                if isinstance(obs_name, str) and obs_name
-                else type(obs).__name__
-            )
-        else:
-            obs_s = ""
-        return f"{mtype}|rt={rtype_s}|obs={obs_s}|w{wires}"
-
-    tape_signatures: list[str] = []
-
-    for tape in tape_list:
-        try:
-            ops = getattr(tape, "operations", [])
-            meas = getattr(tape, "measurements", [])
-            op_sigs = [_op_sig(op) for op in ops]
-            meas_sigs = [_meas_sig(m) for m in meas]
-            tape_signatures.append(
-                "||".join(op_sigs) + "\n--MEAS--\n" + "||".join(meas_sigs)
-            )
-        except Exception:
-            tape_signatures.append(str(tape)[:500])
-
-    payload = "\n\n".join(tape_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _compute_parametric_hash(circuits: Any) -> str | None:
-    """
-    Compute a parametric hash for PennyLane tapes.
-
-    Unlike structural hash, this includes actual parameter values,
-    making it suitable for identifying identical circuit executions.
-
-    Parameters
-    ----------
-    circuits : Any
-        A tape-like object or list of tapes.
-
-    Returns
-    -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if not tape-like.
-
-    Notes
-    -----
-    Includes:
-    - All structural information (gates, wires, measurement types)
-    - Bound parameter values (rounded to 10 decimal places for stability)
-    - Trainable parameter names if present
-    """
-    if circuits is None:
-        return None
-
-    if _is_tape_like(circuits):
-        tape_list = [circuits]
-    elif (
-        isinstance(circuits, (list, tuple))
-        and circuits
-        and all(_is_tape_like(t) for t in circuits)
-    ):
-        tape_list = list(circuits)
-    else:
-        return None
-
-    def _wires_to_tuple(wires: Any) -> tuple[str, ...]:
-        try:
-            return tuple(str(w) for w in list(wires))
-        except Exception:
-            try:
-                return (str(wires),)
-            except Exception:
-                return ("<wires>",)
-
-    def _format_param(p: Any) -> str:
-        """Format parameter value with stable representation."""
-        try:
-            # Check if it's a trainable parameter (has name)
-            if hasattr(p, "name"):
-                return f"<param:{p.name}>"
-            # Numeric value - round for stability
-            val = float(p)
-            return f"{val:.10f}"
-        except (TypeError, ValueError):
-            return str(p)[:50]
-
-    def _op_sig_with_params(op: Any) -> str:
-        name = getattr(op, "name", None)
-        op_name = name if isinstance(name, str) and name else type(op).__name__
-        wires = _wires_to_tuple(getattr(op, "wires", ()))
-
-        # Get parameter values
-        params = getattr(op, "parameters", None) or getattr(op, "data", None) or []
-        if isinstance(params, (list, tuple)):
-            param_strs = [_format_param(p) for p in params]
-        else:
-            param_strs = []
-
-        return f"{op_name}|params=[{','.join(param_strs)}]|w{wires}"
-
-    def _meas_sig(m: Any) -> str:
-        mtype = type(m).__name__
-        wires = _wires_to_tuple(getattr(m, "wires", ()))
-        rtype = getattr(m, "return_type", None)
-        rtype_s = str(rtype) if rtype is not None else ""
-        obs = getattr(m, "obs", None)
-        if obs is not None:
-            obs_name = getattr(obs, "name", None)
-            obs_s = (
-                obs_name
-                if isinstance(obs_name, str) and obs_name
-                else type(obs).__name__
-            )
-        else:
-            obs_s = ""
-        return f"{mtype}|rt={rtype_s}|obs={obs_s}|w{wires}"
-
-    tape_signatures: list[str] = []
-
-    for tape in tape_list:
-        try:
-            ops = getattr(tape, "operations", [])
-            meas = getattr(tape, "measurements", [])
-
-            # Include trainable params info if available
-            trainable = getattr(tape, "trainable_params", None)
-            trainable_str = ""
-            if trainable:
-                trainable_str = f"\n--TRAINABLE--\n{sorted(trainable)}"
-
-            op_sigs = [_op_sig_with_params(op) for op in ops]
-            meas_sigs = [_meas_sig(m) for m in meas]
-            tape_signatures.append(
-                "||".join(op_sigs)
-                + "\n--MEAS--\n"
-                + "||".join(meas_sigs)
-                + trainable_str
-            )
-        except Exception:
-            tape_signatures.append(str(tape)[:500])
-
-    payload = "\n\n".join(tape_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _get_tapes(circuits: Any) -> list[Any]:
-    """
-    Extract tape list from circuits.
-
-    Parameters
-    ----------
-    circuits : Any
-        A tape-like object, list of tapes, or None.
-
-    Returns
-    -------
-    list
-        List of tapes (empty if input is invalid).
-    """
-    if circuits is None:
-        return []
-    if _is_tape_like(circuits):
-        return [circuits]
-    if isinstance(circuits, (list, tuple)) and circuits:
-        # Only return if all elements are tape-like
-        if all(_is_tape_like(t) for t in circuits):
-            return list(circuits)
-    return []
 
 
 def _log_tapes(
@@ -652,9 +416,9 @@ def patch_device(
                 return result
 
             # Compute structural hash (ignores parameter values - for deduplication)
-            structural_hash = _compute_structural_hash(circuits)
+            structural_hash = compute_structural_hash(circuits)
             # Compute parametric hash (includes parameter values - for exact match)
-            parametric_hash = _compute_parametric_hash(circuits)
+            parametric_hash = compute_parametric_hash(circuits)
 
             # Use structural hash for deduplication (same circuit template)
             is_new_circuit = structural_hash and structural_hash not in seen_hashes
