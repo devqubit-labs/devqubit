@@ -13,9 +13,6 @@ from devqubit_qiskit.serialization import (
     LoadedCircuitBatch,
     QiskitCircuitLoader,
     QiskitCircuitSerializer,
-    circuit_to_text,
-    serialize_circuit_artifacts,
-    serialize_circuits_text,
     serialize_qasm3,
     serialize_qpy,
     summarize_qiskit_circuit,
@@ -379,71 +376,6 @@ class TestSummarizeQiskitCircuit:
 
         summary = summarize_qiskit_circuit(non_clifford_qc)
         assert summary.is_clifford is False
-
-
-# =============================================================================
-# Circuit to Text Tests
-# =============================================================================
-
-
-class TestCircuitToText:
-    """Tests for human-readable circuit text."""
-
-    def test_basic_format(self, bell_circuit):
-        """Produces readable text format with key info."""
-        text = circuit_to_text(bell_circuit, index=0)
-
-        assert "=== Circuit 0 ===" in text
-        assert "Qubits:" in text
-        assert "Depth:" in text
-
-    def test_multiple_circuits(self, bell_circuit, ghz_circuit):
-        """Serializes multiple circuits to text."""
-        text = serialize_circuits_text([bell_circuit, ghz_circuit])
-
-        assert "=== Circuit 0 ===" in text
-        assert "=== Circuit 1 ===" in text
-
-    def test_none_returns_empty(self):
-        """None input returns empty string."""
-        assert serialize_circuits_text(None) == ""
-
-
-# =============================================================================
-# Artifact Serialization Tests
-# =============================================================================
-
-
-class TestSerializeCircuitArtifacts:
-    """Tests for multi-format artifact serialization."""
-
-    def test_generates_all_formats(self, bell_circuit):
-        """Generates QPY, OpenQASM, and diagram artifacts."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-
-        assert "qpy" in artifacts
-        assert "openqasm" in artifacts
-        assert "diagram" in artifacts
-
-    def test_qpy_artifact_valid(self, bell_circuit):
-        """QPY artifact is valid and loadable."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-        qpy_bytes, media_type = artifacts["qpy"]
-
-        assert isinstance(qpy_bytes, bytes)
-        assert "qiskit.qpy" in media_type
-
-        circuits = qpy.load(io.BytesIO(qpy_bytes))
-        assert len(circuits) > 0
-
-    def test_openqasm_artifact_valid(self, bell_circuit):
-        """OpenQASM artifact is valid text."""
-        artifacts = serialize_circuit_artifacts(bell_circuit)
-        openqasm_bytes, media_type = artifacts["openqasm"]
-
-        text = openqasm_bytes.decode("utf-8")
-        assert "OPENQASM" in text
-        assert "text/plain" in media_type
 
 
 # =============================================================================
