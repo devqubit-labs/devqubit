@@ -10,10 +10,10 @@ and logging Qiskit QuantumCircuit objects.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import Any
 
+from devqubit_engine.circuit.hashing import hash_circuit_pair
 from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.models.program import ProgramArtifact, ProgramRole
@@ -64,175 +64,260 @@ def materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
         return [circuits], True
 
 
-def compute_structural_hash(circuits: list[Any]) -> str | None:
+def circuit_to_op_stream(circuit: QuantumCircuit) -> list[dict[str, Any]]:
     """
-    Compute a structure-only hash for Qiskit QuantumCircuit objects.
+    Convert a Qiskit QuantumCircuit to canonical operation stream.
 
-    Captures circuit structure (gates, qubits, classical bits) while
-    ignoring parameter values for deduplication purposes.
+    The operation stream format is SDK-agnostic and used by the
+    devqubit hashing functions.
 
     Parameters
     ----------
-    circuits : list[Any]
+    circuit : QuantumCircuit
+        Qiskit circuit to convert.
+
+    Returns
+    -------
+    list of dict
+        Canonical operation stream where each dict contains:
+        - gate: Operation name (str)
+        - qubits: Ordered qubit indices (list[int]) - order preserved!
+        - clbits: Ordered classical bit indices (list[int])
+        - params: Parameter dict or list
+        - condition: Classical condition info or None
+
+    Notes
+    -----
+    Qubit order is preserved (not sorted) because gate semantics
+    depend on operand order (e.g., CX control vs target).
+    """
+    # Build index maps for fast lookup
+    qubit_index = {q: i for i, q in enumerate(circuit.qubits)}
+    clbit_index = {c: i for i, c in enumerate(circuit.clbits)}
+
+    ops: list[dict[str, Any]] = []
+
+    for instr in circuit.data:
+        op = instr.operation
+        op_name = getattr(op, "name", None)
+        if not isinstance(op_name, str) or not op_name:
+            op_name = type(op).__name__
+
+        # Extract qubit indices - preserve order!
+        qubits: list[int] = []
+        for q in instr.qubits:
+            if q in qubit_index:
+                qubits.append(qubit_index[q])
+            else:
+                # Fallback for unusual bit containers
+                bit_info = circuit.find_bit(q)
+                qubits.append(getattr(bit_info, "index", -1))
+
+        # Extract classical bit indices - preserve order for measurement mapping
+        clbits: list[int] = []
+        for c in instr.clbits:
+            if c in clbit_index:
+                clbits.append(clbit_index[c])
+            else:
+                bit_info = circuit.find_bit(c)
+                clbits.append(getattr(bit_info, "index", -1))
+
+        # Build operation dict
+        op_dict: dict[str, Any] = {
+            "gate": op_name.lower(),
+            "qubits": qubits,
+        }
+
+        if clbits:
+            op_dict["clbits"] = clbits
+
+        # Extract parameters
+        raw_params = getattr(op, "params", None)
+        if raw_params:
+            params = _extract_params(raw_params)
+            if params:
+                op_dict["params"] = params
+
+        # Extract classical condition
+        condition = _extract_condition(op, circuit, clbit_index)
+        if condition is not None:
+            op_dict["condition"] = condition
+
+        ops.append(op_dict)
+
+    return ops
+
+
+def _extract_params(raw_params: Any) -> dict[str, Any] | None:
+    """
+    Extract parameters from Qiskit gate params.
+
+    Parameters
+    ----------
+    raw_params : Any
+        Gate parameters (list of Parameter, ParameterExpression, or numeric).
+
+    Returns
+    -------
+    dict or None
+        Parameter dict with names/values, or None if no params.
+    """
+    if not isinstance(raw_params, (list, tuple)) or not raw_params:
+        return None
+
+    params: dict[str, Any] = {}
+
+    for i, p in enumerate(raw_params):
+        param_key = f"p{i}"
+
+        # Check for unbound Parameter
+        if hasattr(p, "name") and hasattr(p, "_symbol_expr"):
+            # Qiskit Parameter - use name as placeholder
+            params[param_key] = None
+            params[f"{param_key}_name"] = str(p.name)
+        elif hasattr(p, "parameters") and hasattr(p, "_symbol_expr"):
+            # Qiskit ParameterExpression - store expression string
+            params[param_key] = None
+            params[f"{param_key}_expr"] = str(p)
+        else:
+            # Numeric value
+            try:
+                params[param_key] = float(p)
+            except (TypeError, ValueError):
+                params[param_key] = str(p)[:50]
+
+    return params if params else None
+
+
+def _extract_condition(
+    op: Any,
+    circuit: QuantumCircuit,
+    clbit_index: dict[Any, int],
+) -> dict[str, Any] | None:
+    """
+    Extract classical condition from operation.
+
+    Parameters
+    ----------
+    op : Any
+        Qiskit operation with potential condition.
+    circuit : QuantumCircuit
+        Parent circuit for register lookup.
+    clbit_index : dict
+        Classical bit to index mapping.
+
+    Returns
+    -------
+    dict or None
+        Condition dict with target and value, or None if no condition.
+    """
+    cond = getattr(op, "condition", None)
+    if cond is None:
+        return None
+
+    try:
+        cond_target, cond_value = cond
+
+        # Determine if condition is on register or single bit
+        if hasattr(cond_target, "name"):
+            # ClassicalRegister
+            return {
+                "type": "register",
+                "register": str(cond_target.name),
+                "value": int(cond_value),
+            }
+        elif cond_target in clbit_index:
+            # Single classical bit
+            return {
+                "type": "clbit",
+                "index": clbit_index[cond_target],
+                "value": int(cond_value),
+            }
+        else:
+            # Fallback
+            return {
+                "type": "unknown",
+                "target": str(cond_target),
+                "value": int(cond_value),
+            }
+    except Exception:
+        return {"type": "present"}
+
+
+def compute_circuit_hashes(
+    circuits: list[Any],
+) -> tuple[str | None, str | None]:
+    """
+    Compute structural and parametric hashes for Qiskit circuits.
+
+    Uses the canonical devqubit_engine hashing for cross-SDK consistency.
+
+    Parameters
+    ----------
+    circuits : list
         List of Qiskit QuantumCircuit objects.
 
     Returns
     -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if empty.
+    structural_hash : str or None
+        Structure-only hash (ignores parameter values).
+    parametric_hash : str or None
+        Hash including bound parameter values.
 
     Notes
     -----
-    The hash captures:
-    - Operation names (e.g., 'rx', 'cx', 'measure')
-    - Ordered qubit indices
-    - Ordered clbit indices (measurement wiring)
-    - Parameter arity (count only, not values)
-    - Classical condition presence
+    Both hashes use IEEE-754 float encoding for determinism.
+    For circuits without parameters, parametric_hash == structural_hash.
     """
     if not circuits:
-        return None
+        return None, None
 
-    circuit_signatures: list[str] = []
+    # Build combined op stream and track total dimensions
+    all_ops: list[dict[str, Any]] = []
+    total_qubits = 0
+    total_clbits = 0
 
     for circuit in circuits:
         try:
-            # Precompute indices for speed and stability
-            qubit_index = {
-                q: i for i, q in enumerate(getattr(circuit, "qubits", ()) or ())
-            }
-            clbit_index = {
-                c: i for i, c in enumerate(getattr(circuit, "clbits", ()) or ())
-            }
+            nq = getattr(circuit, "num_qubits", 0) or 0
+            nc = getattr(circuit, "num_clbits", 0) or 0
+            total_qubits += nq
+            total_clbits += nc
 
-            op_sigs: list[str] = []
-            for instr in getattr(circuit, "data", []) or []:
-                op = getattr(instr, "operation", None)
-                name = getattr(op, "name", None)
-                op_name = name if isinstance(name, str) and name else type(op).__name__
+            # Add circuit boundary marker (for multi-circuit batches)
+            all_ops.append(
+                {
+                    "gate": "__circuit__",
+                    "qubits": [],
+                    "params": {"nq": nq, "nc": nc},
+                }
+            )
 
-                # Qubits / clbits in order (control-target order matters)
-                qs: list[int] = []
-                for q in getattr(instr, "qubits", ()) or ():
-                    if q in qubit_index:
-                        qs.append(qubit_index[q])
-                    else:
-                        # Fallback if circuit has unusual bit containers
-                        qs.append(getattr(circuit.find_bit(q), "index", -1))
-                cs: list[int] = []
-                for c in getattr(instr, "clbits", ()) or ():
-                    if c in clbit_index:
-                        cs.append(clbit_index[c])
-                    else:
-                        cs.append(getattr(circuit.find_bit(c), "index", -1))
+            # Add circuit operations
+            ops = circuit_to_op_stream(circuit)
+            all_ops.extend(ops)
 
-                # Parameter arity (count only)
-                params = getattr(op, "params", None)
-                parity = len(params) if isinstance(params, (list, tuple)) else 0
+        except Exception as e:
+            logger.debug("Failed to convert circuit to op_stream: %s", e)
+            # Fallback: use string representation
+            all_ops.append(
+                {
+                    "gate": "__fallback__",
+                    "qubits": [],
+                    "params": {"repr": str(circuit)[:200]},
+                }
+            )
 
-                # Classical condition presence
-                cond = getattr(op, "condition", None)
-                has_cond = 1 if cond is not None else 0
-
-                op_sigs.append(
-                    f"{op_name}|p{parity}|q{tuple(qs)}|c{tuple(cs)}|if{has_cond}"
-                )
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            # Conservative fallback: avoid breaking tracking
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def compute_parametric_hash(circuits: list[Any]) -> str | None:
-    """
-    Compute a parametric hash for Qiskit QuantumCircuit objects.
-
-    Unlike structural hash, this includes actual parameter values,
-    making it suitable for identifying identical circuit executions.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Qiskit QuantumCircuit objects.
-
-    Returns
-    -------
-    str or None
-        Full SHA-256 digest in format ``sha256:<hex>``, or None if empty.
-
-    Notes
-    -----
-    Includes:
-    - All structural information (gates, qubits, classical bits)
-    - Bound parameter values (rounded to 10 decimal places for stability)
-    - Unbound parameter names
-    """
-    if not circuits:
-        return None
-
-    circuit_signatures: list[str] = []
-
-    for circuit in circuits:
-        try:
-            qubit_index = {
-                q: i for i, q in enumerate(getattr(circuit, "qubits", ()) or ())
-            }
-            clbit_index = {
-                c: i for i, c in enumerate(getattr(circuit, "clbits", ()) or ())
-            }
-
-            op_sigs: list[str] = []
-            for instr in getattr(circuit, "data", []) or []:
-                op = getattr(instr, "operation", None)
-                name = getattr(op, "name", None)
-                op_name = name if isinstance(name, str) and name else type(op).__name__
-
-                qs: list[int] = []
-                for q in getattr(instr, "qubits", ()) or ():
-                    if q in qubit_index:
-                        qs.append(qubit_index[q])
-                    else:
-                        qs.append(getattr(circuit.find_bit(q), "index", -1))
-                cs: list[int] = []
-                for c in getattr(instr, "clbits", ()) or ():
-                    if c in clbit_index:
-                        cs.append(clbit_index[c])
-                    else:
-                        cs.append(getattr(circuit.find_bit(c), "index", -1))
-
-                # Include actual parameter values
-                params = getattr(op, "params", None) or []
-                param_strs: list[str] = []
-                for p in params:
-                    try:
-                        # Check if it's a Parameter (unbound)
-                        if hasattr(p, "name") and hasattr(p, "_symbol_expr"):
-                            param_strs.append(f"<param:{p.name}>")
-                        else:
-                            val = float(p)
-                            param_strs.append(f"{val:.10f}")
-                    except (TypeError, ValueError):
-                        param_strs.append(str(p)[:50])
-
-                cond = getattr(op, "condition", None)
-                has_cond = 1 if cond is not None else 0
-
-                op_sigs.append(
-                    f"{op_name}|params=[{','.join(param_strs)}]|q{tuple(qs)}|c{tuple(cs)}|if{has_cond}"
-                )
-
-            circuit_signatures.append("||".join(op_sigs))
-
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
+    try:
+        structural, parametric = hash_circuit_pair(
+            all_ops,
+            num_qubits=total_qubits,
+            num_clbits=total_clbits,
+        )
+        return structural, parametric
+    except Exception as e:
+        logger.warning("Failed to compute circuit hashes: %s", e)
+        return None, None
 
 
 def circuits_to_text(circuits: list[Any]) -> str:
