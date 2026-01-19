@@ -40,6 +40,58 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _detect_physical_provider(device: Any) -> str:
+    """
+    Detect physical provider from Braket device.
+
+    UEC requires provider to be the physical backend provider,
+    not the SDK name. SDK goes in producer.frontends[].
+
+    Parameters
+    ----------
+    device : Any
+        Braket device instance.
+
+    Returns
+    -------
+    str
+        Physical provider: "aws_braket" for AWS devices, "local" for local simulators.
+    """
+    class_name = device.__class__.__name__.lower()
+    module_name = getattr(device, "__module__", "").lower()
+
+    # Local simulator
+    if "local" in class_name or "localsimulator" in class_name:
+        return "local"
+
+    # Check module for local
+    if "local" in module_name:
+        return "local"
+
+    # Check ARN for AWS device
+    try:
+        arn = getattr(device, "arn", None)
+        if arn:
+            arn_str = str(arn() if callable(arn) else arn).lower()
+            if "aws" in arn_str or "braket" in arn_str:
+                return "aws_braket"
+    except Exception:
+        pass
+
+    # Check device type
+    try:
+        device_type = getattr(device, "type", None)
+        if device_type is not None:
+            device_type_str = str(device_type).lower()
+            if "simulator" in device_type_str and "aws" not in str(module_name):
+                return "local"
+    except Exception:
+        pass
+
+    # Default: AWS Braket (since most non-local devices are AWS)
+    return "aws_braket"
+
+
 def _resolve_backend_type(device: Any) -> str:
     """
     Resolve backend_type to a schema-valid value.
@@ -343,14 +395,6 @@ def create_device_snapshot(
     When ``tracker`` is provided, raw device properties are logged as a separate
     artifact for lossless capture. This includes the full device properties dict,
     ARN, status, and other provider-specific metadata.
-
-    Examples
-    --------
-    >>> from braket.devices import LocalSimulator
-    >>> sim = LocalSimulator()
-    >>> snapshot = create_device_snapshot(sim)
-    >>> snapshot.provider
-    'braket'
     """
     if device is None:
         raise ValueError("Cannot create device snapshot from None device")
@@ -409,7 +453,7 @@ def create_device_snapshot(
         captured_at=captured_at,
         backend_name=backend_name,
         backend_type=backend_type,
-        provider="aws_braket",
+        provider=_detect_physical_provider(device),
         backend_id=backend_id,
         num_qubits=num_qubits,
         connectivity=connectivity,
