@@ -27,12 +27,15 @@ Example
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from devqubit_cirq.circuits import (
+    compute_parametric_hash,
+    compute_structural_hash,
+)
 from devqubit_cirq.results import normalize_counts_payload
 from devqubit_cirq.serialization import (
     CirqCircuitSerializer,
@@ -100,150 +103,6 @@ def _materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
         return list(circuits), False
     except TypeError:
         return [circuits], True
-
-
-def _compute_structural_hash(circuits: list[Any]) -> str | None:
-    """
-    Compute a structural hash for Cirq circuits.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Cirq Circuit objects.
-
-    Returns
-    -------
-    str | None
-        SHA256 hash with prefix, or None if circuits is empty.
-
-    Notes
-    -----
-    This is the STRUCTURAL hash - captures gate types and qubit topology,
-    but ignores parameter values. Use _compute_parametric_hash for full identity.
-    """
-    if not circuits:
-        return None
-
-    def _op_signature(op: Any) -> str:
-        gate = getattr(op, "gate", None)
-        gate_type = type(gate).__name__ if gate is not None else type(op).__name__
-
-        # Include measurement key if present
-        key = getattr(gate, "key", None)
-        key_suffix = f"|k={key}" if isinstance(key, str) and key else ""
-
-        # Get qubit signature
-        try:
-            qubits = tuple(str(q) for q in getattr(op, "qubits", ()))
-        except Exception:
-            qubits = (str(getattr(op, "qubits", "")),)
-
-        return f"{gate_type}{key_suffix}|q{qubits}"
-
-    circuit_signatures: list[str] = []
-    for circuit in circuits:
-        try:
-            moment_sigs = [
-                "::".join(_op_signature(op) for op in moment) for moment in circuit
-            ]
-            circuit_signatures.append("##".join(moment_sigs))
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
-
-
-def _compute_parametric_hash(
-    circuits: list[Any],
-    resolver: Any | None = None,
-) -> str | None:
-    """
-    Compute a parametric hash for Cirq circuits.
-
-    Unlike structural hash, this includes actual parameter values
-    from the resolver, making it suitable for identifying identical executions.
-
-    Parameters
-    ----------
-    circuits : list[Any]
-        List of Cirq Circuit objects.
-    resolver : cirq.ParamResolver or None
-        Parameter resolver with bound values.
-
-    Returns
-    -------
-    str | None
-        SHA256 hash with prefix, or None if circuits is empty.
-
-    Notes
-    -----
-    Includes:
-    - All structural information (gate types, qubit topology, measurement keys)
-    - Resolved parameter values (rounded to 10 decimal places for stability)
-    - Unresolved parameter names
-    """
-    if not circuits:
-        return None
-
-    def _format_param(p: Any) -> str:
-        """Format parameter value with stable representation."""
-        try:
-            # Check if it's a symbolic parameter
-            if hasattr(p, "name"):
-                # Try to resolve from resolver
-                if resolver is not None:
-                    try:
-                        resolved = resolver.value_of(p)
-                        return f"{float(resolved):.10f}"
-                    except Exception:
-                        pass
-                return f"<param:{p.name}>"
-            val = float(p)
-            return f"{val:.10f}"
-        except (TypeError, ValueError):
-            return str(p)[:50]
-
-    def _op_signature_with_params(op: Any) -> str:
-        gate = getattr(op, "gate", None)
-        gate_type = type(gate).__name__ if gate is not None else type(op).__name__
-
-        # Include measurement key if present
-        key = getattr(gate, "key", None)
-        key_suffix = f"|k={key}" if isinstance(key, str) and key else ""
-
-        # Get qubit signature
-        try:
-            qubits = tuple(str(q) for q in getattr(op, "qubits", ()))
-        except Exception:
-            qubits = (str(getattr(op, "qubits", "")),)
-
-        # Extract and format parameters from the gate
-        param_strs: list[str] = []
-        if gate is not None:
-            # Try common Cirq gate parameter attributes
-            for attr in ["_exponent", "exponent", "_radians", "theta", "phi", "gamma"]:
-                val = getattr(gate, attr, None)
-                if val is not None:
-                    param_strs.append(_format_param(val))
-
-        params_suffix = f"|params=[{','.join(param_strs)}]" if param_strs else ""
-
-        return f"{gate_type}{key_suffix}{params_suffix}|q{qubits}"
-
-    circuit_signatures: list[str] = []
-    for circuit in circuits:
-        try:
-            moment_sigs = [
-                "::".join(_op_signature_with_params(op) for op in moment)
-                for moment in circuit
-            ]
-            circuit_signatures.append("##".join(moment_sigs))
-        except Exception:
-            circuit_signatures.append(str(circuit)[:500])
-
-    payload = "\n".join(circuit_signatures).encode("utf-8", errors="replace")
-    return f"sha256:{hashlib.sha256(payload).hexdigest()}"
 
 
 def _serialize_and_log_circuits(
@@ -837,7 +696,7 @@ class TrackedSimulator:
         exec_count = self._execution_count
 
         # Compute both structural and parametric hashes
-        structural_hash = _compute_structural_hash(circuit_list)
+        structural_hash = compute_structural_hash(circuit_list)
 
         # Extract resolver from params for parametric hash
         # params can be: ParamResolver, Sweep, list of resolvers, or None
@@ -855,7 +714,7 @@ class TrackedSimulator:
                 except Exception:
                     pass
 
-        parametric_hash = _compute_parametric_hash(circuit_list, resolver)
+        parametric_hash = compute_parametric_hash(circuit_list, resolver)
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
