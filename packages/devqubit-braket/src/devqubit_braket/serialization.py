@@ -532,3 +532,45 @@ class BraketCircuitSerializer:
         if fmt == CircuitFormat.OPENQASM3:
             return serialize_openqasm(circuit, name=name, index=index)
         raise SerializerError(f"Unsupported format: {fmt}")
+
+
+def summarize_braket_circuit(circuit: Any) -> CircuitSummary:
+    """
+    Generate a summary of a Braket circuit.
+
+    Extracts gate counts, depth, qubit count, and classification
+    information from the circuit.
+
+    Parameters
+    ----------
+    circuit : braket.circuits.Circuit
+        Braket circuit to summarize.
+
+    Returns
+    -------
+    CircuitSummary
+        Circuit summary with statistics and gate counts.
+    """
+    gate_counts: Counter[str] = Counter()
+
+    for instr in circuit.instructions:
+        op = instr.operator
+        gate_name = getattr(op, "name", type(op).__name__).lower()
+        gate_counts[gate_name] += 1
+
+    # Classify gates using the classifier
+    stats = _classifier.classify_counts(dict(gate_counts))
+
+    return CircuitSummary(
+        num_qubits=circuit.qubit_count,
+        depth=circuit.depth,
+        gate_count_1q=stats["gate_count_1q"],
+        gate_count_2q=stats["gate_count_2q"],
+        gate_count_multi=stats["gate_count_multi"],
+        gate_count_measure=stats["gate_count_measure"],
+        gate_count_total=sum(gate_counts.values()),
+        gate_types=dict(gate_counts),
+        is_clifford=stats["is_clifford"],
+        source_format=CircuitFormat.JAQCD,
+        sdk=SDK.BRAKET,
+    )
