@@ -75,13 +75,19 @@ def extract_circuit(
     record: RunRecord,
     store: ObjectStoreProtocol,
     *,
+    envelope: ExecutionEnvelope | None = None,
+    which: str = "logical",
+    prefer_formats: list[str] | None = None,
     prefer_native: bool = True,
+    uec_first: bool = True,
 ) -> CircuitData | None:
     """
-    Extract circuit data from a run record.
+    Extract circuit data from a run record with UEC-first strategy.
 
-    Searches for circuit artifacts in the run record and loads the
-    circuit data from the object store.
+    This is the canonical circuit extraction function. It implements
+    UEC-first logic: if an envelope is available, circuit is extracted
+    from envelope refs. Fallback to RunRecord scanning is only allowed
+    for synthesized (manual) envelopes.
 
     Parameters
     ----------
@@ -89,9 +95,19 @@ def extract_circuit(
         Run record to extract circuit from.
     store : ObjectStoreProtocol
         Object store to load artifact data from.
-    prefer_native : bool, optional
-        If True (default), try native SDK formats first before falling
-        back to OpenQASM.
+    envelope : ExecutionEnvelope, optional
+        Pre-resolved envelope. If None and uec_first=True, attempts to
+        load envelope from record artifacts.
+    which : {"logical", "physical"}, default="logical"
+        Which circuit to extract: "logical" (pre-transpilation) or
+        "physical" (post-transpilation/executed).
+    prefer_formats : list of str, optional
+        Preferred format order for envelope extraction.
+    prefer_native : bool, default=True
+        If True, try native SDK formats first before falling back to
+        OpenQASM when scanning RunRecord (non-UEC path).
+    uec_first : bool, default=True
+        If True, prefer envelope refs over RunRecord scanning.
 
     Returns
     -------
@@ -100,13 +116,46 @@ def extract_circuit(
 
     Notes
     -----
-    The extraction order is:
+    The extraction strategy is:
 
-    1. Native format matching the detected SDK (if prefer_native=True)
-    2. OpenQASM 3 artifacts
-    3. OpenQASM 2 artifacts
-    4. Generic QASM artifacts
+    1. If ``uec_first`` and envelope available:
+       a. Try ``extract_circuit_from_envelope()``
+       b. If envelope is NOT synthesized and no refs found: return None
+          (don't guess from RunRecord for adapter envelopes)
+    2. For synthesized/manual envelopes or ``uec_first=False``:
+       a. Native format matching the detected SDK (if prefer_native=True)
+       b. OpenQASM 3/2 artifacts
     """
+    # UEC-first path
+    if uec_first:
+        # Try to get or load envelope
+        env = envelope
+        if env is None:
+            env = _try_load_envelope(record, store)
+
+        if env is not None:
+            # Extract from envelope
+            circuit = extract_circuit_from_envelope(
+                env,
+                store,
+                which=which,
+                prefer_formats=prefer_formats,
+            )
+            if circuit is not None:
+                return circuit
+
+            # Check if we should fallback to RunRecord scanning
+            is_synthesized = env.metadata.get("synthesized_from_run", False)
+            if not is_synthesized:
+                # Adapter envelope without circuit refs - don't guess
+                logger.debug(
+                    "Adapter envelope for run %s has no circuit refs for '%s'",
+                    record.run_id,
+                    which,
+                )
+                return None
+
+    # Fallback: scan RunRecord artifacts (for synthesized/manual or uec_first=False)
     sdk = detect_sdk(record)
     logger.debug("Extracting circuit from record, detected SDK: %s", sdk.value)
 
@@ -118,6 +167,19 @@ def extract_circuit(
 
     # OpenQASM fallback
     return _try_openqasm_formats(record, store, sdk)
+
+
+def _try_load_envelope(
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+) -> ExecutionEnvelope | None:
+    """Try to load envelope from record artifacts without raising."""
+    try:
+        from devqubit_engine.uec.api.resolve import load_envelope
+
+        return load_envelope(record, store, raise_on_error=False)
+    except Exception:
+        return None
 
 
 def _try_native_formats(
@@ -223,6 +285,11 @@ def extract_circuit_from_refs(
     -------
     CircuitData or None
         Extracted circuit data, or None if not found.
+
+    Notes
+    -----
+    This function iterates refs in order and respects prefer_formats
+    as an outer filter. It does not lose refs with duplicate kinds.
     """
     if not refs:
         return None
@@ -230,12 +297,10 @@ def extract_circuit_from_refs(
     if prefer_formats is None:
         prefer_formats = ["openqasm3", "openqasm", "qasm", "qpy", "jaqcd", "cirq"]
 
-    # Build lookup by kind
-    ref_by_kind = {ref.kind.lower(): ref for ref in refs}
-
-    # Try preferred formats in order
+    # Iterate by format preference, then by ref order (preserves duplicates)
     for fmt_pattern in prefer_formats:
-        for kind_lower, ref in ref_by_kind.items():
+        for ref in refs:
+            kind_lower = ref.kind.lower()
             if fmt_pattern not in kind_lower:
                 continue
 

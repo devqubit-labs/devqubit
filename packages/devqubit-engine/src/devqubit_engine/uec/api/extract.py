@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def get_counts_from_envelope(
-    envelope: "ExecutionEnvelope",
+    envelope: ExecutionEnvelope,
     *,
     item_index: int = 0,
 ) -> dict[str, int] | None:
@@ -76,7 +76,7 @@ def get_counts_from_envelope(
     return None
 
 
-def get_shots_from_envelope(envelope: "ExecutionEnvelope") -> int | None:
+def get_shots_from_envelope(envelope: ExecutionEnvelope) -> int | None:
     """
     Extract shot count from envelope.
 
@@ -90,8 +90,8 @@ def get_shots_from_envelope(envelope: "ExecutionEnvelope") -> int | None:
     int or None
         Number of shots, or None if not available.
     """
-    # Try execution snapshot first
-    if envelope.execution and envelope.execution.shots:
+    # Try execution snapshot first (use `is not None` for int robustness)
+    if envelope.execution and envelope.execution.shots is not None:
         return envelope.execution.shots
 
     # Fall back to counts
@@ -102,7 +102,7 @@ def get_shots_from_envelope(envelope: "ExecutionEnvelope") -> int | None:
     return None
 
 
-def get_program_hash_from_envelope(envelope: "ExecutionEnvelope") -> str | None:
+def get_program_hash_from_envelope(envelope: ExecutionEnvelope) -> str | None:
     """
     Extract structural hash from envelope.
 
@@ -125,10 +125,11 @@ def get_program_hash_from_envelope(envelope: "ExecutionEnvelope") -> str | None:
 
 
 def resolve_counts(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
-    envelope: "ExecutionEnvelope | None" = None,
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
     *,
+    item_index: int = 0,
     canonicalize: bool = True,
 ) -> dict[str, int] | None:
     """
@@ -146,6 +147,8 @@ def resolve_counts(
         Object store.
     envelope : ExecutionEnvelope, optional
         Pre-resolved envelope. If None, will be resolved internally.
+    item_index : int, default=0
+        Index of result item for batch executions.
     canonicalize : bool, default=True
         Whether to canonicalize bitstrings to cbit0_right format.
 
@@ -167,8 +170,8 @@ def resolve_counts(
         envelope = _resolve_envelope(record, store)
 
     # Try to get counts from envelope (UEC-first)
-    if envelope.result.items:
-        item = envelope.result.items[0]
+    if envelope.result.items and item_index < len(envelope.result.items):
+        item = envelope.result.items[item_index]
         if item.counts:
             raw_counts = item.counts.get("counts")
             if isinstance(raw_counts, dict):
@@ -191,8 +194,9 @@ def resolve_counts(
     if not is_synthesized:
         # Adapter envelope without counts - this is an integration issue
         logger.debug(
-            "Adapter envelope for run %s has no counts in result items",
+            "Adapter envelope for run %s has no counts in result items[%d]",
             record.run_id,
+            item_index,
         )
         return None
 
@@ -212,10 +216,10 @@ def resolve_counts(
 
 
 def resolve_device_snapshot(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
-    envelope: "ExecutionEnvelope | None" = None,
-) -> "DeviceSnapshot | None":
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
+) -> DeviceSnapshot | None:
     """
     Load device snapshot from envelope or run record with UEC-first strategy.
 
@@ -299,18 +303,18 @@ def resolve_device_snapshot(
 
 
 def resolve_circuit_summary(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
-    envelope: "ExecutionEnvelope | None" = None,
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+    envelope: ExecutionEnvelope | None = None,
     *,
     which: str = "logical",
-) -> "CircuitSummary | None":
+) -> CircuitSummary | None:
     """
     Extract circuit summary from envelope or run record with UEC-first strategy.
 
     This is the canonical function for getting circuit summary in compare
-    operations. It extracts circuit from envelope refs, falling back to
-    run record artifacts only for synthesized (manual) envelopes.
+    operations. It delegates to ``extract_circuit()`` which handles UEC-first
+    logic with proper fallback for synthesized (manual) envelopes only.
 
     Parameters
     ----------
@@ -328,10 +332,7 @@ def resolve_circuit_summary(
     CircuitSummary or None
         Extracted circuit summary, or None if not found.
     """
-    from devqubit_engine.circuit.extractors import (
-        extract_circuit,
-        extract_circuit_from_envelope,
-    )
+    from devqubit_engine.circuit.extractors import extract_circuit
     from devqubit_engine.circuit.summary import summarize_circuit_data
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
@@ -339,25 +340,14 @@ def resolve_circuit_summary(
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
-    circuit_data = None
-
-    # Try envelope first (UEC-first)
-    circuit_data = extract_circuit_from_envelope(envelope, store, which=which)
-
-    # Fallback to Run artifacts - ONLY for synthesized (manual) envelopes
-    if circuit_data is None:
-        is_synthesized = envelope.metadata.get("synthesized_from_run", False)
-
-        if is_synthesized:
-            # Manual envelope - fallback is allowed
-            circuit_data = extract_circuit(record, store)
-        else:
-            # Adapter envelope without circuit refs - log and return None
-            logger.debug(
-                "Adapter envelope for run %s has no circuit refs for '%s'",
-                record.run_id,
-                which,
-            )
+    # Delegate to extract_circuit with UEC-first logic
+    circuit_data = extract_circuit(
+        record,
+        store,
+        envelope=envelope,
+        which=which,
+        uec_first=True,
+    )
 
     if circuit_data is not None:
         try:
