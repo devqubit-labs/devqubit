@@ -243,6 +243,54 @@ class TestCircuitHashing:
 
         assert len(set(hashes)) == 1  # All identical
 
+    def test_cx_direction_matters_structural(self):
+        """cx(0,1) and cx(1,0) must have different structural hashes."""
+        ops_01 = [{"gate": "cx", "qubits": [0, 1]}]
+        ops_10 = [{"gate": "cx", "qubits": [1, 0]}]
+
+        assert hash_structural(ops_01) != hash_structural(ops_10)
+
+    def test_cx_direction_matters_parametric(self):
+        """cx(0,1) and cx(1,0) must have different parametric hashes."""
+        ops_01 = [{"gate": "cx", "qubits": [0, 1]}]
+        ops_10 = [{"gate": "cx", "qubits": [1, 0]}]
+
+        assert hash_parametric(ops_01) != hash_parametric(ops_10)
+
+    def test_negative_zero_equals_zero(self):
+        """-0.0 and 0.0 must produce identical hash."""
+        ops_pos = [{"gate": "rz", "qubits": [0], "params": {"theta": 0.0}}]
+        ops_neg = [{"gate": "rz", "qubits": [0], "params": {"theta": -0.0}}]
+
+        assert hash_parametric(ops_pos) == hash_parametric(ops_neg)
+
+    def test_nan_consistent(self):
+        """NaN values produce consistent hash."""
+        import math
+
+        ops = [{"gate": "rz", "qubits": [0], "params": {"theta": math.nan}}]
+
+        h1 = hash_parametric(ops)
+        h2 = hash_parametric(ops)
+
+        assert h1 == h2
+
+    def test_unused_bound_params_ignored(self):
+        """Extra keys in bound_params don't change hash."""
+        ops = [{"gate": "rz", "qubits": [0], "params": {"theta": None}}]
+
+        h1 = hash_parametric(ops, {"theta": 1.0})
+        h2 = hash_parametric(ops, {"theta": 1.0, "unused": 999.0})
+
+        assert h1 == h2
+
+    def test_list_param_names_matter_structural(self):
+        """List params with different names have different structural hash."""
+        ops_ab = [{"gate": "u3", "qubits": [0], "params": ["alpha", "beta"]}]
+        ops_xy = [{"gate": "u3", "qubits": [0], "params": ["x", "y"]}]
+
+        assert hash_structural(ops_ab) != hash_structural(ops_xy)
+
 
 class TestExtractFromRefs:
     """Test circuit extraction from artifact refs (UEC envelope flow)."""
