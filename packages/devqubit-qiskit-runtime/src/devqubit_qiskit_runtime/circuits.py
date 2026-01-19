@@ -15,7 +15,7 @@ All hashing is delegated to ``devqubit_engine.circuit.hashing`` to ensure:
 - IEEE-754 float encoding for determinism
 - For circuits without parameters: ``parametric_hash == structural_hash``
 
-This module reuses ``devqubit_qiskit.circuits.circuit_to_op_stream`` for
+This module reuses ``devqubit_qiskit.utils.circuit_to_op_stream`` for
 consistent op_stream conversion across both Qiskit adapters.
 """
 
@@ -60,6 +60,15 @@ def compute_structural_hash(circuits: list[Any]) -> str | None:
     - Circuit dimensions (nq, nc)
 
     This uses the canonical devqubit_engine hashing for cross-SDK consistency.
+
+    Examples
+    --------
+    >>> from qiskit import QuantumCircuit
+    >>> qc = QuantumCircuit(2)
+    >>> qc.h(0)
+    >>> qc.cx(0, 1)
+    >>> compute_structural_hash([qc])
+    'sha256:abc123...'
     """
     if not circuits:
         return None
@@ -94,6 +103,17 @@ def compute_parametric_hash(circuits: list[Any]) -> str | None:
 
     UEC Contract: For circuits without parameters, parametric_hash == structural_hash.
     This is enforced by the engine's hash_circuit_pair function.
+
+    Examples
+    --------
+    >>> from qiskit import QuantumCircuit
+    >>> from qiskit.circuit import Parameter
+    >>> theta = Parameter('θ')
+    >>> qc = QuantumCircuit(1)
+    >>> qc.rx(theta, 0)
+    >>> bound = qc.assign_parameters({theta: 0.5})
+    >>> compute_parametric_hash([bound])
+    'sha256:def456...'
     """
     if not circuits:
         return None
@@ -124,6 +144,12 @@ def compute_circuit_hashes(circuits: list[Any]) -> tuple[str | None, str | None]
     -----
     Both hashes use IEEE-754 float encoding for determinism.
     For circuits without parameters, parametric_hash == structural_hash.
+
+    Examples
+    --------
+    >>> structural, parametric = compute_circuit_hashes([qc])
+    >>> structural == parametric  # True for non-parameterized circuits
+    True
     """
     if not circuits:
         return None, None
@@ -203,7 +229,22 @@ def circuits_to_text(circuits: list[Any]) -> str:
     Returns
     -------
     str
-        Combined text diagram of all circuits.
+        Combined text diagram of all circuits, each prefixed with
+        its index and name.
+
+    Examples
+    --------
+    >>> from qiskit import QuantumCircuit
+    >>> qc = QuantumCircuit(2, name="bell")
+    >>> qc.h(0)
+    >>> qc.cx(0, 1)
+    >>> print(circuits_to_text([qc]))
+    [0] bell
+         ┌───┐
+    q_0: ┤ H ├──■──
+         └───┘┌─┴─┐
+    q_1: ─────┤ X ├
+              └───┘
     """
     parts: list[str] = []
 

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for Qiskit Runtime device snapshot creation."""
+"""Tests for Qiskit Runtime device snapshot and envelope utilities."""
 
 from datetime import datetime
 
-from devqubit_qiskit_runtime.snapshot import (
+from devqubit_qiskit_runtime.device import (
     _extract_options,
     _extract_session_info,
     create_device_snapshot,
@@ -87,7 +87,6 @@ class TestCreateDeviceSnapshotWithFakeBackend:
 
         assert snapshot.native_gates is not None
         assert len(snapshot.native_gates) > 0
-        # IBM backends have cx or ecr as entangling gate
         gate_names = set(snapshot.native_gates)
         assert "cx" in gate_names or "ecr" in gate_names
 
@@ -110,10 +109,8 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         """Snapshot has correct provider and ISO timestamp."""
         snapshot = create_device_snapshot(fake_sampler)
 
-        # Provider should be physical (fake for fake backends)
         assert snapshot.provider in ("fake", "ibm_quantum", "aer", "local")
         assert snapshot.captured_at is not None
-        # Verify ISO format
         ts = snapshot.captured_at.replace("Z", "+00:00")
         datetime.fromisoformat(ts)
 
@@ -122,7 +119,6 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         snapshot = create_device_snapshot(fake_sampler)
         d = snapshot.to_dict()
 
-        # Provider should be physical (fake for fake backends)
         assert d["provider"] in ("fake", "ibm_quantum", "aer", "local")
         assert "captured_at" in d
         assert "num_qubits" in d
@@ -134,7 +130,6 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         """Snapshot works for Estimator primitive."""
         snapshot = create_device_snapshot(fake_estimator)
 
-        # Provider should be physical (fake for fake backends)
         assert snapshot.provider in ("fake", "ibm_quantum", "aer", "local")
         assert snapshot.num_qubits is not None
 
@@ -142,26 +137,17 @@ class TestCreateDeviceSnapshotWithFakeBackend:
         self, fake_sampler, store, registry
     ):
         """raw_properties_ref is set when tracker is provided."""
-
         from devqubit_engine.tracking.run import track
 
         with track(project="raw_props_test", store=store, registry=registry) as run:
             snapshot = create_device_snapshot(fake_sampler, tracker=run)
 
         d = snapshot.to_dict()
-
-        # When tracker is provided, raw_properties should be logged as artifact
-        assert (
-            d.get("raw_properties_ref") is not None
-        ), "DeviceSnapshot should have raw_properties_ref when tracker is provided"
+        assert d.get("raw_properties_ref") is not None
 
 
 class TestBackendTypeCompliance:
-    """Tests that backend_type returns schema-compliant values.
-
-    This tests a bug fix where backend_type incorrectly fell back
-    to primitive class names like "SamplerV2".
-    """
+    """Tests that backend_type returns schema-compliant values."""
 
     VALID_BACKEND_TYPES = {"simulator", "hardware", "emulator", "sim", "hw", "qpu"}
 
@@ -169,9 +155,7 @@ class TestBackendTypeCompliance:
         """Sampler primitive returns valid backend_type."""
         snapshot = create_device_snapshot(fake_sampler)
 
-        assert (
-            snapshot.backend_type in self.VALID_BACKEND_TYPES
-        ), f"backend_type '{snapshot.backend_type}' is not schema-compliant"
+        assert snapshot.backend_type in self.VALID_BACKEND_TYPES
 
     def test_estimator_backend_type_is_valid(self, fake_estimator):
         """Estimator primitive returns valid backend_type."""
@@ -193,9 +177,7 @@ class TestBackendTypeCompliance:
 
     def test_fake_backend_is_simulator_type(self, fake_sampler):
         """Fake backends should return 'simulator' as backend_type."""
-
         snapshot = create_device_snapshot(fake_sampler)
-        # This is a specific assertion for fake backends, not a general contract
         assert snapshot.backend_type == "simulator"
 
 
@@ -207,7 +189,6 @@ class TestResolveRuntimeBackend:
         info = resolve_runtime_backend(fake_sampler)
 
         assert info is not None
-        # Provider should be physical (fake for fake backends)
         assert info["provider"] in ("fake", "ibm_quantum", "aer", "local")
         assert info["backend_name"]
         assert info["backend_obj"] is not None
@@ -245,12 +226,10 @@ class TestDeviceSnapshotUECCompliance:
         """Connectivity and native_gates have correct formats."""
         snapshot = create_device_snapshot(fake_sampler)
 
-        # Connectivity: list of edge tuples
         for edge in snapshot.connectivity:
             assert isinstance(edge, (tuple, list))
             assert len(edge) == 2
 
-        # Native gates: list of strings
         for gate in snapshot.native_gates:
             assert isinstance(gate, str)
 

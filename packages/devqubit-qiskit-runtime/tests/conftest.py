@@ -13,13 +13,12 @@ import warnings
 
 import pytest
 from devqubit_engine.storage.factory import create_registry, create_store
+from devqubit_qiskit_runtime.pubs import extract_circuit_from_pub, iter_pubs
 from qiskit import QuantumCircuit
 
 
 def pytest_configure(config):
     """Register custom markers and warning filters."""
-    # Filter devqubit transpilation warnings (expected in tests)
-    # Use regex patterns for robustness against message changes
     warnings.filterwarnings(
         "ignore",
         message=r"devqubit:.*ISA-compatible.*",
@@ -42,6 +41,11 @@ def pytest_configure(config):
     )
 
 
+# =============================================================================
+# Storage Fixtures
+# =============================================================================
+
+
 @pytest.fixture
 def tracking_root(tmp_path):
     """Create temporary tracking directory."""
@@ -58,6 +62,11 @@ def store(tracking_root):
 def registry(tracking_root):
     """Create a temporary registry."""
     return create_registry(f"file://{tracking_root}")
+
+
+# =============================================================================
+# Circuit Fixtures
+# =============================================================================
 
 
 @pytest.fixture
@@ -83,7 +92,7 @@ def ghz_circuit():
 
 @pytest.fixture
 def simple_circuit():
-    """Create a simple single-qubit circuit for multi-circuit tests."""
+    """Create a simple single-qubit circuit."""
     qc = QuantumCircuit(1, name="simple")
     qc.h(0)
     qc.measure_all()
@@ -126,6 +135,11 @@ def parameterized_circuit():
     return qc
 
 
+# =============================================================================
+# Backend Fixtures
+# =============================================================================
+
+
 def _get_fake_backend():
     """Try to get a fake backend from qiskit_ibm_runtime."""
     for backend_cls in ["FakeManilaV2", "FakeSherbrooke", "FakeKyoto"]:
@@ -159,6 +173,11 @@ def real_target(fake_backend):
 def real_coupling_map(fake_backend):
     """Get real CouplingMap from fake backend."""
     return fake_backend.coupling_map
+
+
+# =============================================================================
+# Mock Result Classes
+# =============================================================================
 
 
 class MockPrimitiveResult:
@@ -243,12 +262,13 @@ class MockRuntimeJob:
         return "DONE"
 
 
-class FakeSamplerV2:
-    """Fake SamplerV2 using real backend but mocking execution.
+# =============================================================================
+# Fake Primitive Classes
+# =============================================================================
 
-    Supports both global shots (via run kwargs) and per-PUB shots
-    (third element of tuple PUB).
-    """
+
+class FakeSamplerV2:
+    """Fake SamplerV2 using real backend but mocking execution."""
 
     __module__ = "qiskit_ibm_runtime.sampler"
 
@@ -268,8 +288,6 @@ class FakeSamplerV2:
         return self._backend
 
     def run(self, pubs, **kwargs):
-        from devqubit_qiskit_runtime.pubs import extract_circuit_from_pub, iter_pubs
-
         pubs_list = iter_pubs(pubs)
         global_shots = kwargs.get("shots", self._shots)
 
@@ -280,7 +298,6 @@ class FakeSamplerV2:
             if circuit is not None:
                 num_clbits = circuit.num_clbits or circuit.num_qubits
 
-            # Per-PUB shots: third element of tuple for Sampler (fix M3)
             pub_shots = global_shots
             if isinstance(pub, (tuple, list)) and len(pub) >= 3:
                 per_pub_shots = pub[2]
@@ -297,10 +314,7 @@ class FakeSamplerV2:
 
 
 class FakeEstimatorV2:
-    """Fake EstimatorV2 using real backend but mocking execution.
-
-    Uses deterministic values based on seed for reproducibility (fix m1).
-    """
+    """Fake EstimatorV2 using real backend but mocking execution."""
 
     __module__ = "qiskit_ibm_runtime.estimator"
 
@@ -322,11 +336,8 @@ class FakeEstimatorV2:
 
     def run(self, pubs, **kwargs):
         import numpy as np
-        from devqubit_qiskit_runtime.pubs import iter_pubs
 
-        # Use seeded RNG for deterministic results (fix m1)
         rng = np.random.default_rng(self._seed)
-
         pubs_list = iter_pubs(pubs)
         pub_results = []
 
@@ -339,12 +350,16 @@ class FakeEstimatorV2:
             if observables is not None and hasattr(observables, "__len__"):
                 n_obs = len(observables)
 
-            # Deterministic values using linspace + small perturbation
             evs = np.linspace(-0.5, 0.5, n_obs) + rng.uniform(-0.1, 0.1, n_obs)
             stds = np.full(n_obs, self._precision) + rng.uniform(0, 0.005, n_obs)
             pub_results.append(MockEstimatorPubResult(evs, stds))
 
         return MockRuntimeJob(MockPrimitiveResult(pub_results))
+
+
+# =============================================================================
+# Primitive Fixtures
+# =============================================================================
 
 
 @pytest.fixture

@@ -251,18 +251,13 @@ class TestExtractPubsStructure:
         assert result[0]["format"] == "unknown"
 
     def test_estimator_tuple_observable_count(self, bell_circuit):
-        """
-        Fix #9: Extracts num_observables from estimator tuple PUBs.
-
-        Estimator PUB format: (circuit, observables, [params], [precision])
-        """
+        """Extracts num_observables from estimator tuple PUBs."""
         try:
             from qiskit.quantum_info import SparsePauliOp
 
             obs = SparsePauliOp.from_list([("ZZ", 1.0), ("XX", 0.5)])
             pub = (bell_circuit, obs)
 
-            # With primitive_type="estimator", should extract observable count
             result = extract_pubs_structure([pub], primitive_type="estimator")
 
             assert result[0]["format"] == "v2_pub_tuple"
@@ -304,14 +299,11 @@ class TestExtractPubsStructure:
         """Sampler tuple PUBs don't have observables in second position."""
         import numpy as np
 
-        # Sampler PUB: (circuit, param_values, shots)
         params = np.array([[0.1, 0.2]])
         pub = (bell_circuit, params, 1024)
 
-        # Without primitive_type or with sampler, shouldn't extract "observables"
         result = extract_pubs_structure([pub], primitive_type="sampler")
 
-        # Shouldn't have num_observables for sampler
         assert (
             "num_observables" not in result[0]
             or result[0].get("num_observables") is None
@@ -354,7 +346,7 @@ class TestRealPubFormats:
             obs = SparsePauliOp.from_list([("ZZ", 1.0)])
 
             pub1 = (bell_circuit, obs)
-            pub2 = (bell_circuit, obs, None, 0.01)  # With precision
+            pub2 = (bell_circuit, obs, None, 0.01)
 
             assert extract_circuit_from_pub(pub1) is bell_circuit
             assert extract_circuit_from_pub(pub2) is bell_circuit

@@ -73,10 +73,9 @@ class TestTranspilationOptions:
             TranspilationOptions.from_dict({"unknown_key": "value"}, strict=True)
 
     def test_unknown_keys_not_in_to_kwargs(self):
-        """Unknown keys are stored in extra but NOT passed"""
-
+        """Unknown keys are stored in extra but NOT passed."""
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # Suppress warning for this test
+            warnings.simplefilter("ignore")
             opts = TranspilationOptions.from_dict(
                 {
                     "optimization_level": 2,
@@ -85,11 +84,9 @@ class TestTranspilationOptions:
                 }
             )
 
-        # Keys should be stored in extra
         assert "unknown_key" in opts.extra
         assert "another_unknown" in opts.extra
 
-        # But NOT in to_kwargs() - this is critical to prevent TypeError
         kwargs = opts.to_kwargs()
         assert "unknown_key" not in kwargs
         assert "another_unknown" not in kwargs
@@ -106,10 +103,7 @@ class TestTranspilationOptions:
                 }
             )
 
-        # Default: excluded
         assert "custom_option" not in opts.to_kwargs()
-
-        # With include_extra: included (for metadata logging)
         kwargs_with_extra = opts.to_kwargs(include_extra=True)
         assert "custom_option" in kwargs_with_extra
 
@@ -127,7 +121,7 @@ class TestTranspilationOptions:
         assert kwargs["optimization_level"] == 2
         assert kwargs["seed_transpiler"] == 42
         assert kwargs["layout_method"] == "sabre"
-        assert "routing_method" not in kwargs  # None excluded
+        assert "routing_method" not in kwargs
 
     def test_to_metadata_dict_json_safe(self):
         """to_metadata_dict returns JSON-serializable values."""
@@ -142,7 +136,6 @@ class TestTranspilationOptions:
 
         meta = opts.to_metadata_dict()
 
-        # Should be JSON-serializable
         json_str = json.dumps(meta)
         assert "optimization_level" in json_str
         assert "layout_method" in json_str
@@ -176,8 +169,6 @@ class TestCircuitLooksIsa:
         elif "ecr" in op_names:
             qc.ecr(0, 1)
 
-        # Use strict=False since we're only testing gate names, not qubit connectivity
-        # (manual circuit may not have valid qubit mapping for 2q gates)
         assert circuit_looks_isa(qc, real_target, strict=False) is True
 
     def test_non_isa_circuit_with_real_target(self, real_target, non_isa_circuit):
@@ -201,13 +192,11 @@ class TestCircuitLooksIsa:
 
     def test_strict_mode_respects_ibm_rejection(self, real_target, non_isa_circuit):
         """Strict mode (default) respects IBM's ISA rejection."""
-        # Non-ISA circuit should fail in strict mode
         result_strict = circuit_looks_isa(non_isa_circuit, real_target, strict=True)
         assert result_strict is False
 
     def test_non_strict_mode_fallback(self, real_target, non_isa_circuit):
         """Non-strict mode falls back to gate-name check."""
-        # Even in non-strict, H gate should fail because it's not in basis
         result = circuit_looks_isa(non_isa_circuit, real_target, strict=False)
         assert result is False
 
@@ -351,7 +340,6 @@ class TestPreparePubsForPrimitive:
         self, fake_estimator, non_isa_circuit
     ):
         """Integration test: Estimator PUB observables are mapped after transpilation."""
-
         try:
             from qiskit.quantum_info import SparsePauliOp
         except ImportError:
@@ -367,10 +355,8 @@ class TestPreparePubsForPrimitive:
         assert meta["observables_layout_mapped"] is True
         assert len(out) == 1
 
-        # Output should be a tuple with transpiled circuit and (possibly mapped) observable
         transpiled_circuit, mapped_obs = out[0][0], out[0][1]
         assert isinstance(transpiled_circuit, QuantumCircuit)
-        # Observable should exist (may or may not be mapped depending on circuit layout)
         assert mapped_obs is not None
 
 
@@ -417,7 +403,6 @@ class TestTranspilationWithRealPassManager:
         pm = generate_preset_pass_manager(optimization_level=1, backend=fake_backend)
         isa_circuit = pm.run(non_isa_circuit)
 
-        # Should now be ISA compatible (at gate level)
         assert circuit_looks_isa(isa_circuit, fake_backend.target, strict=False) is True
 
     def test_transpiled_circuit_has_layout(self, fake_backend, non_isa_circuit):

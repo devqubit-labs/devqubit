@@ -80,7 +80,7 @@ class TestQiskitRuntimeAdapter:
         """Describes Estimator primitive correctly."""
         desc = QiskitRuntimeAdapter().describe_executor(fake_estimator)
 
-        assert desc["provider"] == "fake"  # For FakeEstimatorV2
+        assert desc["provider"] == "fake"
         assert desc["primitive_type"] == "estimator"
 
     def test_wrap_executor_returns_tracked_primitive(
@@ -119,13 +119,11 @@ class TestSamplerExecution:
         loaded, _ = _load_envelopes(run.run_id, store, registry)
         kinds = _kinds(loaded)
 
-        # Core UEC + Runtime artifacts
         assert "qiskit_runtime.pubs.json" in kinds
         assert "result.qiskit_runtime.output.json" in kinds
         assert "result.counts.json" in kinds
         assert "devqubit.envelope.json" in kinds
 
-        # Record reflects the logged execution
         assert loaded.record["execute"]["primitive_type"] == "sampler"
         assert loaded.record["execute"]["num_pubs"] == 1
         assert loaded.record["results"]["result_type"] == "counts"
@@ -149,14 +147,12 @@ class TestSamplerExecution:
         assert len(envelopes) == 1
         envelope = envelopes[0]
 
-        # UEC 1.0 schema and producer
         assert envelope["schema"] == "devqubit.envelope/1.0"
         assert "envelope_id" in envelope
         assert "producer" in envelope
         assert envelope["producer"]["adapter"] == "devqubit-qiskit-runtime"
         assert "qiskit-ibm-runtime" in envelope["producer"]["frontends"]
 
-        # Device section - provider is physical (fake for fake backends)
         device = envelope["device"]
         assert device["provider"] in ("fake", "ibm_quantum", "aer", "local")
         valid_types = {"simulator", "hardware", "emulator", "sim", "hw", "qpu"}
@@ -164,20 +160,16 @@ class TestSamplerExecution:
         assert "captured_at" in device
         assert device["num_qubits"] is not None
 
-        # Program section
         assert "program" in envelope
         assert envelope["program"]["num_circuits"] >= 1
 
-        # Execution section
         assert "execution" in envelope
         assert "transpilation" in envelope["execution"]
 
-        # Result section (UEC 1.0)
         result = envelope["result"]
         assert result["success"] is True
         assert result["status"] == "completed"
         assert len(result.get("items", [])) >= 1
-        # Primitive type is in metadata
         assert result["metadata"]["primitive_type"] == "sampler"
 
 
@@ -204,17 +196,13 @@ class TestEstimatorExecution:
 
         assert "result.qiskit_runtime.output.json" in kinds
         assert "devqubit.envelope.json" in kinds
-
-        # Estimator should not produce counts artifact
         assert "result.counts.json" not in kinds
         assert loaded.record["execute"]["primitive_type"] == "estimator"
 
-        # Verify expectation values are in the envelope result
         assert len(envelopes) == 1
         envelope = envelopes[0]
         result = envelope["result"]
         assert result["success"] is True
-        # Estimator results have expectation items or metadata
         assert result["metadata"]["primitive_type"] == "estimator"
 
 
@@ -228,10 +216,7 @@ class TestSamplingBehavior:
         fake_sampler,
         bell_circuit,
     ):
-        """
-        Default behavior (log_every_n=0, log_new_circuits=True): only first execution
-        of a circuit structure is logged. This protects training loops.
-        """
+        """Default behavior (log_every_n=0): only first execution logged."""
         adapter = QiskitRuntimeAdapter()
 
         with track(project="rt_sampling_zero", store=store, registry=registry) as run:
@@ -247,7 +232,6 @@ class TestSamplingBehavior:
 
         loaded = registry.load(run.run_id)
 
-        # Only one logged result/envelope despite two executions
         assert _count_kind(loaded, "result.qiskit_runtime.output.json") == 1
         assert _count_kind(loaded, "result.counts.json") == 1
         assert _count_kind(loaded, "devqubit.envelope.json") == 1
@@ -261,7 +245,6 @@ class TestSamplingBehavior:
         bell_circuit,
     ):
         """With log_every_n=2: logs on execution 1, 2, 4 (not 3)."""
-
         adapter = QiskitRuntimeAdapter()
 
         with track(project="rt_sampling_two", store=store, registry=registry) as run:
@@ -272,23 +255,15 @@ class TestSamplingBehavior:
                 log_new_circuits=False,
             )
 
-            wrapped.run(
-                [(bell_circuit,)], shots=64
-            ).result()  # exec 1 -> logged (first)
-            wrapped.run(
-                [(bell_circuit,)], shots=64
-            ).result()  # exec 2 -> logged (2%2=0)
-            wrapped.run([(bell_circuit,)], shots=64).result()  # exec 3 -> NOT logged
-            wrapped.run(
-                [(bell_circuit,)], shots=64
-            ).result()  # exec 4 -> logged (4%2=0)
+            wrapped.run([(bell_circuit,)], shots=64).result()  # exec 1 -> logged
+            wrapped.run([(bell_circuit,)], shots=64).result()  # exec 2 -> logged
+            wrapped.run([(bell_circuit,)], shots=64).result()  # exec 3 -> NOT
+            wrapped.run([(bell_circuit,)], shots=64).result()  # exec 4 -> logged
 
         loaded = registry.load(run.run_id)
 
-        # Should have 3 result artifacts (exec 1, 2, 4)
         assert _count_kind(loaded, "result.qiskit_runtime.output.json") == 3
         assert _count_kind(loaded, "devqubit.envelope.json") == 3
-        # Structure logged only for first execution
         assert _count_kind(loaded, "qiskit_runtime.pubs.json") == 1
 
     def test_log_new_circuits_triggers_on_new_structure(
@@ -321,7 +296,7 @@ class TestSamplingBehavior:
 
 
 class TestResultIdempotency:
-    """Tests for job.result() idempotency (fix M1)."""
+    """Tests for job.result() idempotency."""
 
     def test_result_called_twice_no_duplicate_artifacts(
         self,
@@ -331,23 +306,19 @@ class TestResultIdempotency:
         bell_circuit,
     ):
         """Calling job.result() twice should NOT duplicate artifacts."""
-
         adapter = QiskitRuntimeAdapter()
 
         with track(project="idempotency_test", store=store, registry=registry) as run:
             wrapped = adapter.wrap_executor(fake_sampler, run)
             job = wrapped.run([(bell_circuit,)])
 
-            # Call result() twice
             result1 = job.result()
             result2 = job.result()
 
-            # Should return same result object
             assert result1 is result2
 
         loaded = registry.load(run.run_id)
 
-        # Should have exactly ONE of each artifact type
         assert _count_kind(loaded, "devqubit.envelope.json") == 1
         assert _count_kind(loaded, "result.qiskit_runtime.output.json") == 1
         assert _count_kind(loaded, "result.counts.json") == 1
@@ -360,15 +331,15 @@ class TestResultIdempotency:
             wrapped = adapter.wrap_executor(fake_sampler, run)
             job = wrapped.run([(bell_circuit,)])
 
-            assert job.result_snapshot is None  # Before result()
+            assert job.result_snapshot is None
 
             job.result()
             snapshot1 = job.result_snapshot
 
-            job.result()  # Second call
+            job.result()
             snapshot2 = job.result_snapshot
 
-            assert snapshot1 is snapshot2  # Same cached snapshot
+            assert snapshot1 is snapshot2
 
 
 class TestMultiplePubs:
@@ -394,7 +365,6 @@ class TestMultiplePubs:
         loaded, envelopes = _load_envelopes(run.run_id, store, registry)
 
         assert loaded.record["execute"]["num_pubs"] == 2
-        # UEC 1.0: check items count instead of num_experiments
         assert len(envelopes[0]["result"]["items"]) == 2
 
     def test_multi_circuit_qasm3_artifacts(
@@ -407,7 +377,6 @@ class TestMultiplePubs:
         simple_circuit,
     ):
         """Each circuit gets its own QASM3 artifact with correct index."""
-
         adapter = QiskitRuntimeAdapter()
         pubs = [(bell_circuit,), (ghz_circuit,), (simple_circuit,)]
 
@@ -418,25 +387,14 @@ class TestMultiplePubs:
 
         _, envelopes = _load_envelopes(run.run_id, store, registry)
 
-        # Check envelope has correct number of circuits
         assert envelopes[0]["program"]["num_circuits"] == 3
 
-        # Check that program.logical has artifacts for each circuit
         logical = envelopes[0]["program"].get("logical", [])
-
-        # Should have at least 3 QASM3 artifacts (one per circuit)
         qasm3_artifacts = [a for a in logical if a.get("format") == "openqasm3"]
-        assert (
-            len(qasm3_artifacts) >= 3
-        ), f"Expected at least 3 QASM3 artifacts (one per circuit), got {len(qasm3_artifacts)}"
+        assert len(qasm3_artifacts) >= 3
 
-        # Each should have a unique index 0, 1, 2
         indices = {a.get("index") for a in qasm3_artifacts}
-        assert indices == {
-            0,
-            1,
-            2,
-        }, f"QASM3 artifacts have incorrect indices: {indices}"
+        assert indices == {0, 1, 2}
 
 
 class TestPerPubShots:
@@ -451,10 +409,8 @@ class TestPerPubShots:
         ghz_circuit,
     ):
         """Per-PUB shots override global shots."""
-
         adapter = QiskitRuntimeAdapter()
 
-        # PUB with explicit shots=100, another with default (uses global 1024)
         pubs = [
             (bell_circuit, None, 100),  # Explicit 100 shots
             (ghz_circuit,),  # Uses global shots
@@ -465,18 +421,13 @@ class TestPerPubShots:
             job = wrapped.run(pubs, shots=1024)
             result = job.result()
 
-        # Check that results reflect different shot counts
         pub_results = list(result)
 
-        # First PUB should have ~100 shots
         pub0_shots = pub_results[0].metadata.get("shots", 0)
-        assert pub0_shots == 100, f"First PUB should have 100 shots, got {pub0_shots}"
+        assert pub0_shots == 100
 
-        # Second PUB should have global shots (1024)
         pub1_shots = pub_results[1].metadata.get("shots", 0)
-        assert (
-            pub1_shots == 1024
-        ), f"Second PUB should have 1024 shots, got {pub1_shots}"
+        assert pub1_shots == 1024
 
 
 class TestTranspilationModes:
@@ -572,7 +523,6 @@ class TestTranspilationModes:
         assert exec_rec["transpilation_mode"] == "auto"
         assert exec_rec["transpiled_by_devqubit"] is True
         assert exec_rec["transpilation_reason"] == "transpiled"
-        # When devqubit transpiles, executed hashes are recorded
         assert exec_rec.get("executed_structural_hash") or exec_rec.get(
             "executed_parametric_hash"
         )
@@ -582,14 +532,9 @@ class TestNoBackendPrimitive:
     """Tests for primitives without backend (graceful degradation)."""
 
     def test_no_backend_produces_envelope(self, store, registry, bell_circuit):
-        """
-        Primitive without backend should still produce envelope with minimal info.
-
-        This tests graceful degradation when backend resolution fails.
-        """
+        """Primitive without backend should still produce envelope."""
         adapter = QiskitRuntimeAdapter()
 
-        # Define mock classes inline (can't import from conftest at runtime)
         class MockPubResult:
             def __init__(self, counts):
                 self._counts = counts
@@ -652,7 +597,6 @@ class TestNoBackendPrimitive:
         loaded = registry.load(run.run_id)
         kinds = _kinds(loaded)
 
-        # Should still produce core artifacts
         assert "devqubit.envelope.json" in kinds
         assert "result.counts.json" in kinds
 
@@ -668,7 +612,6 @@ class TestJoinDataFallback:
         bell_circuit,
     ):
         """Sampler result extraction uses join_data() when available."""
-
         adapter = QiskitRuntimeAdapter()
 
         with track(project="join_data", store=store, registry=registry) as run:
@@ -676,11 +619,9 @@ class TestJoinDataFallback:
             job = wrapped.run([(bell_circuit,)])
             result = job.result()
 
-        # Verify result was extracted successfully
         pub_result = list(result)[0]
         assert hasattr(pub_result, "join_data")
 
-        # join_data() should return object with get_counts()
         joined = pub_result.join_data()
         assert hasattr(joined, "get_counts")
         counts = joined.get_counts()
@@ -764,7 +705,6 @@ class TestResultSnapshotUECCompliance:
 
         loaded, envelopes = _load_envelopes(run.run_id, store, registry)
 
-        # Verify envelope has estimator result
         assert len(envelopes) == 1
         envelope = envelopes[0]
         result = envelope["result"]

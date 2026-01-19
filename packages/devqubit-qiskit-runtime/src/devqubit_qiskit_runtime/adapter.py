@@ -84,9 +84,10 @@ from devqubit_qiskit_runtime.circuits import (
     compute_parametric_hash,
     compute_structural_hash,
 )
-from devqubit_qiskit_runtime.envelope import (
+from devqubit_qiskit_runtime.device import (
+    create_device_snapshot,
     create_failure_result_snapshot,
-    detect_physical_provider,
+    detect_provider,
     finalize_envelope_with_result,
 )
 from devqubit_qiskit_runtime.pubs import (
@@ -98,7 +99,6 @@ from devqubit_qiskit_runtime.results import (
     build_estimator_result_snapshot,
     build_sampler_result_snapshot,
 )
-from devqubit_qiskit_runtime.snapshot import create_device_snapshot
 from devqubit_qiskit_runtime.transpilation import (
     TranspilationConfig,
     TranspilationOptions,
@@ -766,7 +766,7 @@ class TrackedRuntimePrimitive:
             )
 
         # Tags - use physical provider, not SDK
-        physical_provider = detect_physical_provider(self.primitive)
+        physical_provider = detect_provider(self.primitive)
         self.tracker.set_tag("provider", physical_provider)
         self.tracker.set_tag("adapter", "qiskit-runtime")
         self.tracker.set_tag("backend_name", exec_name)
@@ -1081,7 +1081,7 @@ class QiskitRuntimeAdapter:
         return {
             "name": get_backend_name(executor),
             "type": executor.__class__.__name__,
-            "provider": detect_physical_provider(executor),  # Physical provider
+            "provider": detect_provider(executor),  # Physical provider
             "primitive_type": get_primitive_type(executor),
         }
 

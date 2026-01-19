@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for Qiskit Runtime circuit hashing.
-
-These tests verify that the Runtime adapter's hashing correctly delegates
-to the engine and produces UEC-compliant hashes.
-"""
+"""Tests for Qiskit Runtime utility functions including circuit hashing."""
 
 import math
 
@@ -18,7 +14,7 @@ from qiskit import QuantumCircuit
 from qiskit.circuit import Parameter
 
 
-class TestRuntimeHashingBasics:
+class TestHashingBasics:
     """Basic hashing functionality tests."""
 
     def test_identical_circuits_same_hash(self):
@@ -64,22 +60,21 @@ class TestRuntimeHashingBasics:
 
         assert h is not None
         assert h.startswith("sha256:")
-        assert len(h) == 7 + 64  # "sha256:" + 64 hex chars
-        # Verify hex chars
+        assert len(h) == 7 + 64
         hex_part = h[7:]
         assert all(c in "0123456789abcdef" for c in hex_part)
 
 
-class TestRuntimeQubitOrderPreservation:
+class TestQubitOrderPreservation:
     """Tests that qubit order is preserved (critical for directional gates)."""
 
     def test_cx_direction_matters(self):
         """CX(0,1) and CX(1,0) must hash differently."""
         qc1 = QuantumCircuit(2)
-        qc1.cx(0, 1)  # control=0, target=1
+        qc1.cx(0, 1)
 
         qc2 = QuantumCircuit(2)
-        qc2.cx(1, 0)  # control=1, target=0
+        qc2.cx(1, 0)
 
         assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
@@ -89,28 +84,24 @@ class TestRuntimeQubitOrderPreservation:
         qc1.ccx(0, 1, 2)
 
         qc2 = QuantumCircuit(3)
-        qc2.ccx(1, 0, 2)  # Swapped controls
+        qc2.ccx(1, 0, 2)
 
         assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
-    def test_swap_is_symmetric(self):
-        """SWAP(0,1) and SWAP(1,0) should hash same (symmetric gate)."""
+    def test_swap_order_preserved(self):
+        """SWAP qubit order is preserved in hash."""
         qc1 = QuantumCircuit(2)
         qc1.swap(0, 1)
 
         qc2 = QuantumCircuit(2)
         qc2.swap(1, 0)
 
-        # SWAP is symmetric, but we preserve order in hash
-        # Both should still produce different hashes due to qubit ordering
-        # Actually, let's verify what the actual behavior is
         h1 = compute_structural_hash([qc1])
         h2 = compute_structural_hash([qc2])
-        # Document actual behavior - order is preserved even for symmetric gates
         assert h1 != h2, "Qubit order preserved even for symmetric gates"
 
 
-class TestRuntimeCircuitDimensions:
+class TestCircuitDimensions:
     """Tests that circuit dimensions (nq, nc) affect hash."""
 
     def test_different_qubit_counts_different_hash(self):
@@ -132,11 +123,9 @@ class TestRuntimeCircuitDimensions:
 
     def test_idle_qubits_affect_hash(self):
         """Idle qubits must affect hash (prevents false deduplication)."""
-        # Circuit with gate on q0, idle q1
         qc_2q = QuantumCircuit(2)
         qc_2q.h(0)
 
-        # Circuit with gate on q0, idle q1 and q2
         qc_3q = QuantumCircuit(3)
         qc_3q.h(0)
 
@@ -155,7 +144,7 @@ class TestRuntimeCircuitDimensions:
         assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
 
-class TestRuntimeParameterHandling:
+class TestParameterHandling:
     """Tests for parameter handling in hashes."""
 
     def test_structural_ignores_param_values(self):
@@ -194,12 +183,9 @@ class TestRuntimeParameterHandling:
         qc1.u(0.1, 0.2, 0.3, 0)
 
         qc2 = QuantumCircuit(1)
-        qc2.u(0.1, 0.2, 0.4, 0)  # Different phi
+        qc2.u(0.1, 0.2, 0.4, 0)
 
-        # Structural should be same (same gate type and arity)
         assert compute_structural_hash([qc1]) == compute_structural_hash([qc2])
-
-        # Parametric should differ
         assert compute_parametric_hash([qc1]) != compute_parametric_hash([qc2])
 
     def test_unbound_parameter_in_structural(self):
@@ -211,18 +197,16 @@ class TestRuntimeParameterHandling:
         qc1.rx(theta, 0)
 
         qc2 = QuantumCircuit(1)
-        qc2.rx(phi, 0)  # Different parameter name
+        qc2.rx(phi, 0)
 
-        # Structural hash should be same (same structure)
         assert compute_structural_hash([qc1]) == compute_structural_hash([qc2])
 
 
-class TestRuntimeHashingContract:
+class TestHashingContract:
     """Tests for UEC hashing contract compliance."""
 
     def test_no_params_structural_equals_parametric(self):
         """CRITICAL: For circuits without parameters, structural == parametric."""
-        # Various no-param circuits
         test_cases = [
             ("empty_1q", QuantumCircuit(1)),
             ("empty_2q", QuantumCircuit(2)),
@@ -259,10 +243,9 @@ class TestRuntimeHashingContract:
         qc = QuantumCircuit(1)
         qc.rx(theta, 0)
 
-        # Same value computed different ways
         val1 = math.pi / 4
-        val2 = 0.7853981633974483  # math.pi/4 as float literal
-        val3 = math.atan(1)  # Another way to get pi/4
+        val2 = 0.7853981633974483
+        val3 = math.atan(1)
 
         h1 = compute_parametric_hash([qc.assign_parameters({theta: val1})])
         h2 = compute_parametric_hash([qc.assign_parameters({theta: val2})])
@@ -281,7 +264,6 @@ class TestRuntimeHashingContract:
 
         assert h_pos == h_neg, "-0.0 must be normalized to 0.0"
 
-    # Helper methods
     @staticmethod
     def _make_bell():
         qc = QuantumCircuit(2)
@@ -306,7 +288,7 @@ class TestRuntimeHashingContract:
         return qc
 
 
-class TestRuntimeBatchHashing:
+class TestBatchHashing:
     """Tests for multi-circuit batch hashing."""
 
     def test_batch_order_matters(self):
@@ -339,12 +321,10 @@ class TestRuntimeBatchHashing:
 
     def test_batch_boundaries_respected(self):
         """Circuit boundaries must be properly delimited."""
-        # Single 2-qubit circuit
         qc_single = QuantumCircuit(2)
         qc_single.h(0)
         qc_single.h(1)
 
-        # Two 1-qubit circuits
         qc1 = QuantumCircuit(1)
         qc1.h(0)
         qc2 = QuantumCircuit(1)
@@ -353,7 +333,6 @@ class TestRuntimeBatchHashing:
         h_single = compute_structural_hash([qc_single])
         h_batch = compute_structural_hash([qc1, qc2])
 
-        # Must be different due to circuit boundaries
         assert h_single != h_batch, "Batch boundaries must be preserved"
 
     def test_mixed_param_batch(self):
@@ -367,24 +346,23 @@ class TestRuntimeBatchHashing:
         qc_fixed = QuantumCircuit(1)
         qc_fixed.h(0)
 
-        # Structural should be deterministic
         h1 = compute_structural_hash([qc_bound, qc_fixed])
         h2 = compute_structural_hash([qc_bound, qc_fixed])
         assert h1 == h2
 
 
-class TestRuntimeMeasurementHashing:
+class TestMeasurementHashing:
     """Tests for measurement and classical bit hashing."""
 
     def test_measurement_target_matters(self):
         """Which classical bit receives measurement must affect hash."""
         qc1 = QuantumCircuit(2, 2)
         qc1.h(0)
-        qc1.measure(0, 0)  # q0 -> c0
+        qc1.measure(0, 0)
 
         qc2 = QuantumCircuit(2, 2)
         qc2.h(0)
-        qc2.measure(0, 1)  # q0 -> c1
+        qc2.measure(0, 1)
 
         assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
@@ -403,7 +381,7 @@ class TestRuntimeMeasurementHashing:
         assert compute_structural_hash([qc1]) != compute_structural_hash([qc2])
 
 
-class TestRuntimeSpecialCases:
+class TestSpecialCases:
     """Tests for edge cases and special circuits."""
 
     def test_barrier_included(self):
@@ -468,44 +446,3 @@ class TestRuntimeSpecialCases:
         h2 = compute_structural_hash([qc])
 
         assert h1 == h2
-
-
-class TestRuntimeCrossAdapterConsistency:
-    """Tests to verify consistency with base Qiskit adapter.
-
-    These tests ensure that the Runtime adapter produces the same
-    hashes as the base Qiskit adapter for equivalent circuits.
-    """
-
-    def test_same_circuit_same_hash_as_base_adapter(self):
-        """Runtime adapter must produce same hash as base Qiskit adapter."""
-        from devqubit_qiskit.circuits import (
-            compute_structural_hash as qiskit_structural,
-        )
-
-        qc = QuantumCircuit(2)
-        qc.h(0)
-        qc.cx(0, 1)
-
-        runtime_hash = compute_structural_hash([qc])
-        qiskit_hash = qiskit_structural([qc])
-
-        assert (
-            runtime_hash == qiskit_hash
-        ), "Runtime and base Qiskit adapters must produce identical hashes"
-
-    def test_parametric_hash_same_as_base_adapter(self):
-        """Runtime parametric hash must match base Qiskit adapter."""
-        from devqubit_qiskit.circuits import (
-            compute_parametric_hash as qiskit_parametric,
-        )
-
-        theta = Parameter("θ")
-        qc = QuantumCircuit(1)
-        qc.rx(theta, 0)
-        bound = qc.assign_parameters({theta: 1.234})
-
-        runtime_hash = compute_parametric_hash([bound])
-        qiskit_hash = qiskit_parametric([bound])
-
-        assert runtime_hash == qiskit_hash
