@@ -4,17 +4,8 @@
 """
 Envelope and snapshot utilities for Qiskit adapter.
 
-This module provides functions for creating UEC snapshots and
-managing ExecutionEnvelope lifecycle.
-
-UEC Compliance
---------------
-All snapshots follow devqubit Uniform Execution Contract:
-
-- DeviceSnapshot: Physical provider (not SDK), calibration state
-- ProgramSnapshot: Logical/physical artifacts with 4 hashes
-- ExecutionSnapshot: Job IDs, transpilation info
-- ResultSnapshot: Normalized counts with bit order metadata
+Provides functions for creating UEC snapshots and managing
+ExecutionEnvelope lifecycle.
 """
 
 from __future__ import annotations
@@ -41,41 +32,17 @@ from devqubit_engine.uec.models.result import (
 )
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
+from devqubit_qiskit.device import create_device_snapshot, detect_provider
 from devqubit_qiskit.results import extract_result_metadata, normalize_result_counts
-from devqubit_qiskit.snapshot import create_device_snapshot
 from devqubit_qiskit.utils import get_backend_name, qiskit_version
 
 
 logger = logging.getLogger(__name__)
 
 
-def detect_physical_provider(backend: Any) -> str:
-    """
-    Detect physical provider from backend (not SDK).
-
-    UEC requires provider to be the physical backend provider,
-    not the SDK name. SDK goes in producer.frontends[].
-
-    Parameters
-    ----------
-    backend : Any
-        Qiskit backend instance.
-
-    Returns
-    -------
-    str
-        Physical provider: "ibm_quantum", "aer", "fake", or "local".
-    """
-    module_name = type(backend).__module__.lower()
-    backend_name = get_backend_name(backend).lower()
-
-    if "ibm" in module_name or "ibm_" in backend_name:
-        return "ibm_quantum"
-    if "qiskit_aer" in module_name or "aer" in module_name:
-        return "aer"
-    if "fake" in module_name:
-        return "fake"
-    return "local"
+# =============================================================================
+# Program Snapshot
+# =============================================================================
 
 
 def create_program_snapshot(
@@ -117,6 +84,11 @@ def create_program_snapshot(
         executed_parametric_hash=parametric_hash,
         num_circuits=num_circuits,
     )
+
+
+# =============================================================================
+# Execution Snapshot
+# =============================================================================
 
 
 def create_execution_snapshot(
@@ -166,6 +138,11 @@ def create_execution_snapshot(
     )
 
 
+# =============================================================================
+# Result Snapshot
+# =============================================================================
+
+
 def create_result_snapshot(
     tracker: Run,
     backend_name: str,
@@ -173,9 +150,6 @@ def create_result_snapshot(
 ) -> ResultSnapshot:
     """
     Create a ResultSnapshot from a Qiskit Result object.
-
-    Uses UEC 1.0 structure with items[], CountsFormat for
-    cross-SDK comparability.
 
     Parameters
     ----------
@@ -205,22 +179,10 @@ def create_result_snapshot(
             metadata={"backend_name": backend_name},
         )
 
-    raw_result_ref: ArtifactRef | None = None
-    try:
-        if hasattr(result, "to_dict") and callable(result.to_dict):
-            result_dict = result.to_dict()
-        else:
-            result_dict = result
-        payload = to_jsonable(result_dict)
-        raw_result_ref = tracker.log_json(
-            name="qiskit.result",
-            obj=payload,
-            role="results",
-            kind="result.qiskit.result_json",
-        )
-    except Exception as e:
-        logger.debug("Failed to serialize result to dict: %s", e)
+    # Log raw result
+    raw_result_ref = _log_raw_result(tracker, result)
 
+    # Normalize and log counts
     counts_data = normalize_result_counts(result)
     experiments = counts_data.get("experiments", [])
 
@@ -232,6 +194,7 @@ def create_result_snapshot(
             kind="result.counts.json",
         )
 
+    # Build result items
     counts_format = CountsFormat(
         source_sdk="qiskit",
         source_key_format="qiskit_little_endian",
@@ -283,9 +246,6 @@ def create_failure_result_snapshot(
     """
     Create a ResultSnapshot for a failed execution.
 
-    Used when job.result() raises an exception. Ensures envelope
-    is always created even on failures (UEC requirement).
-
     Parameters
     ----------
     exception : BaseException
@@ -302,6 +262,30 @@ def create_failure_result_snapshot(
         exception=exception,
         metadata={"backend_name": backend_name},
     )
+
+
+def _log_raw_result(tracker: Run, result: Any) -> ArtifactRef | None:
+    """Log raw result as JSON artifact."""
+    try:
+        if hasattr(result, "to_dict") and callable(result.to_dict):
+            result_dict = result.to_dict()
+        else:
+            result_dict = result
+        payload = to_jsonable(result_dict)
+        return tracker.log_json(
+            name="qiskit.result",
+            obj=payload,
+            role="results",
+            kind="result.qiskit.result_json",
+        )
+    except Exception as e:
+        logger.debug("Failed to serialize result to dict: %s", e)
+        return None
+
+
+# =============================================================================
+# Envelope Lifecycle
+# =============================================================================
 
 
 def finalize_envelope_with_result(
@@ -340,74 +324,14 @@ def finalize_envelope_with_result(
     tracker.log_envelope(envelope=envelope)
 
 
-def create_minimal_device_snapshot(
-    backend: Any,
-    captured_at: str,
-    error_msg: str | None = None,
-) -> DeviceSnapshot:
-    """
-    Create a minimal DeviceSnapshot when full snapshot creation fails.
-
-    Ensures envelope can always be completed even if backend introspection
-    fails due to network issues or unsupported backend types.
-
-    Parameters
-    ----------
-    backend : Any
-        Qiskit backend (may be partially functional).
-    captured_at : str
-        ISO timestamp.
-    error_msg : str, optional
-        Error message explaining why full snapshot failed.
-
-    Returns
-    -------
-    DeviceSnapshot
-        Minimal snapshot with available information.
-    """
-    backend_name = get_backend_name(backend)
-    name_lower = backend_name.lower()
-    type_lower = type(backend).__name__.lower()
-
-    backend_type = "simulator"
-    if any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
-        backend_type = "hardware"
-    elif any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
-        backend_type = "simulator"
-
-    provider = detect_physical_provider(backend)
-
-    num_qubits = None
-    try:
-        num_qubits = backend.num_qubits
-    except Exception:
-        pass
-
-    snapshot = DeviceSnapshot(
-        captured_at=captured_at,
-        backend_name=backend_name,
-        backend_type=backend_type,
-        provider=provider,
-        num_qubits=num_qubits,
-        sdk_versions={"qiskit": qiskit_version()},
-    )
-
-    if error_msg:
-        logger.warning(
-            "Created minimal device snapshot for %s: %s",
-            backend_name,
-            error_msg,
-        )
-
-    return snapshot
+# =============================================================================
+# Device Snapshot Logging
+# =============================================================================
 
 
 def log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
     """
     Log device snapshot with fallback to minimal snapshot on failure.
-
-    Logs both the snapshot summary and raw properties as separate artifacts
-    for complete backend state capture.
 
     Parameters
     ----------
@@ -436,9 +360,7 @@ def log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
             backend_name,
             e,
         )
-        snapshot = create_minimal_device_snapshot(
-            backend, captured_at, error_msg=str(e)
-        )
+        snapshot = _create_minimal_device_snapshot(backend, captured_at, str(e))
 
     tracker.record["device_snapshot"] = {
         "sdk": "qiskit",
@@ -450,6 +372,45 @@ def log_device_snapshot(backend: Any, tracker: Run) -> DeviceSnapshot:
         "calibration_summary": snapshot.get_calibration_summary(),
     }
 
-    logger.debug("Logged device snapshot for %s", backend_name)
-
     return snapshot
+
+
+def _create_minimal_device_snapshot(
+    backend: Any,
+    captured_at: str,
+    error_msg: str | None = None,
+) -> DeviceSnapshot:
+    """Create a minimal DeviceSnapshot when full snapshot creation fails."""
+    backend_name = get_backend_name(backend)
+    name_lower = backend_name.lower()
+    type_lower = type(backend).__name__.lower()
+
+    backend_type = "simulator"
+    if any(s in name_lower for s in ("ibm_", "ionq", "rigetti", "oqc")):
+        backend_type = "hardware"
+    elif any(s in name_lower or s in type_lower for s in ("sim", "emulator", "fake")):
+        backend_type = "simulator"
+
+    provider = detect_provider(backend)
+
+    num_qubits = None
+    try:
+        num_qubits = backend.num_qubits
+    except Exception:
+        pass
+
+    if error_msg:
+        logger.warning(
+            "Created minimal device snapshot for %s: %s",
+            backend_name,
+            error_msg,
+        )
+
+    return DeviceSnapshot(
+        captured_at=captured_at,
+        backend_name=backend_name,
+        backend_type=backend_type,
+        provider=provider,
+        num_qubits=num_qubits,
+        sdk_versions={"qiskit": qiskit_version()},
+    )
