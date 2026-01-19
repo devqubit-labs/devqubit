@@ -206,7 +206,12 @@ def _normalize_operation(
     return normalized
 
 
-def hash_structural(op_stream: list[dict[str, Any]]) -> str:
+def hash_structural(
+    op_stream: list[dict[str, Any]],
+    *,
+    num_qubits: int | None = None,
+    num_clbits: int | None = None,
+) -> str:
     """
     Compute structural hash of circuit operation stream.
 
@@ -224,6 +229,12 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
         - params: Optional parameter names or values
         - controls: Optional control qubit indices
         - clbits: Optional classical bit indices
+    num_qubits : int, optional
+        Total number of qubits in circuit. If provided, circuits with
+        different qubit counts will have different hashes even if the
+        gate stream is identical (prevents idle qubit collisions).
+    num_clbits : int, optional
+        Total number of classical bits in circuit.
 
     Returns
     -------
@@ -237,7 +248,7 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
     ...     {"gate": "cx", "qubits": [0, 1]},
     ...     {"gate": "rz", "qubits": [0], "params": {"theta": 0.5}},
     ... ]
-    >>> hash_structural(ops)
+    >>> hash_structural(ops, num_qubits=2)
     'sha256:abc123...'
 
     Notes
@@ -252,9 +263,16 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
         _normalize_operation(op, include_params=False) for op in op_stream
     ]
 
+    # Build payload with optional circuit dimensions
+    payload: dict[str, Any] = {"ops": normalized_ops}
+    if num_qubits is not None:
+        payload["nq"] = int(num_qubits)
+    if num_clbits is not None:
+        payload["nc"] = int(num_clbits)
+
     # Create deterministic JSON representation
     canonical = json.dumps(
-        {"ops": normalized_ops},
+        payload,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -267,6 +285,9 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
 def hash_parametric(
     op_stream: list[dict[str, Any]],
     bound_params: dict[str, Any] | None = None,
+    *,
+    num_qubits: int | None = None,
+    num_clbits: int | None = None,
 ) -> str:
     """
     Compute parametric hash of circuit with bound parameters.
@@ -283,6 +304,10 @@ def hash_parametric(
         Dictionary mapping parameter names to values. If provided, these
         values are merged with inline param values from op_stream.
         Only parameters actually used in op_stream are included in hash.
+    num_qubits : int, optional
+        Total number of qubits in circuit.
+    num_clbits : int, optional
+        Total number of classical bits in circuit.
 
     Returns
     -------
@@ -296,7 +321,7 @@ def hash_parametric(
     ...     {"gate": "rz", "qubits": [0], "params": {"theta": None}},
     ... ]
     >>> bound = {"theta": 1.5707963267948966}
-    >>> hash_parametric(ops, bound)
+    >>> hash_parametric(ops, bound, num_qubits=1)
     'sha256:def456...'
 
     Notes
@@ -344,9 +369,19 @@ def hash_parametric(
         str(k): _normalize_param_value(v) for k, v in sorted(filtered_bound.items())
     }
 
+    # Build payload with optional circuit dimensions
+    payload: dict[str, Any] = {
+        "ops": normalized_ops,
+        "bound": normalized_bound,
+    }
+    if num_qubits is not None:
+        payload["nq"] = int(num_qubits)
+    if num_clbits is not None:
+        payload["nc"] = int(num_clbits)
+
     # Create deterministic JSON representation
     canonical = json.dumps(
-        {"ops": normalized_ops, "bound": normalized_bound},
+        payload,
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=True,
@@ -359,6 +394,9 @@ def hash_parametric(
 def hash_circuit_pair(
     op_stream: list[dict[str, Any]],
     bound_params: dict[str, Any] | None = None,
+    *,
+    num_qubits: int | None = None,
+    num_clbits: int | None = None,
 ) -> tuple[str, str]:
     """
     Compute both structural and parametric hashes in one call.
@@ -371,6 +409,10 @@ def hash_circuit_pair(
         List of operation dictionaries.
     bound_params : dict, optional
         Bound parameter values.
+    num_qubits : int, optional
+        Total number of qubits in circuit.
+    num_clbits : int, optional
+        Total number of classical bits in circuit.
 
     Returns
     -------
@@ -380,8 +422,17 @@ def hash_circuit_pair(
     Examples
     --------
     >>> ops = [{"gate": "rx", "qubits": [0], "params": {"theta": 0.5}}]
-    >>> struct, param = hash_circuit_pair(ops)
+    >>> struct, param = hash_circuit_pair(ops, num_qubits=1)
     """
-    structural = hash_structural(op_stream)
-    parametric = hash_parametric(op_stream, bound_params)
+    structural = hash_structural(
+        op_stream,
+        num_qubits=num_qubits,
+        num_clbits=num_clbits,
+    )
+    parametric = hash_parametric(
+        op_stream,
+        bound_params,
+        num_qubits=num_qubits,
+        num_clbits=num_clbits,
+    )
     return structural, parametric
