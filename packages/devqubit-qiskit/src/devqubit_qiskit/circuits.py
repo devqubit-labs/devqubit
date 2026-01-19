@@ -7,6 +7,14 @@ Circuit handling utilities for Qiskit adapter.
 This module provides functions for materializing, hashing, serializing,
 and logging Qiskit QuantumCircuit objects. Uses canonical devqubit_engine
 hashing for cross-SDK consistency.
+
+Hashing Contract
+----------------
+All hashing is delegated to ``devqubit_engine.circuit.hashing`` to ensure:
+
+- Identical circuits produce identical hashes across SDKs
+- IEEE-754 float encoding for determinism
+- For circuits without parameters: ``parametric_hash == structural_hash``
 """
 
 from __future__ import annotations
@@ -25,7 +33,6 @@ from qiskit import QuantumCircuit
 
 logger = logging.getLogger(__name__)
 
-# Module-level serializer instance
 _serializer = QiskitCircuitSerializer()
 
 
@@ -52,18 +59,15 @@ def materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
     if circuits is None:
         return [], False
 
-    # QuantumCircuit is iterable over instructions, so check explicitly
     if isinstance(circuits, QuantumCircuit):
         return [circuits], True
 
     if isinstance(circuits, (list, tuple)):
         return list(circuits), False
 
-    # Generic iterables (generator, iterator, etc.)
     try:
         return list(circuits), False
     except TypeError:
-        # Not iterable -> treat as a single circuit-like payload
         return [circuits], True
 
 
@@ -92,18 +96,16 @@ def circuit_to_op_stream(circuit: QuantumCircuit) -> list[dict[str, Any]]:
         - clbits : list of int, optional
             Ordered classical bit indices for measurements.
         - params : dict, optional
-            Parameter dict with keys like "p0", "p1", etc.
+            Parameter dict with encoded values.
         - condition : dict, optional
-            Classical condition info with type, target, and value.
+            Classical condition with type, target, and value.
 
     Notes
     -----
     Qubit order is preserved (not sorted) because many gates are
     directional. For example, CX(0,1) has control=0, target=1,
-    while CX(1,0) has control=1, target=0. Sorting would lose
-    this distinction.
+    while CX(1,0) has control=1, target=0.
     """
-    # Build index maps for fast lookup
     qubit_idx = {q: i for i, q in enumerate(circuit.qubits)}
     clbit_idx = {c: i for i, c in enumerate(circuit.clbits)}
 
@@ -115,23 +117,19 @@ def circuit_to_op_stream(circuit: QuantumCircuit) -> list[dict[str, Any]]:
         if not isinstance(name, str) or not name:
             name = type(operation).__name__
 
-        # Extract qubit indices - preserve order for directional gates!
         qubits: list[int] = []
         for q in instr.qubits:
             if q in qubit_idx:
                 qubits.append(qubit_idx[q])
             else:
-                # Fallback for unusual bit containers
                 bit_info = circuit.find_bit(q)
                 qubits.append(getattr(bit_info, "index", -1))
 
-        # Build operation dict
         op_dict: dict[str, Any] = {
             "gate": name.lower(),
             "qubits": qubits,
         }
 
-        # Classical bits - preserve order for measurement mapping
         if instr.clbits:
             clbits: list[int] = []
             for c in instr.clbits:
@@ -142,14 +140,12 @@ def circuit_to_op_stream(circuit: QuantumCircuit) -> list[dict[str, Any]]:
                     clbits.append(getattr(bit_info, "index", -1))
             op_dict["clbits"] = clbits
 
-        # Extract parameters
         raw_params = getattr(operation, "params", None)
         if raw_params:
             params = _extract_params(raw_params)
             if params:
                 op_dict["params"] = params
 
-        # Extract classical condition
         condition = _extract_condition(operation, clbit_idx)
         if condition:
             op_dict["condition"] = condition
@@ -164,6 +160,7 @@ def _extract_params(raw_params: Any) -> dict[str, Any] | None:
     Extract parameters from Qiskit gate params.
 
     Handles three cases:
+
     - Unbound Parameter: stores None with parameter name
     - ParameterExpression: stores None with expression string
     - Numeric value: stores float value
@@ -186,16 +183,13 @@ def _extract_params(raw_params: Any) -> dict[str, Any] | None:
     for i, p in enumerate(raw_params):
         key = f"p{i}"
 
-        # Qiskit Parameter (unbound)
         if hasattr(p, "name") and hasattr(p, "_symbol_expr"):
             params[key] = None
             params[f"{key}_name"] = str(p.name)
-        # Qiskit ParameterExpression
         elif hasattr(p, "parameters") and hasattr(p, "_symbol_expr"):
             params[key] = None
             params[f"{key}_expr"] = str(p)
         else:
-            # Numeric value
             try:
                 params[key] = float(p)
             except (TypeError, ValueError):
@@ -243,30 +237,25 @@ def _extract_condition(
     try:
         target, value = cond
 
-        # Determine if condition is on register or single bit
         if hasattr(target, "name"):
-            # ClassicalRegister
             return {
                 "type": "register",
                 "register": str(target.name),
                 "value": int(value),
             }
         elif target in clbit_idx:
-            # Single classical bit
             return {
                 "type": "clbit",
                 "index": clbit_idx[target],
                 "value": int(value),
             }
         else:
-            # Fallback for unknown condition types
             return {
                 "type": "unknown",
                 "target": str(target),
                 "value": int(value),
             }
     except Exception:
-        # Condition exists but couldn't be parsed
         return {"type": "present"}
 
 
@@ -393,8 +382,7 @@ def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:
     -----
     UEC Contract: For circuits without parameter values in ops,
     parametric_hash == structural_hash. This is handled by the
-    engine's hash_parametric function which checks for actual
-    parameter values in the op_stream.
+    engine's hash_parametric function.
     """
     all_ops: list[dict[str, Any]] = []
     total_nq = 0
@@ -407,7 +395,6 @@ def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:
             total_nq += nq
             total_nc += nc
 
-            # Add circuit boundary marker for multi-circuit batches
             all_ops.append(
                 {
                     "gate": "__circuit__",
@@ -416,13 +403,11 @@ def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:
                 }
             )
 
-            # Add circuit operations
             ops = circuit_to_op_stream(circuit)
             all_ops.extend(ops)
 
         except Exception as e:
             logger.debug("Failed to convert circuit to op_stream: %s", e)
-            # Fallback: use string representation
             all_ops.append(
                 {
                     "gate": "__fallback__",
@@ -452,7 +437,7 @@ def circuits_to_text(circuits: list[Any]) -> str:
 
     for i, circuit in enumerate(circuits):
         if i > 0:
-            parts.append("")  # Blank line between circuits
+            parts.append("")
 
         name = getattr(circuit, "name", None) or f"circuit_{i}"
         parts.append(f"[{i}] {name}")
@@ -482,6 +467,7 @@ def serialize_and_log_circuits(
     properly handling multi-circuit batches.
 
     Formats logged:
+
     - QPY: Binary format, batch, lossless (Qiskit-specific)
     - OpenQASM3: Text format, per-circuit, portable
     - Diagram: Human-readable text representation
@@ -515,7 +501,6 @@ def serialize_and_log_circuits(
         "num_circuits": len(circuits),
     }
 
-    # Log circuits in QPY format (batch, lossless)
     try:
         qpy_data = _serializer.serialize(circuits, CircuitFormat.QPY)
         ref = tracker.log_bytes(
@@ -537,7 +522,6 @@ def serialize_and_log_circuits(
     except Exception as e:
         logger.debug("Failed to serialize circuits to QPY: %s", e)
 
-    # Log circuits in QASM3 format (per circuit, portable)
     oq3_items: list[dict[str, Any]] = []
     for i, c in enumerate(circuits):
         try:
@@ -555,7 +539,6 @@ def serialize_and_log_circuits(
 
     if oq3_items:
         oq3_result = tracker.log_openqasm3(oq3_items, name="circuits", meta=meta)
-        # Generate ProgramArtifact per circuit
         for item in oq3_result.get("items", []):
             ref = item.get("raw_ref")
             if ref:
@@ -571,7 +554,6 @@ def serialize_and_log_circuits(
                     )
                 )
 
-    # Log circuit diagrams (human-readable text)
     try:
         diagram_text = circuits_to_text(circuits)
         ref = tracker.log_bytes(
@@ -591,6 +573,6 @@ def serialize_and_log_circuits(
             )
         )
     except Exception:
-        pass  # Diagram logging is best-effort
+        pass
 
     return artifacts
