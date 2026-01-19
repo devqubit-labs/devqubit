@@ -38,37 +38,99 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import struct
 from typing import Any
 
-from devqubit_engine.utils.serialization import to_jsonable
 
-
-def _normalize_float(value: float, precision: int = 10) -> str:
+def _float_to_hex(value: float) -> str:
     """
-    Normalize float to deterministic string representation.
+    Convert float to deterministic IEEE-754 binary64 hex representation.
+
+    Handles special cases:
+    - -0.0 → 0.0 (normalized)
+    - NaN → "nan"
+    - ±inf → "inf" / "-inf"
 
     Parameters
     ----------
     value : float
-        Float value to normalize.
-    precision : int, default=10
-        Number of significant digits.
+        Float value to encode.
+
+    Returns
+    -------
+    str
+        Deterministic string representation.
+    """
+    # Handle special cases
+    if math.isnan(value):
+        return "nan"
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    # Normalize -0.0 to 0.0
+    if value == 0.0:
+        value = 0.0
+    # IEEE-754 binary64 big-endian hex
+    return struct.pack(">d", value).hex()
+
+
+def _collect_param_names(op_stream: list[dict[str, Any]]) -> set[str]:
+    """
+    Collect all parameter names used in the operation stream.
+
+    Parameters
+    ----------
+    op_stream : list of dict
+        List of operation dictionaries.
+
+    Returns
+    -------
+    set of str
+        Set of parameter names referenced in ops.
+    """
+    names: set[str] = set()
+    for op in op_stream:
+        params = op.get("params")
+        if params is None:
+            continue
+        if isinstance(params, dict):
+            for key, val in params.items():
+                # If value is None or a string placeholder, it's a param name
+                if val is None or isinstance(val, str):
+                    names.add(str(key))
+        elif isinstance(params, (list, tuple)):
+            for val in params:
+                if isinstance(val, str):
+                    names.add(val)
+    return names
+
+
+def _normalize_param_value(value: Any) -> str:
+    """
+    Normalize a parameter value to deterministic string.
+
+    Parameters
+    ----------
+    value : Any
+        Parameter value (float, int, or str).
 
     Returns
     -------
     str
         Normalized string representation.
     """
-    if value == 0.0:
-        return "0"
-    if abs(value) < 1e-15:
-        return "0"
-    return f"{value:.{precision}g}"
+    if isinstance(value, float):
+        return _float_to_hex(value)
+    if isinstance(value, int):
+        # Convert int to float for consistent representation
+        return _float_to_hex(float(value))
+    return str(value)
 
 
 def _normalize_operation(
     op: dict[str, Any],
     include_params: bool = False,
+    resolved_params: dict[str, Any] | None = None,
 ) -> dict:
     """
     Normalize an operation dict for hashing.
@@ -78,7 +140,9 @@ def _normalize_operation(
     op : dict
         Operation dictionary with keys like 'gate', 'qubits', 'params', 'controls'.
     include_params : bool, default=False
-        If True, include parameter values. If False, only include param names.
+        If True, include parameter values. If False, only include param structure.
+    resolved_params : dict, optional
+        Pre-resolved parameter values for parametric hashing.
 
     Returns
     -------
@@ -87,50 +151,57 @@ def _normalize_operation(
     """
     normalized: dict[str, Any] = {
         "gate": str(op.get("gate", "unknown")).lower(),
-        "qubits": sorted(int(q) for q in op.get("qubits", [])),
+        "qubits": [int(q) for q in op.get("qubits", [])],
     }
 
-    # Controls (for controlled gates)
+    # Controls can be sorted (control qubits are symmetric)
     if op.get("controls"):
         normalized["controls"] = sorted(int(c) for c in op["controls"])
 
-    # Classical bits (for measurements)
+    # Classical bits - preserve order for measurement mapping
     if op.get("clbits"):
-        normalized["clbits"] = sorted(int(c) for c in op["clbits"])
+        normalized["clbits"] = [int(c) for c in op["clbits"]]
 
-    # Parameters - structural hash only includes names, parametric includes values
-    if op.get("params"):
-        params = op["params"]
+    # Parameters
+    params = op.get("params")
+    if params:
         if include_params:
-            # Include actual values (for parametric hash)
+            # Parametric hash: include resolved values
             if isinstance(params, dict):
-                normalized["params"] = {
-                    str(k): (
-                        _normalize_float(float(v))
-                        if isinstance(v, (int, float))
-                        else str(v)
-                    )
-                    for k, v in sorted(params.items())
-                }
+                norm_params = {}
+                for k, v in sorted(params.items()):
+                    # Use resolved value if available
+                    if resolved_params and k in resolved_params:
+                        norm_params[str(k)] = _normalize_param_value(resolved_params[k])
+                    elif v is not None:
+                        norm_params[str(k)] = _normalize_param_value(v)
+                    else:
+                        # Unresolved placeholder
+                        norm_params[str(k)] = f"__unbound:{k}__"
+                normalized["params"] = norm_params
             elif isinstance(params, (list, tuple)):
-                normalized["params"] = [
-                    (
-                        _normalize_float(float(v))
-                        if isinstance(v, (int, float))
-                        else str(v)
-                    )
-                    for v in params
-                ]
+                normalized["params"] = [_normalize_param_value(v) for v in params]
         else:
-            # Only param names/positions (for structural hash)
+            # Structural hash: include param structure, not values
             if isinstance(params, dict):
                 normalized["param_names"] = sorted(str(k) for k in params.keys())
             elif isinstance(params, (list, tuple)):
-                normalized["param_count"] = len(params)
+                # Check if list contains string names
+                if all(isinstance(v, str) for v in params):
+                    # List of parameter names - include them for structural identity
+                    normalized["param_names"] = list(params)
+                else:
+                    # List of values - only record count
+                    normalized["param_count"] = len(params)
 
     # Condition (for conditional gates)
     if op.get("condition"):
-        normalized["condition"] = to_jsonable(op["condition"])
+        cond = op["condition"]
+        # Normalize condition to deterministic form
+        if isinstance(cond, dict):
+            normalized["condition"] = {str(k): v for k, v in sorted(cond.items())}
+        else:
+            normalized["condition"] = str(cond)
 
     return normalized
 
@@ -149,7 +220,7 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
     op_stream : list of dict
         List of operation dictionaries. Each operation should have:
         - gate: Gate name (str)
-        - qubits: List of qubit indices
+        - qubits: List of qubit indices (order preserved!)
         - params: Optional parameter names or values
         - controls: Optional control qubit indices
         - clbits: Optional classical bit indices
@@ -173,6 +244,9 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
     -----
     Adapters should convert their SDK-specific circuit representations
     to this canonical operation stream format before hashing.
+
+    Important: qubit order is preserved (not sorted) because many gates
+    are directional (e.g., CX(0,1) != CX(1,0)).
     """
     normalized_ops = [
         _normalize_operation(op, include_params=False) for op in op_stream
@@ -180,9 +254,10 @@ def hash_structural(op_stream: list[dict[str, Any]]) -> str:
 
     # Create deterministic JSON representation
     canonical = json.dumps(
-        {"version": "1.0", "ops": normalized_ops},
+        {"ops": normalized_ops},
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=True,
     )
 
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -207,6 +282,7 @@ def hash_parametric(
     bound_params : dict, optional
         Dictionary mapping parameter names to values. If provided, these
         values are merged with inline param values from op_stream.
+        Only parameters actually used in op_stream are included in hash.
 
     Returns
     -------
@@ -227,10 +303,19 @@ def hash_parametric(
     -----
     If circuit has no parameters, ``parametric_hash == structural_hash``.
     This is the expected behavior per UEC spec.
+
+    Only parameters actually referenced in op_stream are included in the
+    hash payload, preventing drift from unused bound_params.
     """
     bound_params = bound_params or {}
 
-    # Apply bound params to operations
+    # Collect parameter names used in op_stream
+    used_param_names = _collect_param_names(op_stream)
+
+    # Filter bound_params to only used ones
+    filtered_bound = {k: v for k, v in bound_params.items() if k in used_param_names}
+
+    # Resolve parameters in ops
     resolved_ops: list[dict[str, Any]] = []
     for op in op_stream:
         resolved_op = dict(op)
@@ -240,22 +325,31 @@ def hash_parametric(
                 # Merge bound params
                 resolved_params = {}
                 for k, v in params.items():
-                    if v is None and k in bound_params:
-                        resolved_params[k] = bound_params[k]
-                    else:
+                    if v is None and k in filtered_bound:
+                        resolved_params[k] = filtered_bound[k]
+                    elif v is not None:
                         resolved_params[k] = v
+                    else:
+                        resolved_params[k] = None  # Unbound
                 resolved_op["params"] = resolved_params
         resolved_ops.append(resolved_op)
 
     normalized_ops = [
-        _normalize_operation(op, include_params=True) for op in resolved_ops
+        _normalize_operation(op, include_params=True, resolved_params=filtered_bound)
+        for op in resolved_ops
     ]
+
+    # Normalize filtered bound params for inclusion in payload
+    normalized_bound = {
+        str(k): _normalize_param_value(v) for k, v in sorted(filtered_bound.items())
+    }
 
     # Create deterministic JSON representation
     canonical = json.dumps(
-        {"version": "1.0", "ops": normalized_ops, "bound": to_jsonable(bound_params)},
+        {"ops": normalized_ops, "bound": normalized_bound},
         sort_keys=True,
         separators=(",", ":"),
+        ensure_ascii=True,
     )
 
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
