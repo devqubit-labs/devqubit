@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from devqubit_engine.circuit.hashing import hash_circuit_pair
+from devqubit_engine.circuit.hashing import encode_value, hash_circuit_pair
 from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.tracking.run import Run
 from devqubit_engine.uec.models.program import ProgramArtifact, ProgramRole
@@ -390,7 +390,6 @@ def _compute_binds_digest(
     """
     import hashlib
     import json
-    import struct
 
     if not parameter_binds:
         return None
@@ -408,21 +407,8 @@ def _compute_binds_digest(
             # Extract parameter name
             param_name = str(getattr(param, "name", param))
 
-            # Encode value deterministically (IEEE-754 hex for floats)
-            if value is None:
-                encoded = "__none__"
-            elif isinstance(value, float):
-                # Normalize -0.0 to 0.0
-                if value == 0.0:
-                    value = 0.0
-                encoded = struct.pack(">d", value).hex()
-            elif isinstance(value, int):
-                encoded = f"i:{value}"
-            else:
-                try:
-                    encoded = struct.pack(">d", float(value)).hex()
-                except (TypeError, ValueError):
-                    encoded = str(value)[:50]
+            # Encode value deterministically using engine function
+            encoded = encode_value(value)
 
             sorted_items.append((param_name, encoded))
 
