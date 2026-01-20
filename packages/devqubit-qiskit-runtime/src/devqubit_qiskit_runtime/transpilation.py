@@ -421,10 +421,12 @@ def _try_ibm_is_isa_circuit(circuit: QuantumCircuit, target: Any) -> bool | None
 
 def _fallback_gate_check(circuit: QuantumCircuit, target: Any) -> bool:
     """
-    Fallback gate-name compatibility check.
+    Fallback gate-name compatibility check (heuristic).
 
     Only checks if gates are in the target's basis set. Does NOT validate
-    connectivity or qubit mapping.
+    connectivity, qubit coupling, or other constraints.
+
+    This is a heuristic check that may produce false positives.
     """
     op_names = getattr(target, "operation_names", None)
     if not op_names:
@@ -447,9 +449,13 @@ def circuit_looks_isa(
     target: Any,
     *,
     strict: bool = True,
-) -> bool:
+) -> tuple[bool, dict[str, Any]]:
     """
     Check if a circuit appears to be ISA-compatible with a backend target.
+
+    This is a heuristic check that cannot guarantee full ISA compatibility.
+    The check examines gate names and may use IBM's is_isa_circuit when
+    available, but does not verify all constraints (e.g., coupling map).
 
     Parameters
     ----------
@@ -463,15 +469,28 @@ def circuit_looks_isa(
 
     Returns
     -------
-    bool
+    is_isa : bool
         True if circuit appears ISA-compatible; False otherwise.
+    check_info : dict
+        Metadata about the check performed:
+        - method: "trivial", "ibm_is_isa_circuit", or "heuristic_gate_check"
+        - passed: Whether the check passed
+        - heuristic: True (always, since full validation is not performed)
     """
+    check_info: dict[str, Any] = {
+        "heuristic": True,
+    }
+
     if target is None:
-        return True
+        check_info["method"] = "no_target"
+        check_info["passed"] = True
+        return True, check_info
 
     # Empty circuits are trivially ISA-compatible
     if not circuit.data:
-        return True
+        check_info["method"] = "trivial_empty"
+        check_info["passed"] = True
+        return True, check_info
 
     # Check if circuit only has trivial instructions
     has_non_trivial = any(
@@ -479,18 +498,57 @@ def circuit_looks_isa(
         for inst in circuit.data
     )
     if not has_non_trivial:
-        return True
+        check_info["method"] = "trivial_no_ops"
+        check_info["passed"] = True
+        return True, check_info
 
     # Try IBM's checker first
     ibm_result = _try_ibm_is_isa_circuit(circuit, target)
 
     if ibm_result is True:
-        return True
+        check_info["method"] = "ibm_is_isa_circuit"
+        check_info["passed"] = True
+        return True, check_info
     if ibm_result is False and strict:
-        return False
+        check_info["method"] = "ibm_is_isa_circuit"
+        check_info["passed"] = False
+        return False, check_info
 
     # Fallback: simple gate-name check
-    return _fallback_gate_check(circuit, target)
+    fallback_result = _fallback_gate_check(circuit, target)
+    check_info["method"] = "heuristic_gate_check"
+    check_info["passed"] = fallback_result
+    return fallback_result, check_info
+
+
+def circuit_looks_isa_simple(
+    circuit: QuantumCircuit,
+    target: Any,
+    *,
+    strict: bool = True,
+) -> bool:
+    """
+    Check if a circuit appears to be ISA-compatible with a backend target.
+
+    Simplified wrapper that returns only bool result. Use circuit_looks_isa()
+    when metadata about the check method is needed.
+
+    Parameters
+    ----------
+    circuit : QuantumCircuit
+        Circuit to check.
+    target : Any
+        Backend target.
+    strict : bool, optional
+        If True (default), trust IBM's is_isa_circuit rejection.
+
+    Returns
+    -------
+    bool
+        True if circuit appears ISA-compatible; False otherwise.
+    """
+    is_isa, _ = circuit_looks_isa(circuit, target, strict=strict)
+    return is_isa
 
 
 @dataclass(frozen=True)
@@ -572,12 +630,24 @@ def prepare_pubs_for_primitive(
         meta["transpilation_reason"] = "no_circuits"
         return pubs_list, meta
 
-    # Check ISA compatibility
-    all_isa = all(
-        circuit_looks_isa(c, target, strict=config.strict_isa_check) for c in circuits
-    )
+    # Check ISA compatibility (heuristic)
+    isa_check_results: list[dict[str, Any]] = []
+    all_isa = True
+    for c in circuits:
+        is_isa, check_info = circuit_looks_isa(
+            c, target, strict=config.strict_isa_check
+        )
+        isa_check_results.append(check_info)
+        if not is_isa:
+            all_isa = False
+
     needs = not all_isa
     meta["transpilation_needed"] = needs
+    meta["isa_check"] = {
+        "all_passed": all_isa,
+        "num_circuits": len(circuits),
+        "checks": isa_check_results,
+    }
 
     if mode == "manual":
         meta["transpilation_reason"] = "manual_mode"

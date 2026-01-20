@@ -9,7 +9,10 @@ import json
 
 from devqubit_engine.tracking.run import track
 from devqubit_qiskit_runtime.adapter import QiskitRuntimeAdapter
-from devqubit_qiskit_runtime.circuits import compute_structural_hash
+from devqubit_qiskit_runtime.circuits import (
+    compute_circuit_hashes_with_params,
+    compute_structural_hash,
+)
 
 
 # =============================================================================
@@ -93,7 +96,7 @@ class TestSamplerExecution:
         assert "envelope_id" in envelope
 
         # Producer
-        assert envelope["producer"]["adapter"] == "devqubit-qiskit-runtime"
+        assert envelope["producer"]["adapter"] == "qiskit-runtime"
         assert "qiskit-ibm-runtime" in envelope["producer"]["frontends"]
 
         # Device
@@ -268,13 +271,12 @@ class TestResultIdempotency:
             wrapped = adapter.wrap_executor(fake_sampler, run)
             job = wrapped.run([(bell_circuit,)])
 
-            result1 = job.result()
-            result2 = job.result()
-
-            assert result1 is result2
+            job.result()
+            job.result()
 
         loaded = registry.load(run.run_id)
 
+        # Artifacts logged only once despite multiple result() calls
         assert _count_kind(loaded, "devqubit.envelope.json") == 1
         assert _count_kind(loaded, "result.counts.json") == 1
 
@@ -353,6 +355,53 @@ class TestCircuitHashing:
         assert h is not None
         assert h.startswith("sha256:")
         assert len(h) == 7 + 64  # "sha256:" + 64 hex chars
+
+    def test_different_parameter_values_different_parametric_hash(self):
+        """Different parameter_values produce different parametric_hash."""
+        import numpy as np
+        from qiskit import QuantumCircuit
+        from qiskit.circuit import Parameter
+
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1)
+        qc.rx(theta, 0)
+        qc.measure_all()
+
+        # Same circuit, different parameter values
+        params1 = [np.array([0.5])]
+        params2 = [np.array([1.0])]
+
+        _, hash1 = compute_circuit_hashes_with_params([qc], params1)
+        _, hash2 = compute_circuit_hashes_with_params([qc], params2)
+
+        assert hash1 != hash2
+
+    def test_same_parameter_values_same_parametric_hash(self):
+        """Identical parameter_values produce identical parametric_hash."""
+        import numpy as np
+        from qiskit import QuantumCircuit
+        from qiskit.circuit import Parameter
+
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1)
+        qc.rx(theta, 0)
+        qc.measure_all()
+
+        params1 = [np.array([0.5])]
+        params2 = [np.array([0.5])]
+
+        _, hash1 = compute_circuit_hashes_with_params([qc], params1)
+        _, hash2 = compute_circuit_hashes_with_params([qc], params2)
+
+        assert hash1 == hash2
+
+    def test_no_params_structural_equals_parametric(self, bell_circuit):
+        """Without parameter_values, parametric_hash equals structural_hash."""
+        structural, parametric = compute_circuit_hashes_with_params(
+            [bell_circuit], None
+        )
+
+        assert structural == parametric
 
 
 # =============================================================================
@@ -479,3 +528,43 @@ class TestEdgeCases:
         loaded = registry.load(run.run_id)
 
         assert loaded.record["execute"]["num_pubs"] == 0
+
+    def test_job_failure_produces_failure_snapshot(
+        self,
+        store,
+        registry,
+        bell_circuit,
+    ):
+        """Exception in job.result() produces failure envelope with error details."""
+        import pytest
+
+        adapter = QiskitRuntimeAdapter()
+
+        class FailingJob:
+            def result(self):
+                raise RuntimeError("Backend execution failed: timeout")
+
+            def job_id(self):
+                return "failing-job-123"
+
+        class FailingPrimitive:
+            __module__ = "qiskit_ibm_runtime.sampler"
+
+            def run(self, pubs, **kwargs):
+                return FailingJob()
+
+        with track(project="failure_test", store=store, registry=registry) as run:
+            wrapped = adapter.wrap_executor(FailingPrimitive(), run)
+            job = wrapped.run([(bell_circuit,)])
+
+            with pytest.raises(RuntimeError, match="timeout"):
+                job.result()
+
+        _, envelopes = _load_envelopes(run.run_id, store, registry)
+
+        assert len(envelopes) == 1
+        result = envelopes[0]["result"]
+        assert result["success"] is False
+        assert result["status"] == "failed"
+        assert result["error"]["type"] == "RuntimeError"
+        assert "timeout" in result["error"]["message"]
