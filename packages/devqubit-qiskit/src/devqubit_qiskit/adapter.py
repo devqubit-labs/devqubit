@@ -112,6 +112,31 @@ class TrackedJob:
     # Internal state
     result_snapshot: ResultSnapshot | None = field(default=None, init=False, repr=False)
     _result_logged: bool = field(default=False, init=False, repr=False)
+    _registered_as_pending: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Register as pending job if envelope logging is enabled."""
+        if self.should_log_results and self.envelope_data is not None:
+            self._register_as_pending()
+
+    def _register_as_pending(self) -> None:
+        """Register this job as pending in the tracker."""
+        pending_jobs = getattr(self.tracker, "_pending_tracked_jobs", None)
+        if pending_jobs is not None:
+            pending_jobs.append(self)
+            self._registered_as_pending = True
+
+    def _unregister_as_pending(self) -> None:
+        """Unregister this job from pending list."""
+        if not self._registered_as_pending:
+            return
+        pending_jobs = getattr(self.tracker, "_pending_tracked_jobs", None)
+        if pending_jobs is not None:
+            try:
+                pending_jobs.remove(self)
+            except ValueError:
+                pass
+        self._registered_as_pending = False
 
     def result(self, *args: Any, **kwargs: Any) -> Any:
         """
@@ -131,6 +156,9 @@ class TrackedJob:
             Re-raises any exception from job.result() after logging
             the failure envelope.
         """
+        # Unregister from pending before processing result
+        self._unregister_as_pending()
+
         try:
             result = self.job.result(*args, **kwargs)
         except Exception as exc:
@@ -144,6 +172,40 @@ class TrackedJob:
             self._log_success(result)
 
         return result
+
+    def finalize_as_pending(self) -> None:
+        """
+        Log a pending envelope for this job.
+
+        Called by Run finalization when .result() was never called.
+        """
+        if self._result_logged or self.envelope_data is None:
+            return
+
+        self._result_logged = True
+        try:
+            pending_result = ResultSnapshot.create_pending(
+                metadata={
+                    "backend_name": self.backend_name,
+                    "note": "Job submitted but .result() was never called",
+                }
+            )
+
+            envelope = ExecutionEnvelope(
+                envelope_id=uuid.uuid4().hex[:26],
+                created_at=utc_now_iso(),
+                producer=self.envelope_data["producer"],
+                result=pending_result,
+                device=self.envelope_data["device"],
+                program=self.envelope_data["program"],
+                execution=self.envelope_data["execution"],
+            )
+
+            self.tracker.log_envelope(envelope=envelope)
+            logger.debug("Logged pending envelope for %s", self.backend_name)
+
+        except Exception as e:
+            logger.debug("Failed to log pending envelope: %s", e)
 
     def _log_success(self, result: Any) -> None:
         """Log successful result and create envelope."""
@@ -309,7 +371,7 @@ class TrackedBackend:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute hashes
+        # Compute hashes (include parameter_binds in parametric hash)
         parameter_binds = kwargs.get("parameter_binds")
         structural_hash, parametric_hash = compute_circuit_hashes(
             circuit_list, parameter_binds
@@ -482,11 +544,6 @@ class TrackedBackend:
             should_log_results,
         )
 
-        # Log pending envelope on submit so it allows tracking even if .result()
-        # is never called
-        if envelope_data is not None:
-            self._log_pending_envelope(envelope_data=envelope_data)
-
         self._update_stats()
 
         return TrackedJob(
@@ -578,37 +635,6 @@ class TrackedBackend:
             "execution": execution_snapshot,
             "producer": producer,
         }
-
-    def _log_pending_envelope(self, envelope_data: dict[str, Any]) -> None:
-        """
-        Log a pending envelope on job submission.
-
-        This ensures tracking data exists even if .result() is never called
-        (e.g., for long-running async jobs or abandoned executions).
-        The envelope is updated to completed/failed when .result() is called.
-        """
-        try:
-            pending_result = ResultSnapshot.create_pending(
-                metadata={
-                    "backend_name": get_backend_name(self.backend),
-                    "note": "Awaiting .result() call",
-                }
-            )
-
-            envelope = ExecutionEnvelope(
-                envelope_id=uuid.uuid4().hex[:26],
-                created_at=utc_now_iso(),
-                producer=envelope_data["producer"],
-                result=pending_result,
-                device=envelope_data["device"],
-                program=envelope_data["program"],
-                execution=envelope_data["execution"],
-            )
-
-            self.tracker.log_envelope(envelope=envelope)
-
-        except Exception as e:
-            logger.debug("Failed to log pending envelope: %s", e)
 
     def _update_stats(self) -> None:
         """Update execution statistics in tracker record."""

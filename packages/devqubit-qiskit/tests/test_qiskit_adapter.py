@@ -461,30 +461,33 @@ class TestArtifactTracking:
 
 
 # =============================================================================
-# Pending Envelope Lifecycle Tests
+# Envelope Lifecycle Tests
 # =============================================================================
 
 
-class TestPendingEnvelopeLifecycle:
-    """Tests for envelope lifecycle - pending on submit, finalized on result."""
+class TestEnvelopeLifecycle:
+    """Tests for envelope lifecycle - created on result()."""
 
-    def test_pending_envelope_logged_on_submit(
-        self,
-        bell_circuit,
-        aer_simulator,
-        store,
-        registry,
+    def test_pending_envelope_without_result(
+        self, bell_circuit, aer_simulator, store, registry
     ):
-        """Pending envelope is logged when job is submitted (before .result())."""
+        """Run without .result() creates pending envelope."""
         with track(project="test", store=store, registry=registry) as run:
             backend = run.wrap(aer_simulator)
             _ = backend.run(bell_circuit, shots=100)
-            # Don't call .result() yet - envelope should still be logged
+            # Don't call .result()
 
-        # Check that at least one envelope exists (pending)
+        # Pending envelope should be created at run finalization
         loaded = registry.load(run.run_id)
         envelope_count = _count_kind(loaded, "devqubit.envelope.json")
-        assert envelope_count >= 1
+        assert envelope_count == 1
+        # Run completes normally (pending envelope ensures tracking)
+        assert loaded.status == "FINISHED"
+
+        # Verify envelope has pending status
+        _, envelope = _load_envelope(run.run_id, store, registry)
+        assert envelope["result"]["status"] == "pending"
+        assert envelope["result"]["success"] is False
 
     def test_completed_envelope_after_result(
         self,
