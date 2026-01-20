@@ -103,8 +103,8 @@ def _synthesize_envelope_for_manual_run(
     Synthesize an envelope for a manual run.
 
     This is called during finalization when a manual run doesn't have
-    an explicit envelope. The synthesized envelope has limited semantics
-    (no program hashes) but provides basic structure.
+    an explicit envelope. The synthesized envelope provides basic structure
+    with limited semantics compared to adapter-generated envelopes.
 
     Parameters
     ----------
@@ -126,7 +126,8 @@ def _synthesize_envelope_for_manual_run(
 
     - metadata.auto_generated=True
     - metadata.manual_run=True (set by synthesize_envelope)
-    - No program hashes (engine cannot compute them)
+    - program.structural_hash computed from artifact digests (not circuit structure)
+    - program.parametric_hash is None (engine cannot compute)
     """
     try:
         from devqubit_engine.tracking.record import RunRecord
