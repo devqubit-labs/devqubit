@@ -432,3 +432,81 @@ class TestArtifactTracking:
         assert "qiskit.qpy.circuits" in kinds
         assert "result.counts.json" in kinds
         assert "devqubit.envelope.json" in kinds
+
+
+# =============================================================================
+# Pending Envelope Lifecycle Tests
+# =============================================================================
+
+
+class TestPendingEnvelopeLifecycle:
+    """Tests for envelope lifecycle - pending on submit, finalized on result."""
+
+    def test_pending_envelope_logged_on_submit(
+        self, bell_circuit, aer_simulator, store, registry
+    ):
+        """Pending envelope is logged when job is submitted (before .result())."""
+
+        with track(project="test", store=store, registry=registry) as run:
+            backend = run.wrap(aer_simulator)
+            _ = backend.run(bell_circuit, shots=100)
+            # Don't call .result() yet - envelope should still be logged
+
+        # Check that at least one envelope exists (pending)
+        loaded = registry.load(run.run_id)
+        envelope_count = _count_kind(loaded, "devqubit.envelope.json")
+        assert envelope_count >= 1
+
+    def test_completed_envelope_after_result(
+        self, bell_circuit, aer_simulator, store, registry
+    ):
+        """After .result(), envelope status is completed."""
+        with track(project="test", store=store, registry=registry) as run:
+            backend = run.wrap(aer_simulator)
+            job = backend.run(bell_circuit, shots=100)
+            job.result()
+
+        _, envelope = _load_envelope(run.run_id, store, registry)
+
+        assert envelope is not None
+        assert envelope["result"]["status"] == "completed"
+        assert envelope["result"]["success"] is True
+
+
+# =============================================================================
+# Parameter Binds Hash Tests
+# =============================================================================
+
+
+class TestParameterBindsTracking:
+    """Tests for parameter_binds affecting parametric_hash."""
+
+    def test_different_binds_different_parametric_hash(
+        self, aer_simulator, store, registry
+    ):
+        """Different parameter_binds produce different parametric hashes."""
+        from qiskit.circuit import Parameter
+
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1, name="param_circuit")
+        qc.rx(theta, 0)
+        qc.measure_all()
+
+        binds1 = [{theta: 0.5}]
+        binds2 = [{theta: 1.5}]
+
+        with track(project="test", store=store, registry=registry) as run1:
+            backend1 = run1.wrap(aer_simulator)
+            backend1.run(qc, shots=100, parameter_binds=binds1).result()
+
+        with track(project="test", store=store, registry=registry) as run2:
+            backend2 = run2.wrap(aer_simulator)
+            backend2.run(qc, shots=100, parameter_binds=binds2).result()
+
+        _, env1 = _load_envelope(run1.run_id, store, registry)
+        _, env2 = _load_envelope(run2.run_id, store, registry)
+
+        # Structural hash should be the same (same circuit structure)
+        assert env1["program"]["structural_hash"] == env2["program"]["structural_hash"]
+        # Parametric hash should differ (different bind values)
+        assert env1["program"]["parametric_hash"] != env2["program"]["parametric_hash"]

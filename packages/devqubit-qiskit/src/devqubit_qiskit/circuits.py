@@ -288,7 +288,10 @@ def compute_parametric_hash(circuits: list[Any]) -> str | None:
     return parametric
 
 
-def compute_circuit_hashes(circuits: list[Any]) -> tuple[str | None, str | None]:
+def compute_circuit_hashes(
+    circuits: list[Any],
+    parameter_binds: list[dict[Any, float]] | None = None,
+) -> tuple[str | None, str | None]:
     """
     Compute both structural and parametric hashes in one call.
 
@@ -298,21 +301,29 @@ def compute_circuit_hashes(circuits: list[Any]) -> tuple[str | None, str | None]
     ----------
     circuits : list
         List of Qiskit QuantumCircuit objects.
+    parameter_binds : list of dict, optional
+        Parameter bindings passed to backend.run(). If provided,
+        these values are incorporated into the parametric hash
+        to distinguish runs with different parameter values.
 
     Returns
     -------
     structural_hash : str or None
         Structure-only hash (ignores parameter values).
     parametric_hash : str or None
-        Hash including bound parameter values.
+        Hash including bound parameter values. When parameter_binds
+        is provided, includes a digest of the bind values.
     """
     if not circuits:
         return None, None
-    return _compute_hashes(circuits)
+    return _compute_hashes(circuits, parameter_binds)
 
 
-def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:
-    """Internal hash computation."""
+def _compute_hashes(
+    circuits: list[Any],
+    parameter_binds: list[dict[Any, float]] | None = None,
+) -> tuple[str, str]:
+    """Internal hash computation with optional parameter binds."""
     all_ops: list[dict[str, Any]] = []
     total_nq = 0
     total_nc = 0
@@ -345,7 +356,112 @@ def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:
                 }
             )
 
-    return hash_circuit_pair(all_ops, total_nq, total_nc)
+    structural, parametric = hash_circuit_pair(all_ops, total_nq, total_nc)
+
+    # If parameter_binds provided, incorporate into parametric hash
+    if parameter_binds:
+        binds_digest = _compute_binds_digest(parameter_binds)
+        if binds_digest:
+            parametric = _combine_hash_with_binds(parametric, binds_digest)
+
+    return structural, parametric
+
+
+def _compute_binds_digest(
+    parameter_binds: list[dict[Any, float]],
+) -> str | None:
+    """
+    Compute a deterministic digest of parameter bindings.
+
+    Creates a canonical representation of parameter binds that can
+    be combined with the circuit hash to distinguish runs with
+    different parameter values.
+
+    Parameters
+    ----------
+    parameter_binds : list of dict
+        Parameter bindings as passed to backend.run().
+        Each dict maps Parameter objects to float values.
+
+    Returns
+    -------
+    str or None
+        SHA-256 digest of canonicalized binds, or None if empty.
+    """
+    import hashlib
+    import json
+    import struct
+
+    if not parameter_binds:
+        return None
+
+    # Canonicalize binds: sort by parameter name, encode values deterministically
+    canonical_binds: list[list[tuple[str, str]]] = []
+
+    for bind_dict in parameter_binds:
+        if not bind_dict:
+            canonical_binds.append([])
+            continue
+
+        sorted_items: list[tuple[str, str]] = []
+        for param, value in bind_dict.items():
+            # Extract parameter name
+            param_name = str(getattr(param, "name", param))
+
+            # Encode value deterministically (IEEE-754 hex for floats)
+            if value is None:
+                encoded = "__none__"
+            elif isinstance(value, float):
+                # Normalize -0.0 to 0.0
+                if value == 0.0:
+                    value = 0.0
+                encoded = struct.pack(">d", value).hex()
+            elif isinstance(value, int):
+                encoded = f"i:{value}"
+            else:
+                try:
+                    encoded = struct.pack(">d", float(value)).hex()
+                except (TypeError, ValueError):
+                    encoded = str(value)[:50]
+
+            sorted_items.append((param_name, encoded))
+
+        # Sort by parameter name for determinism
+        sorted_items.sort(key=lambda x: x[0])
+        canonical_binds.append(sorted_items)
+
+    # Serialize to JSON and hash
+    canonical_json = json.dumps(canonical_binds, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical_json.encode()).hexdigest()[:16]
+
+
+def _combine_hash_with_binds(base_hash: str, binds_digest: str) -> str:
+    """
+    Combine base parametric hash with binds digest.
+
+    Parameters
+    ----------
+    base_hash : str
+        Base parametric hash in format "sha256:<hex>".
+    binds_digest : str
+        Digest of parameter binds.
+
+    Returns
+    -------
+    str
+        Combined hash in format "sha256:<hex>".
+    """
+    import hashlib
+
+    # Extract hex from base hash
+    if base_hash.startswith("sha256:"):
+        base_hex = base_hash[7:]
+    else:
+        base_hex = base_hash
+
+    combined = f"{base_hex}:{binds_digest}"
+    new_hash = hashlib.sha256(combined.encode()).hexdigest()
+    return f"sha256:{new_hash}"
 
 
 # =============================================================================
@@ -467,7 +583,7 @@ def serialize_and_log_circuits(
     if oq3_items:
         oq3_result = tracker.log_openqasm3(oq3_items, name="circuits", meta=meta)
         for item in oq3_result.get("items", []):
-            ref = item.get("raw_ref")
+            ref = item.get("ref")
             if ref:
                 item_index = item.get("index", 0)
                 item_name = item.get("name", f"circuit_{item_index}")

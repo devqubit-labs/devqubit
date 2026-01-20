@@ -310,7 +310,10 @@ class TrackedBackend:
         exec_count = self._execution_count
 
         # Compute hashes
-        structural_hash, parametric_hash = compute_circuit_hashes(circuit_list)
+        parameter_binds = kwargs.get("parameter_binds")
+        structural_hash, parametric_hash = compute_circuit_hashes(
+            circuit_list, parameter_binds
+        )
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
         )
@@ -479,6 +482,11 @@ class TrackedBackend:
             should_log_results,
         )
 
+        # Log pending envelope on submit so it allows tracking even if .result()
+        # is never called
+        if envelope_data is not None:
+            self._log_pending_envelope(envelope_data=envelope_data)
+
         self._update_stats()
 
         return TrackedJob(
@@ -570,6 +578,37 @@ class TrackedBackend:
             "execution": execution_snapshot,
             "producer": producer,
         }
+
+    def _log_pending_envelope(self, envelope_data: dict[str, Any]) -> None:
+        """
+        Log a pending envelope on job submission.
+
+        This ensures tracking data exists even if .result() is never called
+        (e.g., for long-running async jobs or abandoned executions).
+        The envelope is updated to completed/failed when .result() is called.
+        """
+        try:
+            pending_result = ResultSnapshot.create_pending(
+                metadata={
+                    "backend_name": get_backend_name(self.backend),
+                    "note": "Awaiting .result() call",
+                }
+            )
+
+            envelope = ExecutionEnvelope(
+                envelope_id=uuid.uuid4().hex[:26],
+                created_at=utc_now_iso(),
+                producer=envelope_data["producer"],
+                result=pending_result,
+                device=envelope_data["device"],
+                program=envelope_data["program"],
+                execution=envelope_data["execution"],
+            )
+
+            self.tracker.log_envelope(envelope=envelope)
+
+        except Exception as e:
+            logger.debug("Failed to log pending envelope: %s", e)
 
     def _update_stats(self) -> None:
         """Update execution statistics in tracker record."""
