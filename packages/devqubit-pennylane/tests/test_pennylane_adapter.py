@@ -5,7 +5,12 @@
 
 import pennylane as qml
 from devqubit_engine.tracking.run import track
-from devqubit_pennylane.adapter import PennyLaneAdapter, patch_device
+from devqubit_pennylane.adapter import (
+    PennyLaneAdapter,
+    is_device_patched,
+    patch_device,
+    unpatch_device,
+)
 
 
 def _count_kind(loaded, kind: str) -> int:
@@ -75,6 +80,27 @@ class TestDevicePatching:
         result = circuit()
         assert result is not None
 
+    def test_unpatch_restores_original_methods(self, default_qubit):
+        """unpatch_device restores original execute method."""
+
+        original_execute = default_qubit.execute
+        patch_device(default_qubit)
+
+        assert is_device_patched(default_qubit) is True
+        assert default_qubit.execute is not original_execute
+
+        result = unpatch_device(default_qubit)
+
+        assert result is True
+        assert is_device_patched(default_qubit) is False
+        assert not hasattr(default_qubit, "_devqubit_tracker")
+
+    def test_unpatch_unpatched_device_returns_false(self, default_qubit):
+        """unpatch_device on unpatched device returns False."""
+
+        assert is_device_patched(default_qubit) is False
+        assert unpatch_device(default_qubit) is False
+
 
 class TestDeviceWrapping:
     """Tests for device wrapping via run.wrap()."""
@@ -96,6 +122,29 @@ class TestDeviceWrapping:
 
         loaded = registry.load(run.run_id)
         assert loaded.status == "FINISHED"
+
+    def test_tracker_reassignment_resets_state(self, store, registry, default_qubit):
+        """Reassigning device to new tracker resets execution counters."""
+
+        @qml.qnode(default_qubit, shots=10)
+        def circuit():
+            qml.Hadamard(0)
+            return qml.counts(wires=[0])
+
+        # First run
+        with track(project="pl", store=store, registry=registry) as run1:
+            run1.wrap(default_qubit)
+            circuit()
+            circuit()
+            assert default_qubit._devqubit_execution_count == 2
+
+        # Second run with same device - counters should reset
+        with track(project="pl", store=store, registry=registry) as run2:
+            run2.wrap(default_qubit)
+            assert default_qubit._devqubit_execution_count == 0
+            assert default_qubit._devqubit_tracker is run2
+            circuit()
+            assert default_qubit._devqubit_execution_count == 1
 
     def test_qnode_built_before_wrap_is_tracked(self, store, registry, default_qubit):
         """QNodes created before run context are still tracked."""
