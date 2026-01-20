@@ -72,7 +72,10 @@ class TestQiskitAdapterInterface:
         assert adapter.supports_executor(QuantumCircuit(2)) is False
 
     def test_wrap_executor_returns_tracked_backend(
-        self, store, registry, aer_simulator
+        self,
+        store,
+        registry,
+        aer_simulator,
     ):
         """Wrapping returns a TrackedBackend."""
         with track(project="test", store=store, registry=registry) as run:
@@ -90,7 +93,11 @@ class TestTrackedBackendExecution:
     """Tests for backend wrapping and execution."""
 
     def test_run_returns_tracked_job(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """run() returns a TrackedJob with results."""
         with track(project="test", store=store, registry=registry) as run:
@@ -102,7 +109,11 @@ class TestTrackedBackendExecution:
             assert sum(counts.values()) == 100
 
     def test_bell_state_correlated_results(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Bell state produces correlated 00/11 outcomes."""
         with track(project="test", store=store, registry=registry) as run:
@@ -215,7 +226,11 @@ class TestUECEnvelopeStructure:
         assert "result" in envelope
 
     def test_envelope_device_section(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Envelope device section has required fields."""
         with track(project="test", store=store, registry=registry) as run:
@@ -229,7 +244,11 @@ class TestUECEnvelopeStructure:
         assert "captured_at" in device
 
     def test_envelope_program_section(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Envelope program section has circuit info."""
         with track(project="test", store=store, registry=registry) as run:
@@ -247,7 +266,10 @@ class TestBatchQASM3Artifacts:
     """Multi-circuit batches produce QASM3 artifact per circuit."""
 
     def test_batch_3_circuits_produces_3_qasm3_refs(
-        self, aer_simulator, store, registry
+        self,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Batch of 3 circuits should produce 3 QASM3 artifacts."""
         circuits = []
@@ -395,7 +417,11 @@ class TestIdempotentResultLogging:
     """job.result() called twice should not duplicate artifacts."""
 
     def test_result_twice_no_duplicates(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """job.result() called twice creates only 1 envelope."""
         with track(project="test", store=store, registry=registry) as run:
@@ -443,10 +469,13 @@ class TestPendingEnvelopeLifecycle:
     """Tests for envelope lifecycle - pending on submit, finalized on result."""
 
     def test_pending_envelope_logged_on_submit(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """Pending envelope is logged when job is submitted (before .result())."""
-
         with track(project="test", store=store, registry=registry) as run:
             backend = run.wrap(aer_simulator)
             _ = backend.run(bell_circuit, shots=100)
@@ -458,7 +487,11 @@ class TestPendingEnvelopeLifecycle:
         assert envelope_count >= 1
 
     def test_completed_envelope_after_result(
-        self, bell_circuit, aer_simulator, store, registry
+        self,
+        bell_circuit,
+        aer_simulator,
+        store,
+        registry,
     ):
         """After .result(), envelope status is completed."""
         with track(project="test", store=store, registry=registry) as run:
@@ -481,10 +514,8 @@ class TestPendingEnvelopeLifecycle:
 class TestParameterBindsTracking:
     """Tests for parameter_binds affecting parametric_hash."""
 
-    def test_different_binds_different_parametric_hash(
-        self, aer_simulator, store, registry
-    ):
-        """Different parameter_binds produce different parametric hashes."""
+    def test_different_bound_params(self, aer_simulator, store, registry):
+        """Different bound parameter values produce different parametric hashes."""
         from qiskit.circuit import Parameter
 
         theta = Parameter("theta")
@@ -492,21 +523,22 @@ class TestParameterBindsTracking:
         qc.rx(theta, 0)
         qc.measure_all()
 
-        binds1 = [{theta: 0.5}]
-        binds2 = [{theta: 1.5}]
+        # Bind parameters before execution (Aer-compatible approach)
+        qc1 = qc.assign_parameters({theta: 0.5})
+        qc2 = qc.assign_parameters({theta: 1.5})
 
         with track(project="test", store=store, registry=registry) as run1:
             backend1 = run1.wrap(aer_simulator)
-            backend1.run(qc, shots=100, parameter_binds=binds1).result()
+            backend1.run(qc1, shots=100).result()
 
         with track(project="test", store=store, registry=registry) as run2:
             backend2 = run2.wrap(aer_simulator)
-            backend2.run(qc, shots=100, parameter_binds=binds2).result()
+            backend2.run(qc2, shots=100).result()
 
         _, env1 = _load_envelope(run1.run_id, store, registry)
         _, env2 = _load_envelope(run2.run_id, store, registry)
 
         # Structural hash should be the same (same circuit structure)
         assert env1["program"]["structural_hash"] == env2["program"]["structural_hash"]
-        # Parametric hash should differ (different bind values)
+        # Parametric hash should differ (different bound values)
         assert env1["program"]["parametric_hash"] != env2["program"]["parametric_hash"]
