@@ -218,6 +218,7 @@ class Run:
         self._adapter = adapter
         self._run_name = run_name
         self._artifacts: list[ArtifactRef] = []
+        self._pending_tracked_jobs: list[Any] = []  # Jobs awaiting .result() call
 
         # Get config (use provided or global)
         cfg = config or get_config()
@@ -1102,6 +1103,33 @@ class Run:
             # Fall back to artifact-based fingerprints
             return compute_fingerprints(run_record, envelope=None)
 
+    def _finalize_pending_tracked_jobs(self) -> None:
+        """
+        Finalize any tracked jobs that never had .result() called.
+
+        For each pending job, logs a pending envelope to ensure tracking
+        data exists even for abandoned or long-running async jobs.
+        """
+        if not self._pending_tracked_jobs:
+            return
+
+        pending_count = len(self._pending_tracked_jobs)
+        logger.debug(
+            "Finalizing %d pending tracked job(s) for run '%s'",
+            pending_count,
+            self._run_id,
+        )
+
+        for job in self._pending_tracked_jobs:
+            try:
+                # Call the job's finalize method if it has one
+                if hasattr(job, "finalize_as_pending"):
+                    job.finalize_as_pending()
+            except Exception as e:
+                logger.debug("Failed to finalize pending job: %s", e)
+
+        self._pending_tracked_jobs.clear()
+
     def _finalize(self, success: bool = True) -> None:
         """
         Finalize the run record and persist it.
@@ -1115,6 +1143,9 @@ class Run:
             if success and self.record["info"]["status"] == "RUNNING":
                 self.record["info"]["status"] = "FINISHED"
                 self.record["info"]["ended_at"] = utc_now_iso()
+
+        # Finalize any pending tracked jobs (jobs where .result() was never called)
+        self._finalize_pending_tracked_jobs()
 
         # Ensure envelope exists (auto-generate if needed)
         self._ensure_envelope()
