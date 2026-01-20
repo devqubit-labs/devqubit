@@ -59,7 +59,7 @@ from devqubit_engine.uec.errors import EnvelopeValidationError, MissingEnvelopeE
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import sha256_digest, utc_now_iso
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
-from devqubit_engine.utils.qasm3 import canonicalize_qasm3, coerce_openqasm3_sources
+from devqubit_engine.utils.qasm3 import coerce_openqasm3_sources
 from devqubit_engine.utils.serialization import json_dumps, to_jsonable
 from ulid import ULID
 
@@ -741,16 +741,11 @@ class Run:
         *,
         name: str = "program",
         role: str = "program",
-        store_raw: bool = True,
-        store_canonical: bool = True,
-        normalize_floats: bool = True,
-        float_precision: int = 10,
-        normalize_names: bool = True,
         anchor: bool = True,
         meta: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
-        Log OpenQASM 3 program(s) and optional canonicalized forms.
+        Log OpenQASM 3 program(s).
 
         Supports both single-circuit and multi-circuit runs. For multiple
         programs, each is stored as separate artifacts with stable indices.
@@ -769,16 +764,6 @@ class Run:
             Logical name for the source. Default is "program".
         role : str, optional
             Artifact role. Default is "program".
-        store_raw : bool, optional
-            Store the raw OpenQASM 3 source. Default is True.
-        store_canonical : bool, optional
-            Store the canonicalized source. Default is True.
-        normalize_floats : bool, optional
-            Normalize floating point literals. Default is True.
-        float_precision : int, optional
-            Significant digits for float normalization. Default is 10.
-        normalize_names : bool, optional
-            Normalize qubit register names. Default is True.
         anchor : bool, optional
             Write stable pointers under ``record["program"]``. Default is True.
         meta : dict, optional
@@ -789,9 +774,8 @@ class Run:
         dict
             Result with keys:
 
-            - ``items``: List of per-circuit results
-            - ``raw_ref``, ``canonical_ref``, ``canonical_info``: Top-level
-              convenience keys for single-circuit input
+            - ``items``: List of per-circuit results (each with name, index, ref)
+            - ``ref``: Top-level convenience key for single-circuit input
         """
         items_in = coerce_openqasm3_sources(source, default_name=name)
 
@@ -805,58 +789,25 @@ class Run:
             prog_source = item["source"]
             prog_index = int(item["index"])
 
-            raw_ref = None
-            canonical_ref = None
-            canonical_info = None
-
             meta_item = {
                 **meta_base,
                 "program_name": prog_name,
                 "program_index": prog_index,
             }
 
-            # Store raw source
-            if store_raw:
-                raw_ref = self.log_bytes(
-                    kind="source.openqasm3",
-                    data=prog_source.encode("utf-8"),
-                    media_type="application/openqasm",
-                    role=role,
-                    meta={**meta_item, "variant": "raw", "qasm_version": "3.0"},
-                )
-
-            # Store canonical source
-            if store_canonical:
-                canonical_info = canonicalize_qasm3(
-                    prog_source,
-                    normalize_floats=normalize_floats,
-                    float_precision=float_precision,
-                    normalize_names=normalize_names,
-                )
-                canonical_ref = self.log_bytes(
-                    kind="source.openqasm3.canonical",
-                    data=canonical_info["canonical_source"].encode("utf-8"),
-                    media_type="application/openqasm",
-                    role=role,
-                    meta={
-                        **meta_item,
-                        "variant": "canonical",
-                        "qasm_version": "3.0",
-                        "normalization_applied": canonical_info[
-                            "normalization_applied"
-                        ],
-                        "warnings": canonical_info["warnings"],
-                        "canonical_digest": canonical_info["digest"],
-                    },
-                )
+            ref = self.log_bytes(
+                kind="source.openqasm3",
+                data=prog_source.encode("utf-8"),
+                media_type="application/openqasm",
+                role=role,
+                meta={**meta_item, "qasm_version": "3.0"},
+            )
 
             out_items.append(
                 {
                     "name": prog_name,
                     "index": prog_index,
-                    "raw_ref": raw_ref,
-                    "canonical_ref": canonical_ref,
-                    "canonical_info": canonical_info,
+                    "ref": ref,
                 }
             )
 
@@ -873,36 +824,16 @@ class Run:
                     entry: dict[str, Any] = {
                         "name": item["name"],
                         "index": int(item["index"]),
+                        "kind": item["ref"].kind,
+                        "digest": item["ref"].digest,
                     }
-
-                    if item.get("raw_ref") is not None:
-                        entry["raw"] = {
-                            "kind": item["raw_ref"].kind,
-                            "digest": item["raw_ref"].digest,
-                        }
-
-                    if item.get("canonical_ref") is not None:
-                        entry["canonical"] = {
-                            "kind": item["canonical_ref"].kind,
-                            "digest": item["canonical_ref"].digest,
-                        }
-
-                    if item.get("canonical_info") is not None:
-                        entry["canonicalization"] = item["canonical_info"]
-
                     oq3_list.append(entry)
 
         result: dict[str, Any] = {"items": out_items}
 
-        # Convenience keys for single-circuit callers
+        # Convenience key for single-circuit callers
         if len(out_items) == 1:
-            result.update(
-                {
-                    "raw_ref": out_items[0]["raw_ref"],
-                    "canonical_ref": out_items[0]["canonical_ref"],
-                    "canonical_info": out_items[0]["canonical_info"],
-                }
-            )
+            result["ref"] = out_items[0]["ref"]
 
         logger.debug("Logged %d OpenQASM3 program(s)", len(out_items))
         return result
