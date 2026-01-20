@@ -13,12 +13,13 @@ Synthesized envelopes have limitations:
 
 - ``metadata.synthesized_from_run=True`` marks as synthesized
 - ``metadata.manual_run=True`` marks as manual (if no adapter)
-- ``program.structural_hash`` is None (engine cannot compute)
+- ``program.structural_hash`` computed from artifact digests (not circuit structure)
 - ``program.parametric_hash`` is None (engine cannot compute)
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -217,8 +218,10 @@ def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
 
     Notes
     -----
-    For manual runs, structural_hash and parametric_hash are not available.
-    Compare will report "hash unavailable" for these runs.
+    For synthesized envelopes, structural_hash is computed from sorted
+    artifact digests when not explicitly available. This provides a stable
+    identifier for program comparison, though it differs from adapter-computed
+    hashes (which are based on circuit structure, not artifact content).
     """
     logical: list[ProgramArtifact] = []
     physical: list[ProgramArtifact] = []
@@ -294,6 +297,15 @@ def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
 
     if not logical and not physical:
         return None
+
+    # Compute structural_hash from artifact digests if not already set
+    if structural_hash is None and logical:
+        digests = sorted(
+            art.ref.digest for art in logical if art.ref and art.ref.digest
+        )
+        if digests:
+            combined = "|".join(digests)
+            structural_hash = f"sha256:{hashlib.sha256(combined.encode()).hexdigest()}"
 
     return ProgramSnapshot(
         logical=logical,
@@ -518,17 +530,14 @@ def synthesize_envelope(
 
     - ``metadata.synthesized_from_run=True`` marks as synthesized
     - ``metadata.manual_run=True`` marks as manual (if no adapter)
-    - ``program.structural_hash`` is None (engine cannot compute)
+    - ``program.structural_hash`` computed from artifact digests (not circuit structure)
     - ``program.parametric_hash`` is None (engine cannot compute)
-
-    Compare operations will report "hash unavailable" for these runs.
 
     Examples
     --------
     >>> envelope = synthesize_envelope(record, store)
     >>> envelope.metadata.get("synthesized_from_run")
     True
-    >>> envelope.program.structural_hash  # None for manual runs
     """
     producer = _build_producer(record)
     device = _build_device(record)

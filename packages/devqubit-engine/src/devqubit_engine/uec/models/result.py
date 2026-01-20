@@ -528,12 +528,21 @@ class ResultSnapshot:
 
     schema_version: str = "devqubit.result_snapshot/1.0"
 
+    #: Valid status values for ResultSnapshot.
+    VALID_STATUSES: tuple[str, ...] = (
+        "completed",
+        "failed",
+        "cancelled",
+        "partial",
+        "pending",
+        "running",
+    )
+
     def __post_init__(self) -> None:
         """Validate status values."""
-        valid_statuses = ("completed", "failed", "cancelled", "partial")
-        if self.status not in valid_statuses:
+        if self.status not in self.VALID_STATUSES:
             raise ValueError(
-                f"status must be one of {valid_statuses}, got: {self.status}"
+                f"status must be one of {self.VALID_STATUSES}, got: {self.status}"
             )
 
     def to_dict(self) -> dict[str, Any]:
@@ -673,6 +682,56 @@ class ResultSnapshot:
             status="partial",
             items=items,
             error=error,
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def create_pending(
+        cls,
+        metadata: dict[str, Any] | None = None,
+    ) -> ResultSnapshot:
+        """
+        Create pending result snapshot (job submitted, awaiting execution).
+
+        Parameters
+        ----------
+        metadata : dict, optional
+            Additional metadata (e.g., job_id, queue_position).
+
+        Returns
+        -------
+        ResultSnapshot
+            Pending result snapshot.
+        """
+        return cls(
+            success=False,
+            status="pending",
+            items=[],
+            metadata=metadata or {},
+        )
+
+    @classmethod
+    def create_running(
+        cls,
+        metadata: dict[str, Any] | None = None,
+    ) -> ResultSnapshot:
+        """
+        Create running result snapshot (job currently executing).
+
+        Parameters
+        ----------
+        metadata : dict, optional
+            Additional metadata (e.g., progress, estimated_completion).
+
+        Returns
+        -------
+        ResultSnapshot
+            Running result snapshot.
+        """
+        return cls(
+            success=False,
+            status="running",
+            items=[],
             metadata=metadata or {},
         )
 

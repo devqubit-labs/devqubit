@@ -90,13 +90,12 @@ def load_envelope(
 
     Notes
     -----
-    Selection priority:
-    1. role="envelope", kind="devqubit.envelope.json" (valid)
-    2. role="envelope", kind="devqubit.envelope.invalid.json" (if include_invalid)
+    Selection priority when multiple envelopes exist:
 
-    Multiple envelopes per run are supported (e.g., one per circuit batch).
-    This function returns the first valid envelope found. Use
-    ``load_all_envelopes()`` to retrieve all envelopes.
+    1. Valid envelopes (kind="devqubit.envelope.json") are preferred
+    2. Among valid envelopes, prefer the one with latest ``execution.completed_at``
+    3. If no ``completed_at`` available, prefer the last artifact (stable ordering)
+    4. Invalid envelopes only returned if ``include_invalid=True`` and no valid found
     """
     from devqubit_engine.storage.artifacts.io import load_artifact_json
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
@@ -114,22 +113,56 @@ def load_envelope(
         if artifact.kind == "devqubit.envelope.invalid.json":
             invalid_artifact = artifact
 
-    # Log info about multiple envelopes (expected for multi-circuit runs)
-    if len(valid_artifacts) > 1:
+    if not valid_artifacts:
+        if include_invalid and invalid_artifact is not None:
+            target_artifact = invalid_artifact
+        else:
+            logger.debug("No envelope artifact found for run %s", record.run_id)
+            return None
+
+        try:
+            envelope_data = load_artifact_json(target_artifact, store)
+            if not isinstance(envelope_data, dict):
+                error_msg = "Envelope artifact is not a dict"
+                logger.warning("%s for run %s", error_msg, record.run_id)
+                if raise_on_error:
+                    adapter = record.record.get("adapter", "unknown")
+                    raise EnvelopeValidationError(str(adapter), [error_msg])
+                return None
+
+            envelope = ExecutionEnvelope.from_dict(envelope_data)
+            logger.debug(
+                "Loaded invalid envelope from artifact: run=%s, envelope_id=%s",
+                record.run_id,
+                envelope.envelope_id,
+            )
+            return envelope
+        except EnvelopeValidationError:
+            raise
+        except Exception as e:
+            logger.warning("Failed to parse envelope for run %s: %s", record.run_id, e)
+            if raise_on_error:
+                adapter = record.record.get("adapter", "unknown")
+                raise EnvelopeValidationError(str(adapter), [str(e)]) from e
+            return None
+
+    # Single envelope - fast path
+    if len(valid_artifacts) == 1:
+        target_artifact = valid_artifacts[0]
+    else:
+        # Multiple envelopes: load all and select by completed_at
         logger.debug(
-            "Found %d envelope artifacts for run %s (multi-circuit run). "
-            "Returning first envelope.",
+            "Found %d envelope artifacts for run %s. Selecting by completed_at.",
             len(valid_artifacts),
             record.run_id,
         )
-
-    if valid_artifacts:
-        target_artifact = valid_artifacts[0]
-    elif include_invalid and invalid_artifact is not None:
-        target_artifact = invalid_artifact
-    else:
-        logger.debug("No envelope artifact found for run %s", record.run_id)
-        return None
+        target_artifact = _select_best_envelope_artifact(
+            artifacts=valid_artifacts,
+            store=store,
+        )
+        if target_artifact is None:
+            logger.debug("No valid envelope could be loaded for run %s", record.run_id)
+            return None
 
     try:
         envelope_data = load_artifact_json(target_artifact, store)
@@ -162,6 +195,65 @@ def load_envelope(
             adapter = record.record.get("adapter", "unknown")
             raise EnvelopeValidationError(str(adapter), [str(e)]) from e
         return None
+
+
+def _select_best_envelope_artifact(
+    artifacts: list,
+    store: ObjectStoreProtocol,
+) -> object | None:
+    """
+    Select the best envelope artifact from multiple candidates.
+
+    Selection criteria (in order):
+    1. Envelope with latest ``execution.completed_at``
+    2. If no ``completed_at``, use last artifact in list (stable ordering)
+
+    Parameters
+    ----------
+    artifacts : list
+        List of envelope artifacts.
+    store : ObjectStoreProtocol
+        Object store for artifact retrieval.
+
+    Returns
+    -------
+    object or None
+        Best artifact, or None if all failed to parse.
+    """
+    from devqubit_engine.storage.artifacts.io import load_artifact_json
+
+    candidates: list[tuple[object, str | None]] = []
+
+    for artifact in artifacts:
+        try:
+            envelope_data = load_artifact_json(artifact, store)
+            if not isinstance(envelope_data, dict):
+                continue
+
+            # Extract completed_at from execution snapshot
+            execution = envelope_data.get("execution") or {}
+            completed_at = (
+                execution.get("completed_at") if isinstance(execution, dict) else None
+            )
+
+            candidates.append((artifact, completed_at))
+        except Exception as e:
+            logger.debug("Failed to parse envelope artifact: %s", e)
+            continue
+
+    if not candidates:
+        return None
+
+    # Sort by completed_at (None values last), then by position (last wins)
+    def sort_key(item: tuple[object, str | None]) -> tuple[int, str, int]:
+        artifact, completed_at = item
+        idx = artifacts.index(artifact)
+        if completed_at is None:
+            return (1, "", idx)
+        return (0, completed_at, idx)
+
+    candidates.sort(key=sort_key, reverse=True)
+    return candidates[0][0]
 
 
 def load_all_envelopes(
