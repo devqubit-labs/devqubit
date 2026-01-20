@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from devqubit_engine.compare.results import DriftResult, MetricDrift
-from devqubit_engine.uec.models.calibration import DeviceCalibration
-from devqubit_engine.uec.models.device import DeviceSnapshot
+
+
+if TYPE_CHECKING:
+    from devqubit_engine.uec.models.calibration import DeviceCalibration
+    from devqubit_engine.uec.models.device import DeviceSnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -73,7 +76,6 @@ class DriftThresholds:
         float or None
             Threshold value, or None if metric not recognized.
         """
-        # Strip common prefixes
         key = metric.replace("median_", "").replace("2q_", "q2_")
         return getattr(self, key, None)
 
@@ -91,7 +93,6 @@ class DriftThresholds:
         float or None
             Minimum absolute threshold, or None if not applicable.
         """
-        # Map metric names to min_abs fields
         key = metric.replace("median_", "").replace("2q_", "q2_")
         min_abs_key = f"min_abs_{key}"
         return getattr(self, min_abs_key, None)
@@ -172,16 +173,11 @@ def _compute_metric_drift(
         frac_change = abs_delta / abs(val_a)
         drift.percent_change = frac_change * 100.0
         if threshold is not None:
-            # Check relative threshold
             exceeds_rel = frac_change > threshold
-            # Check minimum absolute threshold (if applicable)
             exceeds_abs = min_abs is None or abs_delta > min_abs
-            # Both conditions must be met
             drift.significant = exceeds_rel and exceeds_abs
     elif val_b != 0.0:
-        # val_a is zero but val_b is not
         drift.percent_change = float("inf")
-        # For zero baseline, only check min_abs if available
         if min_abs is not None:
             drift.significant = abs_delta > min_abs
         else:
@@ -283,6 +279,8 @@ def compare_calibrations(
     dict
         Drift analysis result as dictionary.
     """
+    from devqubit_engine.uec.models.device import DeviceSnapshot
+
     snapshot_a = DeviceSnapshot(
         captured_at="",
         backend_name="",

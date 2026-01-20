@@ -18,7 +18,6 @@ Architecture
 ------------
 - Core functions (diff_contexts) operate entirely on RunContext/envelope
 - Adapter functions (diff, diff_runs) handle RunRecord/registry/bundle IO
-- Extraction helpers are public for use by verdict module
 """
 
 from __future__ import annotations
@@ -26,27 +25,31 @@ from __future__ import annotations
 import logging
 import math
 from contextlib import contextmanager
-from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
 from typing import Any, Iterator, Literal
 
 from devqubit_engine.bundle.reader import Bundle, is_bundle_path
-from devqubit_engine.circuit.summary import (
-    CircuitSummary,
-    diff_summaries,
-    summarize_circuit_data,
+from devqubit_engine.circuit.summary import diff_summaries
+from devqubit_engine.compare.context import (
+    RunContext,
+    extract_backend_name,
+    extract_circuit_summary,
+    extract_fingerprint,
+    extract_metrics,
+    extract_params,
+    extract_project,
+    get_all_counts_from_envelope,
+    get_counts_from_envelope,
+    get_device_snapshot,
 )
 from devqubit_engine.compare.drift import (
     DEFAULT_THRESHOLDS,
     DriftThresholds,
     compute_drift,
 )
-from devqubit_engine.compare.results import (
-    ComparisonResult,
-    ProgramComparison,
-    ProgramMatchMode,
-)
+from devqubit_engine.compare.results import ComparisonResult, ProgramComparison
+from devqubit_engine.compare.types import ProgramMatchMode
 from devqubit_engine.config import Config, get_config
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
@@ -56,9 +59,7 @@ from devqubit_engine.storage.types import (
 )
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.api.resolve import resolve_envelope
-from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
-from devqubit_engine.uec.models.result import canonicalize_bitstrings
 from devqubit_engine.utils.distributions import (
     NoiseContext,
     compute_noise_context,
@@ -69,257 +70,8 @@ from devqubit_engine.utils.distributions import (
 
 logger = logging.getLogger(__name__)
 
-
 # Tolerance for TVD comparison (floating point precision)
 _TVD_TOLERANCE = 1e-12
-
-
-# =============================================================================
-# RunContext: Core abstraction for comparison
-# =============================================================================
-
-
-@dataclass(frozen=True, slots=True)
-class RunContext:
-    """
-    Execution context for comparison operations.
-
-    Encapsulates all data needed for comparing a single run: the resolved
-    envelope and the object store for artifact access. This is the primary
-    input type for core comparison functions.
-
-    Parameters
-    ----------
-    run_id : str
-        Unique run identifier.
-    envelope : ExecutionEnvelope
-        Resolved execution envelope containing all run data.
-    store : ObjectStoreProtocol
-        Object store for loading artifacts referenced in the envelope.
-
-    Notes
-    -----
-    RunContext is created by IO layer functions (diff, verify_against_baseline)
-    and passed to core comparison functions (diff_contexts, verify_contexts).
-    This separation ensures the core comparison logic is pure and testable.
-    """
-
-    run_id: str
-    envelope: ExecutionEnvelope
-    store: ObjectStoreProtocol
-
-
-# =============================================================================
-# Envelope extraction helpers (public API for verdict module)
-# =============================================================================
-
-
-def extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
-    """
-    Extract devqubit namespace from envelope metadata.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Execution envelope.
-
-    Returns
-    -------
-    dict
-        The devqubit metadata namespace, or empty dict if not present.
-    """
-    devqubit = envelope.metadata.get("devqubit")
-    if devqubit is None:
-        return {}
-    if not isinstance(devqubit, dict):
-        logger.warning(
-            "envelope.metadata.devqubit is not a dict (got %s), treating as empty",
-            type(devqubit).__name__,
-        )
-        return {}
-    return devqubit
-
-
-def extract_params(envelope: ExecutionEnvelope) -> dict[str, Any]:
-    """Extract parameters from envelope metadata.devqubit namespace."""
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("params", {}) or {}
-
-
-def extract_metrics(envelope: ExecutionEnvelope) -> dict[str, Any]:
-    """Extract metrics from envelope metadata.devqubit namespace."""
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("metrics", {}) or {}
-
-
-def extract_project(envelope: ExecutionEnvelope) -> str | None:
-    """Extract project name from envelope metadata.devqubit namespace."""
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("project")
-
-
-def extract_fingerprint(envelope: ExecutionEnvelope) -> str | None:
-    """Extract run fingerprint from envelope metadata.devqubit namespace."""
-    devqubit = extract_devqubit_metadata(envelope)
-    fingerprints = devqubit.get("fingerprints", {}) or {}
-    return fingerprints.get("run")
-
-
-def extract_backend_name(envelope: ExecutionEnvelope) -> str | None:
-    """Extract backend name from envelope device snapshot."""
-    if envelope.device:
-        return envelope.device.backend_name
-    return None
-
-
-def get_counts_from_envelope(
-    envelope: ExecutionEnvelope,
-    item_index: int = 0,
-    *,
-    canonicalize: bool = True,
-    skip_failed: bool = True,
-) -> dict[str, int] | None:
-    """
-    Extract counts from envelope result item.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Execution envelope.
-    item_index : int, default=0
-        Index of the result item to extract counts from.
-    canonicalize : bool, default=True
-        Whether to canonicalize bitstrings to cbit0_right format.
-    skip_failed : bool, default=True
-        If True, skip items with success=False and return None for them.
-
-    Returns
-    -------
-    dict or None
-        Counts as {bitstring: count} in canonical format, or None if not available.
-    """
-    if not envelope.result.items:
-        return None
-
-    if item_index >= len(envelope.result.items):
-        return None
-
-    item = envelope.result.items[item_index]
-
-    # Skip failed items if requested
-    if skip_failed and item.success is False:
-        logger.debug("Skipping failed result item at index %d", item_index)
-        return None
-
-    if not item.counts:
-        return None
-
-    raw_counts = item.counts.get("counts")
-    if not isinstance(raw_counts, dict):
-        return None
-
-    if canonicalize:
-        format_info = item.counts.get("format", {})
-        bit_order = format_info.get("bit_order", "cbit0_right")
-        transformed = format_info.get("transformed", False)
-        canonical = canonicalize_bitstrings(
-            raw_counts,
-            bit_order=bit_order,
-            transformed=transformed,
-        )
-        return {k: int(v) for k, v in canonical.items()}
-    else:
-        return {str(k): int(v) for k, v in raw_counts.items()}
-
-
-def get_all_counts_from_envelope(
-    envelope: ExecutionEnvelope,
-    *,
-    canonicalize: bool = True,
-    skip_failed: bool = True,
-) -> list[tuple[int, dict[str, int]]]:
-    """
-    Extract counts from all result items in the envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Execution envelope.
-    canonicalize : bool, default=True
-        Whether to canonicalize bitstrings.
-    skip_failed : bool, default=True
-        If True, skip items with success=False.
-
-    Returns
-    -------
-    list of tuple
-        List of (item_index, counts) tuples for each successful result item.
-        Empty list if no counts available.
-    """
-    results: list[tuple[int, dict[str, int]]] = []
-    skipped_count = 0
-
-    for idx in range(len(envelope.result.items)):
-        item = envelope.result.items[idx]
-
-        # Track skipped failed items for warning
-        if skip_failed and item.success is False:
-            skipped_count += 1
-            continue
-
-        counts = get_counts_from_envelope(
-            envelope, idx, canonicalize=canonicalize, skip_failed=False
-        )
-        if counts is not None:
-            results.append((idx, counts))
-
-    if skipped_count > 0:
-        logger.debug(
-            "Skipped %d failed result items when extracting counts", skipped_count
-        )
-
-    return results
-
-
-def get_device_snapshot(envelope: ExecutionEnvelope) -> DeviceSnapshot | None:
-    """Get device snapshot from envelope."""
-    return envelope.device
-
-
-def extract_circuit_summary(
-    envelope: ExecutionEnvelope,
-    store: ObjectStoreProtocol,
-    *,
-    which: str = "logical",
-) -> CircuitSummary | None:
-    """
-    Extract circuit summary from envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Execution envelope.
-    store : ObjectStoreProtocol
-        Object store for loading artifacts.
-    which : str, default="logical"
-        Which circuit to extract: "logical" or "physical".
-
-    Returns
-    -------
-    CircuitSummary or None
-        Extracted circuit summary, or None if not found.
-    """
-    from devqubit_engine.circuit.extractors import extract_circuit_from_envelope
-
-    circuit_data = extract_circuit_from_envelope(envelope, store, which=which)
-
-    if circuit_data is not None:
-        try:
-            return summarize_circuit_data(circuit_data)
-        except Exception as e:
-            logger.debug("Failed to summarize circuit: %s", e)
-
-    return None
 
 
 # =============================================================================
@@ -328,28 +80,20 @@ def extract_circuit_summary(
 
 
 def _num_equal(a: Any, b: Any, tolerance: float) -> bool:
-    """
-    Compare two values with numeric tolerance.
+    """Compare two values with numeric tolerance."""
 
-    Handles bool, Real (including numpy types, Decimal), NaN, and Inf correctly.
-    """
-    # Booleans should not be compared as numbers
     if isinstance(a, bool) or isinstance(b, bool):
         return a == b
 
-    # Handle numeric types (including numpy.float64, Decimal, etc.)
     if isinstance(a, Real) and isinstance(b, Real):
         af, bf = float(a), float(b)
 
-        # NaN equals NaN for comparison purposes
         if math.isnan(af) and math.isnan(bf):
             return True
 
-        # Both NaN check failed, but one is NaN
         if math.isnan(af) or math.isnan(bf):
             return False
 
-        # Inf values must match exactly
         if math.isinf(af) or math.isinf(bf):
             return af == bf
 
@@ -420,7 +164,6 @@ def _compare_programs(
         ]
         digests_b = sorted(set(logical_digests_b + physical_digests_b))
 
-    # Exact match: identical digests (including both empty = both have no programs)
     exact_match = digests_a == digests_b
 
     # Extract hashes from envelope program snapshot
@@ -455,8 +198,7 @@ def _compare_programs(
             hash_available = False
 
     # Structural match: same circuit structure (ignores parameter values)
-    # Both empty = match (no programs to compare)
-    structural_match = exact_match  # Start with exact_match (handles empty case)
+    structural_match = exact_match
     if hash_a and hash_b:
         structural_match = hash_a == hash_b
 
@@ -541,6 +283,104 @@ def _compute_tvd_for_item_pair(
     return tvd, noise_ctx
 
 
+def _compute_tvd_single_item(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    item_index: int,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """Compute TVD for a single item index."""
+    result.counts_a = get_counts_from_envelope(envelope_a, item_index)
+    result.counts_b = get_counts_from_envelope(envelope_b, item_index)
+
+    if result.counts_a is not None and result.counts_b is not None:
+        result.tvd, result.noise_context = _compute_tvd_for_item_pair(
+            result.counts_a,
+            result.counts_b,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
+        logger.debug("TVD: %.6f", result.tvd)
+
+
+def _compute_tvd_all_items(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """
+    Compute TVD across all items using worst-case (max TVD) approach.
+
+    Keeps counts_a/b consistent with the item that produced max TVD.
+    """
+    all_counts_a = get_all_counts_from_envelope(envelope_a)
+    all_counts_b = get_all_counts_from_envelope(envelope_b)
+
+    if not all_counts_a or not all_counts_b:
+        result.tvd = None
+        return
+
+    len_a, len_b = len(all_counts_a), len(all_counts_b)
+    if len_a != len_b:
+        result.warnings.append(
+            f"Batch size mismatch: baseline has {len_a} items, "
+            f"candidate has {len_b} items. TVD comparison skipped."
+        )
+        result.tvd = None
+        return
+
+    worst_tvd: float | None = None
+    worst_counts_a: dict[str, int] | None = None
+    worst_counts_b: dict[str, int] | None = None
+    worst_noise_ctx: NoiseContext | None = None
+    worst_item_idx: int | None = None
+
+    for i in range(len_a):
+        _, ca = all_counts_a[i]
+        _, cb = all_counts_b[i]
+
+        tvd, noise_ctx = _compute_tvd_for_item_pair(
+            ca,
+            cb,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed + i,
+        )
+
+        if worst_tvd is None or tvd >= worst_tvd:
+            worst_tvd = tvd
+            worst_counts_a = ca
+            worst_counts_b = cb
+            worst_noise_ctx = noise_ctx
+            worst_item_idx = i
+
+    result.tvd = worst_tvd
+    result.counts_a = worst_counts_a
+    result.counts_b = worst_counts_b
+    result.noise_context = worst_noise_ctx
+
+    if worst_item_idx is not None and len_a > 1:
+        logger.debug(
+            "Worst TVD %.6f found at item pair %d (of %d pairs)",
+            worst_tvd or 0.0,
+            worst_item_idx,
+            len_a,
+        )
+
+
 # =============================================================================
 # Core: Envelope-only comparison
 # =============================================================================
@@ -616,26 +456,26 @@ def diff_contexts(
         fingerprint_b=fingerprint_b,
     )
 
-    # Metadata comparison with proper warnings for missing data
+    # Metadata comparison
     project_match: bool | None = None
     backend_match: bool | None = None
 
     if project_a and project_b:
         project_match = project_a == project_b
     elif project_a or project_b:
-        # One has project, other doesn't - warn and treat as mismatch
         project_match = False
         result.warnings.append(
-            f"Project metadata incomplete: baseline={project_a!r}, candidate={project_b!r}"
+            f"Project metadata incomplete: baseline={project_a!r}, "
+            f"candidate={project_b!r}"
         )
-    # else: both None - no project info, match=None (unknown)
 
     if backend_a and backend_b:
         backend_match = backend_a == backend_b
     elif backend_a or backend_b:
         backend_match = False
         result.warnings.append(
-            f"Backend metadata incomplete: baseline={backend_a!r}, candidate={backend_b!r}"
+            f"Backend metadata incomplete: baseline={backend_a!r}, "
+            f"candidate={backend_b!r}"
         )
 
     result.metadata = {
@@ -684,7 +524,8 @@ def diff_contexts(
         )
 
     logger.debug(
-        "Comparison: params_match=%s, metrics_match=%s, program_exact=%s, program_structural=%s",
+        "Comparison: params_match=%s, metrics_match=%s, "
+        "program_exact=%s, program_structural=%s",
         result.params.get("match"),
         result.metrics.get("match"),
         result.program.exact_match,
@@ -742,7 +583,7 @@ def diff_contexts(
                 "Programs differ but circuit data not available for comparison."
             )
 
-    # Determine overall identity (with tolerance for TVD)
+    # Determine overall identity
     tvd_match = result.tvd is None or result.tvd <= _TVD_TOLERANCE
     drift_ok = not (result.device_drift and result.device_drift.significant_drift)
 
@@ -762,111 +603,6 @@ def diff_contexts(
     )
 
     return result
-
-
-def _compute_tvd_single_item(
-    result: ComparisonResult,
-    envelope_a: ExecutionEnvelope,
-    envelope_b: ExecutionEnvelope,
-    *,
-    item_index: int,
-    include_noise_context: bool,
-    noise_alpha: float,
-    noise_n_boot: int,
-    noise_seed: int,
-) -> None:
-    """Compute TVD for a single item index."""
-    result.counts_a = get_counts_from_envelope(envelope_a, item_index)
-    result.counts_b = get_counts_from_envelope(envelope_b, item_index)
-
-    if result.counts_a is not None and result.counts_b is not None:
-        result.tvd, result.noise_context = _compute_tvd_for_item_pair(
-            result.counts_a,
-            result.counts_b,
-            include_noise_context=include_noise_context,
-            noise_alpha=noise_alpha,
-            noise_n_boot=noise_n_boot,
-            noise_seed=noise_seed,
-        )
-        logger.debug("TVD: %.6f", result.tvd)
-
-
-def _compute_tvd_all_items(
-    result: ComparisonResult,
-    envelope_a: ExecutionEnvelope,
-    envelope_b: ExecutionEnvelope,
-    *,
-    include_noise_context: bool,
-    noise_alpha: float,
-    noise_n_boot: int,
-    noise_seed: int,
-) -> None:
-    """
-    Compute TVD across all items using worst-case (max TVD) approach.
-
-    IMPORTANT: Keeps counts_a/b consistent with the item that produced max TVD.
-    This fixes the bug where counts were from the first item but TVD was from
-    the worst item.
-    """
-    all_counts_a = get_all_counts_from_envelope(envelope_a)
-    all_counts_b = get_all_counts_from_envelope(envelope_b)
-
-    if not all_counts_a or not all_counts_b:
-        result.tvd = None
-        return
-
-    # Check for batch size mismatch
-    len_a, len_b = len(all_counts_a), len(all_counts_b)
-    if len_a != len_b:
-        result.warnings.append(
-            f"Batch size mismatch: baseline has {len_a} items, "
-            f"candidate has {len_b} items. TVD comparison skipped."
-        )
-        result.tvd = None
-        return
-
-    # Find worst case (max TVD) - track EVERYTHING together
-    # Use >= to ensure we always have a valid worst case (even if TVD=0)
-    worst_tvd: float | None = None
-    worst_counts_a: dict[str, int] | None = None
-    worst_counts_b: dict[str, int] | None = None
-    worst_noise_ctx: NoiseContext | None = None
-    worst_item_idx: int | None = None
-
-    for i in range(len_a):
-        idx_a, ca = all_counts_a[i]
-        idx_b, cb = all_counts_b[i]
-
-        tvd, noise_ctx = _compute_tvd_for_item_pair(
-            ca,
-            cb,
-            include_noise_context=include_noise_context,
-            noise_alpha=noise_alpha,
-            noise_n_boot=noise_n_boot,
-            noise_seed=noise_seed + i,
-        )
-
-        # Use >= to ensure we always have a valid worst case (fixes TVD=0 bug)
-        if worst_tvd is None or tvd >= worst_tvd:
-            worst_tvd = tvd
-            worst_counts_a = ca
-            worst_counts_b = cb
-            worst_noise_ctx = noise_ctx
-            worst_item_idx = i
-
-    # Set result with consistent data from worst item
-    result.tvd = worst_tvd
-    result.counts_a = worst_counts_a
-    result.counts_b = worst_counts_b
-    result.noise_context = worst_noise_ctx
-
-    if worst_item_idx is not None and len_a > 1:
-        logger.debug(
-            "Worst TVD %.6f found at item pair %d (of %d pairs)",
-            worst_tvd or 0.0,
-            worst_item_idx,
-            len_a,
-        )
 
 
 # =============================================================================
@@ -924,11 +660,9 @@ def diff_runs(
     ComparisonResult
         Complete comparison result with all analysis dimensions.
     """
-    # Resolve envelopes
     envelope_a = resolve_envelope(run_a, store_a)
     envelope_b = resolve_envelope(run_b, store_b)
 
-    # Build contexts
     ctx_a = RunContext(run_id=run_a.run_id, envelope=envelope_a, store=store_a)
     ctx_b = RunContext(run_id=run_b.run_id, envelope=envelope_b, store=store_b)
 

@@ -1224,8 +1224,8 @@ class Run:
         if not envelope_artifacts:
             return
 
-        # Track indices to remove (in descending order for safe removal)
-        indices_to_remove = []
+        # Track indices and digests to remove (in descending order for safe removal)
+        artifacts_to_remove: list[tuple[int, str]] = []  # (index, digest)
 
         # Process each envelope
         for orig_idx, artifact in envelope_artifacts:
@@ -1281,8 +1281,8 @@ class Run:
                     kind="devqubit.envelope.json",
                 )
 
-                # Mark old artifact for removal
-                indices_to_remove.append(orig_idx)
+                # Mark old artifact for removal (index and digest for cleanup)
+                artifacts_to_remove.append((orig_idx, artifact.digest))
 
                 logger.debug(
                     "Enriched envelope with devqubit metadata: run=%s, envelope_id=%s",
@@ -1298,11 +1298,34 @@ class Run:
                 )
 
         # Remove old artifacts in descending order to preserve indices
-        if indices_to_remove:
+        if artifacts_to_remove:
             with self._lock:
-                for idx in sorted(indices_to_remove, reverse=True):
+                for idx, _ in sorted(
+                    artifacts_to_remove, key=lambda x: x[0], reverse=True
+                ):
                     if idx < len(self._artifacts):
                         self._artifacts.pop(idx)
+                # Collect remaining digests after removal (new envelope added by log_json)
+                remaining_digests = {a.digest for a in self._artifacts}
+
+            # Clean up old objects from store to avoid orphans
+            # Only delete if digest is not referenced by any current artifact
+            for _, old_digest in artifacts_to_remove:
+                if old_digest in remaining_digests:
+                    # Digest still in use (same content or referenced elsewhere)
+                    continue
+                try:
+                    self._store.delete(old_digest)
+                    logger.debug(
+                        "Deleted superseded envelope object: %s", old_digest[:16]
+                    )
+                except Exception as e:
+                    # Best effort - don't fail if cleanup fails
+                    logger.debug(
+                        "Failed to delete old envelope object %s: %s",
+                        old_digest[:16],
+                        e,
+                    )
 
     def _finalize(self, success: bool = True) -> None:
         """

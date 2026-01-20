@@ -16,8 +16,9 @@ import logging
 from typing import Any
 
 from devqubit_engine.circuit.summary import diff_summaries
-from devqubit_engine.compare.diff import RunContext, extract_circuit_summary
-from devqubit_engine.compare.results import ComparisonResult, Verdict, VerdictCategory
+from devqubit_engine.compare.context import RunContext, extract_circuit_summary
+from devqubit_engine.compare.results import ComparisonResult, Verdict
+from devqubit_engine.compare.types import VerdictCategory
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.api.resolve import resolve_envelope
@@ -52,20 +53,16 @@ def _detect_program_change(result: ComparisonResult) -> dict[str, Any] | None:
     dict or None
         Evidence dict if programs structurally differ, None if they match.
     """
-    # Exact match -> no change
     if result.program.exact_match:
         return None
 
     # Structural match -> NOT a program change (just parameter variation)
-    # This is critical for VQE/QAOA workflows where parameters change
-    # but the circuit structure remains identical
     if result.program.structural_match:
         logger.debug(
             "Program artifacts differ but structure matches (parameter variation)"
         )
         return None
 
-    # Neither exact nor structural match -> true program change
     logger.debug(
         "Program change detected: exact=%s, structural=%s",
         result.program.exact_match,
@@ -111,10 +108,7 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
     evidence: dict[str, Any] = {}
 
     # Primary detection: executed hashes differ while logical structure matches
-    # This is the most robust signal for compiler/transpiler changes
     if result.program.structural_match and not result.program.executed_structural_match:
-        # Logical circuit is the same, but executed (physical) circuit differs
-        # This definitively indicates a compiler/transpiler change
         evidence["executed_structural_hash_mismatch"] = True
         evidence["logical_structural_hash_a"] = result.program.circuit_hash_a
         evidence["logical_structural_hash_b"] = result.program.circuit_hash_b
@@ -133,12 +127,11 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
         )
 
     # Secondary detection/evidence: circuit diff metrics
-    # This provides explanation of WHAT changed (depth, 2Q gates, etc.)
     if result.circuit_diff and not result.circuit_diff.match:
         summary_a = result.circuit_diff.summary_a
         summary_b = result.circuit_diff.summary_b
 
-        # Check depth change (significant if > 20% AND abs delta >= 2)
+        # Check depth change
         if summary_a.depth > 0:
             depth_delta = abs(summary_b.depth - summary_a.depth)
             depth_ratio = summary_b.depth / summary_a.depth
@@ -150,7 +143,7 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
                     summary_a.depth, summary_b.depth
                 )
 
-        # Check 2Q gate count change (significant if > 20% AND abs delta >= 5)
+        # Check 2Q gate count change
         if summary_a.gate_count_2q > 0:
             gate_delta = abs(summary_b.gate_count_2q - summary_a.gate_count_2q)
             gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
@@ -162,7 +155,6 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
                     summary_a.gate_count_2q, summary_b.gate_count_2q
                 )
         elif summary_b.gate_count_2q >= _MIN_2Q_GATE_DELTA:
-            # Went from 0 to significant non-zero 2Q gates
             evidence["gate_2q_change"] = _format_change(
                 summary_a.gate_count_2q, summary_b.gate_count_2q
             )
@@ -224,7 +216,6 @@ def _detect_shot_noise(result: ComparisonResult) -> dict[str, Any] | None:
 
     # Primary path: use bootstrap-calibrated thresholds
     if ctx.p_value is not None and ctx.noise_p95 > 0:
-        # If TVD exceeds p95 threshold AND p-value is low -> NOT noise
         if result.tvd > ctx.noise_p95 and ctx.p_value < 0.05:
             logger.debug(
                 "Difference exceeds noise threshold: tvd=%.4f > p95=%.4f, p=%.4f",
@@ -234,25 +225,20 @@ def _detect_shot_noise(result: ComparisonResult) -> dict[str, Any] | None:
             )
             return None
 
-        # Otherwise, consistent with noise
         logger.debug(
             "Difference consistent with shot noise: tvd=%.4f, p95=%.4f, p=%.4f",
             result.tvd,
             ctx.noise_p95,
             ctx.p_value,
         )
-
         return {
             "tvd": result.tvd,
             "noise_p95": ctx.noise_p95,
             "p_value": ctx.p_value,
-            "method": ctx.method,
-            "alpha": ctx.alpha,
-            "n_boot": ctx.n_boot,
-            "interpretation": "Consistent with sampling noise (bootstrap-calibrated)",
+            "interpretation": ctx.interpretation(),
         }
 
-    # Fallback: use ratio heuristic
+    # Fallback: use noise_ratio heuristic
     if ctx.noise_ratio >= 2.0:
         logger.debug("Difference exceeds noise ratio threshold: %.2fx", ctx.noise_ratio)
         return None
@@ -419,7 +405,7 @@ def build_verdict_contexts(
             contributing_factors=factors,
         )
 
-    # Multiple factors - list in priority order
+    # Multiple factors
     logger.info("Multiple factors detected: %s", factors)
 
     return Verdict(
@@ -447,7 +433,8 @@ def build_verdict(
     Build regression verdict from comparison result.
 
     This is an adapter function that converts RunRecord inputs to RunContext
-    and delegates to build_verdict_contexts. Use this when you have RunRecord objects.
+    and delegates to build_verdict_contexts. Use this when you have RunRecord
+    objects.
 
     Parameters
     ----------
@@ -467,11 +454,9 @@ def build_verdict(
     Verdict
         Root-cause verdict with evidence and suggested action.
     """
-    # Resolve envelopes
     envelope_a = resolve_envelope(run_a, store_a)
     envelope_b = resolve_envelope(run_b, store_b)
 
-    # Create contexts
     ctx_a = RunContext(
         run_id=run_a.run_id,
         envelope=envelope_a,
@@ -483,5 +468,4 @@ def build_verdict(
         store=store_b,
     )
 
-    # Delegate to core
     return build_verdict_contexts(result, ctx_a, ctx_b)

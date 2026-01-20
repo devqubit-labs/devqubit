@@ -7,7 +7,8 @@ Baseline verification for CI/regression testing.
 This module provides policy-based verification of a candidate run against
 a baseline run, with bootstrap-calibrated noise thresholds.
 
-Architecture:
+Architecture
+------------
 - Core functions (verify_contexts) operate entirely on RunContext/envelope
 - Adapter functions (verify, verify_against_baseline) handle RunRecord/registry IO
 """
@@ -19,8 +20,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from devqubit_engine.compare.diff import RunContext, diff_contexts
-from devqubit_engine.compare.results import ProgramMatchMode, VerifyResult
+from devqubit_engine.compare.context import RunContext
+from devqubit_engine.compare.diff import diff_contexts
+from devqubit_engine.compare.results import VerifyResult
+from devqubit_engine.compare.types import ProgramMatchMode
 from devqubit_engine.compare.verdict import build_verdict_contexts
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
@@ -32,9 +35,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class BaselineRegistryProtocol(Protocol):
-    """
-    Protocol for registries supporting baseline operations.
-    """
+    """Protocol for registries supporting baseline operations."""
 
     def get_baseline(self, project: str) -> dict[str, Any] | None:
         """
@@ -317,12 +318,8 @@ def verify_contexts(
         ctx_baseline.run_id,
     )
 
-    # Determine if noise context is needed:
-    # - for noise_factor threshold calculation
-    # - for noise_pvalue_cutoff check
     need_noise_context = bool(policy.noise_factor or policy.noise_pvalue_cutoff)
 
-    # Core comparison via diff_contexts
     comparison = diff_contexts(
         ctx_baseline,
         ctx_candidate,
@@ -358,7 +355,7 @@ def verify_contexts(
             f"{len(removed)} only in baseline, {len(added)} only in candidate"
         )
 
-    # Check program match (using policy's match mode)
+    # Check program match
     if policy.program_must_match:
         program_ok = comparison.program_matches(policy.program_match_mode)
         if not program_ok:
@@ -371,29 +368,22 @@ def verify_contexts(
                 f"program artifacts differ ({mode_desc[policy.program_match_mode]})"
             )
 
-    # Check TVD threshold (with bootstrap-calibrated noise option)
+    # Check TVD threshold
     if comparison.tvd is not None:
         effective_threshold: float | None = None
-
-        # Collect applicable thresholds
         thresholds_to_apply: list[float] = []
 
-        # tvd_max is a hard limit
         if policy.tvd_max is not None:
             thresholds_to_apply.append(policy.tvd_max)
 
-        # noise-aware threshold using bootstrap-calibrated p95
         if policy.noise_factor and comparison.noise_context:
             noise_threshold = policy.noise_factor * comparison.noise_context.noise_p95
             thresholds_to_apply.append(noise_threshold)
 
-        # Use the STRICTER (min) threshold when both are set
-        # This ensures tvd_max acts as a true hard limit
         if thresholds_to_apply:
             effective_threshold = min(thresholds_to_apply)
 
         if effective_threshold is not None and comparison.tvd > effective_threshold:
-            # Check p-value cutoff if configured (reduces false positives)
             should_fail = True
             if policy.noise_pvalue_cutoff is not None and comparison.noise_context:
                 p_value = comparison.noise_context.p_value
@@ -423,14 +413,13 @@ def verify_contexts(
                         f"TVD too high: {comparison.tvd:.6f} > {effective_threshold:.6f}"
                     )
     else:
-        # TVD not available (no counts / analytic mode)
         if policy.tvd_max is not None or policy.noise_factor is not None:
             comparison.warnings.append(
                 "TVD check skipped: no measurement counts available "
                 "(analytic mode or missing results artifact)"
             )
 
-    # Build verdict if failures (circuit diff computed on-demand here)
+    # Build verdict if failures
     verdict = None
     if failures:
         verdict = build_verdict_contexts(
@@ -499,11 +488,9 @@ def verify(
     """
     pol = _normalize_policy(policy)
 
-    # Resolve envelopes
     envelope_baseline = resolve_envelope(baseline, store_baseline)
     envelope_candidate = resolve_envelope(candidate, store_candidate)
 
-    # Create contexts
     ctx_baseline = RunContext(
         run_id=baseline.run_id,
         envelope=envelope_baseline,
@@ -515,7 +502,6 @@ def verify(
         store=store_candidate,
     )
 
-    # Delegate to core
     return verify_contexts(ctx_baseline, ctx_candidate, pol)
 
 
