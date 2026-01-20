@@ -126,16 +126,21 @@
 
         .page-header {
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             justify-content: space-between;
             margin-bottom: 1.5rem;
             gap: 1rem;
+            flex-wrap: wrap;
         }
 
         .page-title {
             font-size: 1.5rem;
             font-weight: 600;
             color: var(--gray-900);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         /* =================================================================
@@ -161,6 +166,10 @@
             font-size: 1rem;
             font-weight: 600;
             color: var(--gray-900);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
 
         /* =================================================================
@@ -186,8 +195,36 @@
             background: var(--gray-50);
         }
 
-        tr:hover td { background: var(--gray-50); }
-        tr:last-child td { border-bottom: none; }
+        tbody tr:hover td { background: var(--gray-50); }
+        tbody tr:last-child td { border-bottom: none; }
+
+        /* Tables without thead - cleaner look */
+        table:not(:has(thead)) td:first-child {
+            color: var(--gray-500);
+            font-weight: 500;
+            width: 40%;
+        }
+
+        /* =================================================================
+           Key-Value Lists (dl.kv)
+           ================================================================= */
+        dl.kv {
+            display: grid;
+            grid-template-columns: minmax(120px, auto) 1fr;
+            gap: 0.5rem 1rem;
+            align-items: baseline;
+        }
+
+        dl.kv dt {
+            font-weight: 500;
+            color: var(--gray-500);
+            font-size: 0.875rem;
+        }
+
+        dl.kv dd {
+            color: var(--gray-900);
+            word-break: break-word;
+        }
 
         /* =================================================================
            Buttons
@@ -205,6 +242,7 @@
             cursor: pointer;
             transition: all 0.15s;
             text-decoration: none;
+            white-space: nowrap;
         }
 
         .btn-primary {
@@ -293,6 +331,7 @@
             font-size: 0.75rem;
             font-weight: 500;
             border-radius: 4px;
+            white-space: nowrap;
         }
 
         .badge-success { background: var(--success-bg); color: #065f46; }
@@ -325,9 +364,24 @@
         .grid-3 { grid-template-columns: repeat(3, 1fr); }
         .grid-4 { grid-template-columns: repeat(4, 1fr); }
 
+        @media (max-width: 1024px) {
+            .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); }
+        }
+
         @media (max-width: 768px) {
             .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
         }
+
+        /* =================================================================
+           Flexbox Utilities
+           ================================================================= */
+        .flex { display: flex; }
+        .flex-wrap { flex-wrap: wrap; }
+        .items-center { align-items: center; }
+        .items-start { align-items: flex-start; }
+        .justify-between { justify-content: space-between; }
+        .gap-1 { gap: 0.5rem; }
+        .gap-2 { gap: 1rem; }
 
         /* =================================================================
            Utilities
@@ -343,6 +397,27 @@
         .mt-2 { margin-top: 1rem; }
         .mb-1 { margin-bottom: 0.5rem; }
         .mb-2 { margin-bottom: 1rem; }
+
+        /* Truncate text with ellipsis */
+        .truncate {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 200px;
+        }
+
+        /* =================================================================
+           Diff-specific styles
+           ================================================================= */
+        .diff-match {
+            color: #065f46;
+            font-weight: 500;
+        }
+
+        .diff-mismatch {
+            color: #92400e;
+            font-weight: 500;
+        }
 
         /* =================================================================
            Code
@@ -362,6 +437,7 @@
             border-radius: 6px;
             overflow-x: auto;
             font-size: 0.8125rem;
+            line-height: 1.6;
         }
         pre code { background: none; padding: 0; }
 
@@ -379,6 +455,7 @@
            ================================================================= */
         .htmx-indicator { display: none; }
         .htmx-request .htmx-indicator { display: inline-flex; }
+        .htmx-request.htmx-indicator { display: inline-flex; }
 
         .spinner {
             width: 16px;
@@ -397,6 +474,18 @@
         ::-webkit-scrollbar-track { background: var(--gray-100); }
         ::-webkit-scrollbar-thumb { background: var(--gray-300); border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: var(--gray-400); }
+
+        /* =================================================================
+           Responsive Navigation
+           ================================================================= */
+        @media (max-width: 768px) {
+            .header-inner { padding: 0 1rem; }
+            .header-left { gap: 1rem; }
+            .nav { gap: 0; }
+            .nav a { padding: 0.5rem; font-size: 0.8125rem; }
+            .main { padding: 1rem; }
+            .page-header { flex-direction: column; align-items: flex-start; }
+        }
 
         {% block extra_styles %}{% endblock %}
     </style>

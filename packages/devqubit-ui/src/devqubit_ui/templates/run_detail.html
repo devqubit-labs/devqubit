@@ -92,7 +92,7 @@
             <tbody>
             {% for key, value in params.items() %}
             <tr>
-                <td class="text-muted">{{ key }}</td>
+                <td>{{ key }}</td>
                 <td class="font-mono">{{ value }}</td>
             </tr>
             {% endfor %}
@@ -112,7 +112,7 @@
             <tbody>
             {% for key, value in metrics.items() %}
             <tr>
-                <td class="text-muted">{{ key }}</td>
+                <td>{{ key }}</td>
                 <td class="font-mono">{{ "%.6g" | format(value) if value is number else value }}</td>
             </tr>
             {% endfor %}
@@ -128,9 +128,9 @@
             <h3 class="card-title">Tags</h3>
         </div>
         {% if tags %}
-        <div>
+        <div class="flex flex-wrap gap-1">
             {% for key, value in tags.items() %}
-            <span class="badge badge-gray mb-1" style="margin-right: 0.25rem;">{{ key }}: {{ value }}</span>
+            <span class="badge badge-gray">{{ key }}: {{ value }}</span>
             {% endfor %}
         </div>
         {% else %}
@@ -139,7 +139,7 @@
     </div>
 </div>
 
-<div class="card">
+<div class="card mb-2">
     <div class="card-header">
         <h3 class="card-title">Artifacts ({{ artifacts | length }})</h3>
     </div>
@@ -159,13 +159,15 @@
             {% for artifact in artifacts %}
             <tr>
                 <td>{{ loop.index0 }}</td>
-                <td class="font-mono">{{ artifact.kind }}</td>
+                <td class="font-mono text-sm">{{ artifact.kind }}</td>
                 <td><span class="badge badge-gray">{{ artifact.role }}</span></td>
                 <td class="text-muted text-sm">{{ artifact.media_type }}</td>
-                <td class="font-mono text-sm truncate" style="max-width: 200px;">{{ artifact.digest | short_digest }}</td>
+                <td class="font-mono text-sm truncate">{{ artifact.digest | short_digest }}</td>
                 <td>
-                    <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}" class="btn btn-sm btn-secondary">View</a>
-                    <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}/raw" class="btn btn-sm btn-secondary">Download</a>
+                    <div class="flex gap-1">
+                        <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}" class="btn btn-sm btn-secondary">View</a>
+                        <a href="/runs/{{ run.run_id }}/artifacts/{{ loop.index0 }}/raw" class="btn btn-sm btn-secondary">Download</a>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
@@ -183,10 +185,10 @@
         <h3 class="card-title" style="color: var(--danger);">Errors</h3>
     </div>
     {% for error in errors %}
-    <div style="margin-bottom: 1rem;">
+    <div class="mb-1">
         <strong>{{ error.type }}</strong>: {{ error.message }}
         {% if error.traceback %}
-        <pre style="margin-top: 0.5rem; font-size: 0.75rem;">{{ error.traceback }}</pre>
+        <pre class="mt-1">{{ error.traceback }}</pre>
         {% endif %}
     </div>
     {% endfor %}
