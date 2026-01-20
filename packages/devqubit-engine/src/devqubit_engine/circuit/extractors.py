@@ -38,6 +38,29 @@ _FORMAT_PATTERNS: tuple[tuple[str, CircuitFormat, SDK, bool], ...] = (
 )
 
 
+def _parse_sdk(sdk_string: str | None) -> SDK:
+    """
+    Parse SDK string to SDK enum, with fallback to UNKNOWN.
+
+    Parameters
+    ----------
+    sdk_string : str or None
+        SDK identifier string (e.g., "qiskit", "braket").
+
+    Returns
+    -------
+    SDK
+        Parsed SDK enum value, or SDK.UNKNOWN if parsing fails.
+    """
+    if not sdk_string:
+        return SDK.UNKNOWN
+    try:
+        return SDK(sdk_string.lower())
+    except ValueError:
+        logger.debug("Unknown SDK string: %s", sdk_string)
+        return SDK.UNKNOWN
+
+
 def detect_sdk(record: RunRecord) -> SDK:
     """
     Detect SDK from a run record.
@@ -264,6 +287,7 @@ def extract_circuit_from_refs(
     store: ObjectStoreProtocol,
     *,
     prefer_formats: list[str] | None = None,
+    sdk_hint: SDK | None = None,
 ) -> CircuitData | None:
     """
     Extract circuit data from artifact references.
@@ -279,23 +303,32 @@ def extract_circuit_from_refs(
         Object store to load artifact data from.
     prefer_formats : list of str, optional
         Preferred format order (e.g., ["openqasm3", "qpy"]).
-        Defaults to OpenQASM3 first.
+        Defaults to native formats first, then interchange formats.
+    sdk_hint : SDK, optional
+        SDK hint for interchange formats (OpenQASM) that don't have
+        inherent SDK information. Extracted from envelope.producer.sdk.
 
     Returns
     -------
     CircuitData or None
         Extracted circuit data, or None if not found.
-
-    Notes
-    -----
-    This function iterates refs in order and respects prefer_formats
-    as an outer filter. It does not lose refs with duplicate kinds.
     """
     if not refs:
         return None
 
+    # Default: prefer native formats (which carry SDK info) over interchange
     if prefer_formats is None:
-        prefer_formats = ["openqasm3", "openqasm", "qasm", "qpy", "jaqcd", "cirq"]
+        prefer_formats = [
+            "qpy",
+            "jaqcd",
+            "cirq",
+            "tape",
+            "openqasm3",
+            "openqasm",
+            "qasm",
+        ]
+
+    effective_sdk_hint = sdk_hint or SDK.UNKNOWN
 
     # Iterate by format preference, then by ref order (preserves duplicates)
     for fmt_pattern in prefer_formats:
@@ -304,80 +337,144 @@ def extract_circuit_from_refs(
             if fmt_pattern not in kind_lower:
                 continue
 
-            circuit = _load_circuit_from_ref(ref, kind_lower, store)
+            circuit = _load_circuit_from_ref(ref, kind_lower, store, effective_sdk_hint)
             if circuit:
                 return circuit
 
     # Fallback: try first available ref
-    return _load_fallback_ref(refs[0], store)
+    return _load_fallback_ref(refs[0], store, effective_sdk_hint)
 
 
 def _load_circuit_from_ref(
     ref: ArtifactRef,
     kind_lower: str,
     store: ObjectStoreProtocol,
+    sdk_hint: SDK,
 ) -> CircuitData | None:
-    """Load circuit data from a single artifact ref based on kind."""
+    """
+    Load circuit data from a single artifact ref based on kind.
+
+    Parameters
+    ----------
+    ref : ArtifactRef
+        Reference to the artifact.
+    kind_lower : str
+        Lowercased kind string for pattern matching.
+    store : ObjectStoreProtocol
+        Object store to load from.
+    sdk_hint : SDK
+        SDK hint for interchange formats.
+
+    Returns
+    -------
+    CircuitData or None
+        Loaded circuit data, or None if loading fails.
+    """
     try:
         data = store.get_bytes(ref.digest)
     except Exception as e:
         logger.debug("Failed to load artifact %s: %s", ref.digest[:24], e)
         return None
 
-    # Determine format and create CircuitData
+    # Native formats - SDK determined by format
     if "qpy" in kind_lower:
-        return CircuitData(data=data, format=CircuitFormat.QPY, sdk=SDK.QISKIT)
-
-    # Text-based formats
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-
-    if "openqasm3" in kind_lower or "qasm3" in kind_lower:
         return CircuitData(
-            data=text,
-            format=CircuitFormat.OPENQASM3,
-            sdk=SDK.UNKNOWN,
-        )
-
-    if "openqasm" in kind_lower or "qasm" in kind_lower:
-        fmt = CircuitFormat.OPENQASM3
-        if re.match(r"^\s*OPENQASM\s+2\.", text):
-            fmt = CircuitFormat.OPENQASM2
-        return CircuitData(
-            data=text,
-            format=fmt,
-            sdk=SDK.UNKNOWN,
+            data=data,
+            format=CircuitFormat.QPY,
+            sdk=SDK.QISKIT,
         )
 
     if "jaqcd" in kind_lower:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
         return CircuitData(
             data=text,
             format=CircuitFormat.JAQCD,
             sdk=SDK.BRAKET,
         )
 
-    if "cirq" in kind_lower:
+    if "cirq" in kind_lower and "circuit" not in kind_lower:
+        # Match "cirq" but not generic "circuit"
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
         return CircuitData(
             data=text,
             format=CircuitFormat.CIRQ_JSON,
             sdk=SDK.CIRQ,
         )
 
-    # Generic text
+    if "tape" in kind_lower:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return CircuitData(
+            data=text,
+            format=CircuitFormat.TAPE_JSON,
+            sdk=SDK.PENNYLANE,
+        )
+
+    # Interchange formats - use sdk_hint
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        # Binary data that doesn't match known native formats
+        logger.debug("Unknown binary format for kind: %s", kind_lower)
+        return None
+
+    if "openqasm3" in kind_lower or "qasm3" in kind_lower:
+        return CircuitData(
+            data=text,
+            format=CircuitFormat.OPENQASM3,
+            sdk=sdk_hint,
+        )
+
+    if "openqasm" in kind_lower or "qasm" in kind_lower:
+        # Auto-detect QASM version from content
+        fmt = CircuitFormat.OPENQASM3
+        if re.match(r"^\s*OPENQASM\s+2\.", text):
+            fmt = CircuitFormat.OPENQASM2
+        return CircuitData(
+            data=text,
+            format=fmt,
+            sdk=sdk_hint,
+        )
+
+    # Generic text - assume OpenQASM3 with sdk_hint
+    logger.debug("Unknown text format for kind: %s, assuming OpenQASM3", kind_lower)
     return CircuitData(
         data=text,
         format=CircuitFormat.OPENQASM3,
-        sdk=SDK.UNKNOWN,
+        sdk=sdk_hint,
     )
 
 
 def _load_fallback_ref(
     ref: ArtifactRef,
     store: ObjectStoreProtocol,
+    sdk_hint: SDK,
 ) -> CircuitData | None:
-    """Load circuit from ref with format auto-detection."""
+    """
+    Load circuit from ref with format auto-detection.
+
+    Parameters
+    ----------
+    ref : ArtifactRef
+        Reference to the artifact.
+    store : ObjectStoreProtocol
+        Object store to load from.
+    sdk_hint : SDK
+        SDK hint for text-based formats.
+
+    Returns
+    -------
+    CircuitData or None
+        Loaded circuit data, or None if loading fails.
+    """
     try:
         data = store.get_bytes(ref.digest)
     except Exception as e:
@@ -390,15 +487,34 @@ def _load_fallback_ref(
         return CircuitData(
             data=text,
             format=CircuitFormat.OPENQASM3,
-            sdk=SDK.UNKNOWN,
+            sdk=sdk_hint,
         )
     except UnicodeDecodeError:
-        # Binary format - assume QPY
+        # Binary format - assume QPY (Qiskit native)
         return CircuitData(
             data=data,
             format=CircuitFormat.QPY,
             sdk=SDK.QISKIT,
         )
+
+
+def _extract_sdk_from_envelope(envelope: ExecutionEnvelope) -> SDK:
+    """
+    Extract SDK from envelope producer information.
+
+    Parameters
+    ----------
+    envelope : ExecutionEnvelope
+        Envelope to extract SDK from.
+
+    Returns
+    -------
+    SDK
+        Detected SDK, or SDK.UNKNOWN if not available.
+    """
+    if envelope.producer and envelope.producer.sdk:
+        return _parse_sdk(envelope.producer.sdk)
+    return SDK.UNKNOWN
 
 
 def extract_circuit_from_envelope(
@@ -424,7 +540,7 @@ def extract_circuit_from_envelope(
         Which circuit to extract: "logical" (pre-transpilation) or
         "physical" (post-transpilation/executed).
     prefer_formats : list of str, optional
-        Preferred format order.
+        Preferred format order. Defaults to native formats first.
 
     Returns
     -------
@@ -460,8 +576,14 @@ def extract_circuit_from_envelope(
         return None
 
     refs = [a.ref for a in artifacts if a.ref]
+
+    # Extract SDK hint from envelope producer
+    sdk_hint = _extract_sdk_from_envelope(envelope)
+    logger.debug("Extracted SDK hint from envelope: %s", sdk_hint.value)
+
     return extract_circuit_from_refs(
         refs,
         store,
         prefer_formats=prefer_formats,
+        sdk_hint=sdk_hint,
     )
