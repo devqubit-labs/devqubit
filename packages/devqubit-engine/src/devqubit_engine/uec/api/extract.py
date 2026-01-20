@@ -6,8 +6,7 @@ UEC accessor functions.
 
 This module provides read-only functions for extracting data from
 ExecutionEnvelope. These are the canonical accessors that should be
-used by compare/diff/verify operations instead of directly accessing
-envelope internals or implementing custom extraction logic.
+used by compare/diff/verify operations.
 
 The functions implement UEC-first strategy with appropriate fallbacks
 for synthesized (manual) envelopes.
@@ -51,13 +50,6 @@ def get_counts_from_envelope(
     -------
     dict or None
         Counts as {bitstring: count}, or None if not available.
-
-    Examples
-    --------
-    >>> envelope = resolve_envelope(record, store)
-    >>> counts = get_counts_from_envelope(envelope)
-    >>> if counts:
-    ...     print(f"Got {sum(counts.values())} total shots")
     """
     if not envelope.result.items:
         return None
@@ -90,7 +82,7 @@ def get_shots_from_envelope(envelope: ExecutionEnvelope) -> int | None:
     int or None
         Number of shots, or None if not available.
     """
-    # Try execution snapshot first (use `is not None` for int robustness)
+    # Try execution snapshot first
     if envelope.execution and envelope.execution.shots is not None:
         return envelope.execution.shots
 
@@ -133,11 +125,10 @@ def resolve_counts(
     canonicalize: bool = True,
 ) -> dict[str, int] | None:
     """
-    Extract counts from envelope or Run artifacts with UEC-first strategy.
+    Extract counts with UEC-first strategy.
 
     This is the canonical function for getting counts in compare operations.
-    It extracts counts from ExecutionEnvelope, falling back to Run counts
-    artifact only for synthesized (manual) envelopes.
+    Falls back to Run counts artifact only for synthesized (manual) envelopes.
 
     Parameters
     ----------
@@ -155,17 +146,11 @@ def resolve_counts(
     Returns
     -------
     dict or None
-        Counts as {bitstring: count} in canonical format, or None if not available.
-
-    Notes
-    -----
-    Fallback to Run counts artifact is only allowed for synthesized (manual)
-    envelopes. For adapter envelopes, missing counts returns None.
+        Counts as {bitstring: count}, or None if not available.
     """
     from devqubit_engine.storage.artifacts.counts import get_counts
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
-    # Use provided envelope or resolve
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
@@ -188,11 +173,10 @@ def resolve_counts(
                 else:
                     return {str(k): int(v) for k, v in raw_counts.items()}
 
-    # Fallback: Run counts artifact - ONLY for synthesized (manual) envelopes
+    # Fallback: Run counts artifact - ONLY for synthesized envelopes
     is_synthesized = envelope.metadata.get("synthesized_from_run", False)
 
     if not is_synthesized:
-        # Adapter envelope without counts - this is an integration issue
         logger.debug(
             "Adapter envelope for run %s has no counts in result items[%d]",
             record.run_id,
@@ -200,12 +184,11 @@ def resolve_counts(
         )
         return None
 
-    # Manual/synthesized envelope - fallback to Run artifact is allowed
+    # Manual/synthesized envelope - fallback allowed
     counts_info = get_counts(record, store)
     if counts_info is None:
         return None
 
-    # Canonicalize fallback counts (assume cbit0_right if not specified)
     if canonicalize:
         return canonicalize_bitstrings(
             counts_info.counts,
@@ -221,37 +204,29 @@ def resolve_device_snapshot(
     envelope: ExecutionEnvelope | None = None,
 ) -> DeviceSnapshot | None:
     """
-    Load device snapshot from envelope or run record with UEC-first strategy.
+    Load device snapshot with UEC-first strategy.
 
     This is the canonical function for getting device snapshot in compare
-    operations. It extracts device from ExecutionEnvelope, falling back to
-    Run record metadata only for synthesized (manual) envelopes.
+    operations. Falls back to Run record metadata only for synthesized
+    (manual) envelopes.
 
     Parameters
     ----------
     record : RunRecord
-        Run record to extract device snapshot from.
+        Run record.
     store : ObjectStoreProtocol
-        Object store for loading artifacts.
+        Object store.
     envelope : ExecutionEnvelope, optional
         Pre-resolved envelope. If None, will be resolved internally.
 
     Returns
     -------
     DeviceSnapshot or None
-        Device snapshot if available, None otherwise.
-
-    Notes
-    -----
-    Fallback to Run record metadata is only allowed for synthesized
-    (manual) envelopes. For adapter envelopes, if device is not present
-    in the envelope, None is returned.
+        Device snapshot if available.
     """
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
-    from devqubit_engine.uec.models.calibration import DeviceCalibration
-    from devqubit_engine.uec.models.device import DeviceSnapshot
+    from devqubit_engine.uec.api.synthesize import build_device_from_record
 
-    # Use provided envelope or resolve
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
@@ -259,47 +234,18 @@ def resolve_device_snapshot(
     if envelope.device is not None:
         return envelope.device
 
-    # Fallback: construct from record metadata - ONLY for synthesized envelopes
+    # Fallback: construct from record - ONLY for synthesized envelopes
     is_synthesized = envelope.metadata.get("synthesized_from_run", False)
 
     if not is_synthesized:
-        # Adapter envelope without device - this may be intentional (no device info)
         logger.debug(
             "Adapter envelope for run %s has no device snapshot",
             record.run_id,
         )
         return None
 
-    # Manual/synthesized envelope - fallback to Run record is allowed
-    backend = record.record.get("backend") or {}
-    if not isinstance(backend, dict):
-        return None
-
-    snapshot_summary = record.record.get("device_snapshot") or {}
-    if not isinstance(snapshot_summary, dict):
-        snapshot_summary = {}
-
-    calibration = None
-    cal_data = snapshot_summary.get("calibration")
-    if isinstance(cal_data, dict):
-        try:
-            calibration = DeviceCalibration.from_dict(cal_data)
-        except Exception as e:
-            logger.debug("Failed to parse calibration data: %s", e)
-
-    try:
-        return DeviceSnapshot(
-            captured_at=snapshot_summary.get("captured_at", record.created_at),
-            backend_name=backend.get("name", ""),
-            backend_type=backend.get("type", ""),
-            provider=backend.get("provider", ""),
-            num_qubits=snapshot_summary.get("num_qubits"),
-            connectivity=snapshot_summary.get("connectivity"),
-            native_gates=snapshot_summary.get("native_gates"),
-            calibration=calibration,
-        )
-    except Exception:
-        return None
+    # Manual/synthesized envelope - use shared builder from synthesize module
+    return build_device_from_record(record)
 
 
 def resolve_circuit_summary(
@@ -310,18 +256,14 @@ def resolve_circuit_summary(
     which: str = "logical",
 ) -> CircuitSummary | None:
     """
-    Extract circuit summary from envelope or run record with UEC-first strategy.
-
-    This is the canonical function for getting circuit summary in compare
-    operations. It delegates to ``extract_circuit()`` which handles UEC-first
-    logic with proper fallback for synthesized (manual) envelopes only.
+    Extract circuit summary with UEC-first strategy.
 
     Parameters
     ----------
     record : RunRecord
-        Run record for fallback extraction.
+        Run record.
     store : ObjectStoreProtocol
-        Object store for loading artifacts.
+        Object store.
     envelope : ExecutionEnvelope, optional
         Pre-resolved envelope.
     which : str, default="logical"
@@ -330,17 +272,15 @@ def resolve_circuit_summary(
     Returns
     -------
     CircuitSummary or None
-        Extracted circuit summary, or None if not found.
+        Circuit summary, or None if not found.
     """
     from devqubit_engine.circuit.extractors import extract_circuit
     from devqubit_engine.circuit.summary import summarize_circuit_data
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
-    # Resolve envelope if not provided
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
-    # Delegate to extract_circuit with UEC-first logic
     circuit_data = extract_circuit(
         record,
         store,

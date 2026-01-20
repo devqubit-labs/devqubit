@@ -2,12 +2,15 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-UEC envelope synthesis from RunRecord.
+UEC envelope synthesis and enrichment utilities.
 
-This module provides functions for synthesizing ExecutionEnvelope from
-RunRecord data when no envelope artifact exists. This is intended for
-**manual runs only** - adapter runs should always have envelope created
-by the adapter.
+This module provides:
+
+1. **Envelope synthesis** - Creating ExecutionEnvelope from RunRecord when
+   no envelope artifact exists (manual runs only).
+
+2. **Envelope enrichment** - Adding tracker namespace metadata (params,
+   metrics, project, fingerprints) to envelopes.
 
 Synthesized envelopes have limitations:
 
@@ -15,20 +18,15 @@ Synthesized envelopes have limitations:
 - ``metadata.manual_run=True`` marks as manual (if no adapter)
 - ``program.structural_hash`` computed from artifact digests (not circuit structure)
 - ``program.parametric_hash`` is None (engine cannot compute)
-
-Synthesized envelopes include ``metadata.devqubit`` namespace with params,
-metrics, project, and fingerprints extracted from RunRecord for compare
-module compatibility.
 """
 
 from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
-from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.storage.types import ArtifactRef
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
@@ -47,11 +45,15 @@ from devqubit_engine.uec.models.result import (
 from devqubit_engine.utils.common import is_manual_run_record
 
 
+if TYPE_CHECKING:
+    from devqubit_engine.storage.types import ObjectStoreProtocol
+    from devqubit_engine.tracking.record import RunRecord
+
+
 logger = logging.getLogger(__name__)
 
 
 # Keys in execute section that are volatile (change between runs)
-# and should be stripped when computing fingerprints or comparing
 VOLATILE_EXECUTE_KEYS: frozenset[str] = frozenset(
     {
         "submitted_at",
@@ -65,22 +67,125 @@ VOLATILE_EXECUTE_KEYS: frozenset[str] = frozenset(
 )
 
 
-def _build_producer(record: "RunRecord") -> ProducerInfo:
+# ---------------------------------------------------------------------------
+# Envelope enrichment helpers (used by both run.py and synthesize_envelope)
+# ---------------------------------------------------------------------------
+
+
+def build_tracker_namespace(
+    record: dict[str, Any],
+    fingerprints: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """
-    Build ProducerInfo from RunRecord.
+    Build tracker metadata namespace from run record.
+
+    Extracts params, metrics, project from the run record and optionally
+    includes fingerprints. This namespace enables the compare module to
+    extract data uniformly from envelopes.
 
     Parameters
     ----------
-    record : RunRecord
-        Run record to extract producer info from.
+    record : dict
+        Raw run record dictionary.
+    fingerprints : dict, optional
+        Pre-computed fingerprints to include.
 
     Returns
     -------
-    ProducerInfo
-        Constructed producer info (best effort).
+    dict
+        Tracker namespace with available fields. Empty dict if no data.
     """
+    tracker_ns: dict[str, Any] = {}
+
+    # Extract project (handle both string and dict formats)
+    project = record.get("project")
+    if project:
+        if isinstance(project, dict):
+            project_name = project.get("name")
+            if project_name:
+                tracker_ns["project"] = project_name
+        elif isinstance(project, str):
+            tracker_ns["project"] = project
+
+    # Extract params and metrics from data section
+    data = record.get("data") or {}
+    if isinstance(data, dict):
+        params = data.get("params")
+        if params and isinstance(params, dict):
+            tracker_ns["params"] = dict(params)
+
+        metrics = data.get("metrics")
+        if metrics and isinstance(metrics, dict):
+            tracker_ns["metrics"] = dict(metrics)
+
+    # Include fingerprints if provided
+    if fingerprints:
+        tracker_ns["fingerprints"] = dict(fingerprints)
+
+    return tracker_ns
+
+
+def enrich_envelope_with_tracker(
+    envelope: ExecutionEnvelope,
+    record: dict[str, Any],
+    fingerprints: dict[str, str] | None = None,
+) -> None:
+    """
+    Add tracker namespace to envelope metadata (in-place).
+
+    This enriches the envelope with project, params, metrics, and
+    fingerprints so that compare module can extract this data uniformly.
+
+    Parameters
+    ----------
+    envelope : ExecutionEnvelope
+        Envelope to enrich (modified in-place).
+    record : dict
+        Run record dictionary containing project, params, metrics.
+    fingerprints : dict, optional
+        Pre-computed fingerprints to include.
+    """
+    tracker_ns = build_tracker_namespace(record, fingerprints)
+    if tracker_ns:
+        if "tracker" not in envelope.metadata:
+            envelope.metadata["tracker"] = {}
+        envelope.metadata["tracker"].update(tracker_ns)
+
+
+def add_fingerprints_to_envelope(
+    envelope: ExecutionEnvelope,
+    fingerprints: dict[str, str],
+) -> None:
+    """
+    Add fingerprints to envelope.metadata.tracker (in-place).
+
+    If tracker namespace doesn't exist, creates it with only fingerprints.
+
+    Parameters
+    ----------
+    envelope : ExecutionEnvelope
+        Envelope to update (modified in-place).
+    fingerprints : dict
+        Fingerprints to add (program, device, intent, run).
+    """
+    if not fingerprints:
+        return
+
+    if "tracker" not in envelope.metadata:
+        envelope.metadata["tracker"] = {}
+
+    envelope.metadata["tracker"]["fingerprints"] = dict(fingerprints)
+
+
+# ---------------------------------------------------------------------------
+# Internal builders for envelope synthesis
+# ---------------------------------------------------------------------------
+
+
+def _build_producer(record: RunRecord) -> ProducerInfo:
+    """Build ProducerInfo from RunRecord."""
     adapter = record.record.get("adapter", "manual")
-    if not adapter or adapter == "":
+    if not adapter:
         adapter = "manual"
 
     # Try to get engine version from environment
@@ -106,9 +211,12 @@ def _build_producer(record: "RunRecord") -> ProducerInfo:
     )
 
 
-def _build_device(record: "RunRecord") -> DeviceSnapshot | None:
+def build_device_from_record(record: RunRecord) -> DeviceSnapshot | None:
     """
     Build DeviceSnapshot from RunRecord.
+
+    This is used for synthesizing envelopes and as a fallback in
+    resolve_device_snapshot for manual runs.
 
     Parameters
     ----------
@@ -122,14 +230,12 @@ def _build_device(record: "RunRecord") -> DeviceSnapshot | None:
     """
     backend = record.record.get("backend") or {}
     if not isinstance(backend, dict):
-        backend = {}
+        return None
 
-    # Need at least backend name to create snapshot
     backend_name = backend.get("name", "")
     if not backend_name:
         return None
 
-    # Get device_snapshot summary from record
     snapshot_summary = record.record.get("device_snapshot") or {}
     if not isinstance(snapshot_summary, dict):
         snapshot_summary = {}
@@ -143,7 +249,6 @@ def _build_device(record: "RunRecord") -> DeviceSnapshot | None:
         except Exception as e:
             logger.debug("Failed to parse calibration data: %s", e)
 
-    # Determine captured_at
     captured_at = snapshot_summary.get("captured_at") or record.created_at
 
     return DeviceSnapshot(
@@ -159,25 +264,12 @@ def _build_device(record: "RunRecord") -> DeviceSnapshot | None:
     )
 
 
-def _build_execution(record: "RunRecord") -> ExecutionSnapshot | None:
-    """
-    Build ExecutionSnapshot from RunRecord.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract execution info from.
-
-    Returns
-    -------
-    ExecutionSnapshot or None
-        Constructed execution snapshot, or None if insufficient data.
-    """
+def _build_execution(record: RunRecord) -> ExecutionSnapshot | None:
+    """Build ExecutionSnapshot from RunRecord."""
     execute = record.record.get("execute") or {}
     if not isinstance(execute, dict):
         execute = {}
 
-    # Get submission time
     submitted_at = execute.get("submitted_at") or record.created_at
 
     # Get shots from execute or params
@@ -206,26 +298,12 @@ def _build_execution(record: "RunRecord") -> ExecutionSnapshot | None:
     )
 
 
-def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
+def _build_program(record: RunRecord) -> ProgramSnapshot | None:
     """
     Build ProgramSnapshot from RunRecord and artifacts.
 
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract program info from.
-
-    Returns
-    -------
-    ProgramSnapshot or None
-        Constructed program snapshot, or None if no program artifacts.
-
-    Notes
-    -----
     For synthesized envelopes, structural_hash is computed from sorted
-    artifact digests when not explicitly available. This provides a stable
-    identifier for program comparison, though it differs from adapter-computed
-    hashes (which are based on circuit structure, not artifact content).
+    artifact digests when not explicitly available.
     """
     logical: list[ProgramArtifact] = []
     physical: list[ProgramArtifact] = []
@@ -242,26 +320,15 @@ def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
             continue
 
         # Determine format from kind
-        fmt = "unknown"
-        if "openqasm3" in artifact.kind.lower():
-            fmt = "openqasm3"
-        elif "qpy" in artifact.kind.lower():
-            fmt = "qpy"
-        elif "json" in artifact.kind.lower():
-            fmt = "json"
-
-        # Get metadata
+        fmt = _detect_program_format(artifact.kind)
         meta = artifact.meta or {}
-        name = meta.get("program_name") or meta.get("name")
-        index = meta.get("program_index")
 
-        # All program artifacts are logical (user-provided)
         prog_artifact = ProgramArtifact(
             ref=artifact,
             role=ProgramRole.LOGICAL,
             format=fmt,
-            name=name,
-            index=index,
+            name=meta.get("program_name") or meta.get("name"),
+            index=meta.get("program_index"),
         )
         logical.append(prog_artifact)
 
@@ -272,32 +339,7 @@ def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
     # If no program artifacts, check record["program"] anchors
     program_section = record.record.get("program") or {}
     if isinstance(program_section, dict):
-        oq3_anchors = program_section.get("openqasm3", [])
-        if isinstance(oq3_anchors, list):
-            for anchor in oq3_anchors:
-                if not isinstance(anchor, dict):
-                    continue
-
-                # Build artifact refs from anchor info
-                if "raw" in anchor and isinstance(anchor["raw"], dict):
-                    try:
-                        ref = ArtifactRef(
-                            kind=anchor["raw"].get("kind", "source.openqasm3"),
-                            digest=anchor["raw"]["digest"],
-                            media_type="application/openqasm",
-                            role="program",
-                        )
-                        logical.append(
-                            ProgramArtifact(
-                                ref=ref,
-                                role=ProgramRole.LOGICAL,
-                                format="openqasm3",
-                                name=anchor.get("name"),
-                                index=anchor.get("index"),
-                            )
-                        )
-                    except (KeyError, ValueError):
-                        pass
+        _extract_program_anchors(program_section, logical)
 
     if not logical and not physical:
         return None
@@ -319,175 +361,76 @@ def _build_program(record: "RunRecord") -> ProgramSnapshot | None:
     )
 
 
-def _build_result(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
-) -> ResultSnapshot:
-    """
-    Build ResultSnapshot from RunRecord and artifacts.
+def _detect_program_format(kind: str) -> str:
+    """Detect program format from artifact kind."""
+    kind_lower = kind.lower()
+    if "openqasm3" in kind_lower:
+        return "openqasm3"
+    elif "qpy" in kind_lower:
+        return "qpy"
+    elif "json" in kind_lower:
+        return "json"
+    return "unknown"
 
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract results from.
-    store : ObjectStoreProtocol
-        Object store for loading counts artifacts.
 
-    Returns
-    -------
-    ResultSnapshot
-        Constructed result snapshot (always returns a valid snapshot).
+def _extract_program_anchors(
+    program_section: dict[str, Any],
+    logical: list[ProgramArtifact],
+) -> None:
+    """Extract program artifacts from record anchors."""
+    oq3_anchors = program_section.get("openqasm3", [])
+    if not isinstance(oq3_anchors, list):
+        return
 
-    Notes
-    -----
-    If the counts payload includes ``counts_format`` metadata, it is
-    preserved in the result. Otherwise, canonical format (cbit0_right)
-    is assumed and marked appropriately in metadata.
-    """
-    # Lazy import to avoid circular dependencies
+    for anchor in oq3_anchors:
+        if not isinstance(anchor, dict):
+            continue
+
+        if "raw" in anchor and isinstance(anchor["raw"], dict):
+            try:
+                ref = ArtifactRef(
+                    kind=anchor["raw"].get("kind", "source.openqasm3"),
+                    digest=anchor["raw"]["digest"],
+                    media_type="application/openqasm",
+                    role="program",
+                )
+                logical.append(
+                    ProgramArtifact(
+                        ref=ref,
+                        role=ProgramRole.LOGICAL,
+                        format="openqasm3",
+                        name=anchor.get("name"),
+                        index=anchor.get("index"),
+                    )
+                )
+            except (KeyError, ValueError):
+                pass
+
+
+def _build_result(record: RunRecord, store: ObjectStoreProtocol) -> ResultSnapshot:
+    """Build ResultSnapshot from RunRecord and artifacts."""
     from devqubit_engine.storage.artifacts.io import load_artifact_json
     from devqubit_engine.storage.artifacts.lookup import find_artifact
 
     status = record.record.get("info", {}).get("status", "RUNNING")
-
-    # Determine success and normalized status
-    if status == "FINISHED":
-        success = True
-        normalized_status = "completed"
-    elif status == "FAILED":
-        success = False
-        normalized_status = "failed"
-    elif status == "KILLED":
-        success = False
-        normalized_status = "cancelled"
-    elif status in ("RUNNING", "QUEUED"):
-        success = False
-        normalized_status = "running"
-    else:
-        success = False
-        normalized_status = "failed"
+    success, normalized_status = _normalize_status(status)
 
     items: list[ResultItem] = []
-    error: ResultError | None = None
-
-    # Build error from record errors
-    errors_list = record.record.get("errors") or []
-    if errors_list and isinstance(errors_list, list) and errors_list:
-        first_error = errors_list[0]
-        if isinstance(first_error, dict):
-            error = ResultError(
-                type=str(first_error.get("type", "UnknownError")),
-                message=str(first_error.get("message", ""))[:500],
-            )
+    error = _build_result_error(record)
 
     # Try to load counts from artifact
-    counts_artifact = find_artifact(
-        record,
-        role="results",
-        kind_contains="counts",
-    )
-
-    # Track whether format was assumed (for metadata)
+    counts_artifact = find_artifact(record, role="results", kind_contains="counts")
     format_was_assumed = False
 
     if counts_artifact:
         try:
             payload = load_artifact_json(counts_artifact, store)
             if isinstance(payload, dict):
-                # Check if payload includes counts_format metadata
-                payload_format = payload.get("counts_format")
-
-                # Handle batch format
-                experiments = payload.get("experiments")
-                if isinstance(experiments, list) and experiments:
-                    for idx, exp in enumerate(experiments):
-                        if isinstance(exp, dict) and exp.get("counts"):
-                            counts_data = exp["counts"]
-                            shots = sum(counts_data.values()) if counts_data else 0
-
-                            # Use format from payload if available
-                            if payload_format and isinstance(payload_format, dict):
-                                format_dict = {
-                                    "source_sdk": payload_format.get(
-                                        "source_sdk",
-                                        record.record.get("adapter", "manual"),
-                                    ),
-                                    "source_key_format": payload_format.get(
-                                        "source_key_format", "run"
-                                    ),
-                                    "bit_order": payload_format.get(
-                                        "bit_order", "cbit0_right"
-                                    ),
-                                    "transformed": payload_format.get(
-                                        "transformed", False
-                                    ),
-                                }
-                            else:
-                                # Assume canonical format for manual runs
-                                format_was_assumed = True
-                                format_dict = CountsFormat(
-                                    source_sdk=record.record.get("adapter", "manual"),
-                                    source_key_format="run",
-                                    bit_order="cbit0_right",
-                                    transformed=False,
-                                ).to_dict()
-
-                            items.append(
-                                ResultItem(
-                                    item_index=idx,
-                                    success=True,
-                                    counts={
-                                        "counts": counts_data,
-                                        "shots": shots,
-                                        "format": format_dict,
-                                    },
-                                )
-                            )
-                else:
-                    # Simple format
-                    counts_data = payload.get("counts", {})
-                    if counts_data:
-                        shots = sum(counts_data.values())
-
-                        # Use format from payload if available
-                        if payload_format and isinstance(payload_format, dict):
-                            format_dict = {
-                                "source_sdk": payload_format.get(
-                                    "source_sdk",
-                                    record.record.get("adapter", "manual"),
-                                ),
-                                "source_key_format": payload_format.get(
-                                    "source_key_format", "run"
-                                ),
-                                "bit_order": payload_format.get(
-                                    "bit_order", "cbit0_right"
-                                ),
-                                "transformed": payload_format.get("transformed", False),
-                            }
-                        else:
-                            format_was_assumed = True
-                            format_dict = CountsFormat(
-                                source_sdk=record.record.get("adapter", "manual"),
-                                source_key_format="run",
-                                bit_order="cbit0_right",
-                                transformed=False,
-                            ).to_dict()
-
-                        items.append(
-                            ResultItem(
-                                item_index=0,
-                                success=True,
-                                counts={
-                                    "counts": counts_data,
-                                    "shots": shots,
-                                    "format": format_dict,
-                                },
-                            )
-                        )
+                items, format_was_assumed = _parse_counts_payload(payload, record)
         except Exception as e:
             logger.debug("Failed to load counts from artifact: %s", e)
 
-    # Mark as completed if we have results even without explicit status
+    # Mark as completed if we have results
     if items and not success:
         success = True
         normalized_status = "completed"
@@ -505,97 +448,134 @@ def _build_result(
     )
 
 
-def _build_devqubit_metadata(record: "RunRecord") -> dict[str, Any]:
+def _normalize_status(status: str) -> tuple[bool, str]:
+    """Convert run status to (success, normalized_status)."""
+    status_map = {
+        "FINISHED": (True, "completed"),
+        "FAILED": (False, "failed"),
+        "KILLED": (False, "cancelled"),
+        "RUNNING": (False, "running"),
+        "QUEUED": (False, "running"),
+    }
+    return status_map.get(status, (False, "failed"))
+
+
+def _build_result_error(record: RunRecord) -> ResultError | None:
+    """Build ResultError from record errors."""
+    errors_list = record.record.get("errors") or []
+    if not errors_list or not isinstance(errors_list, list):
+        return None
+
+    first_error = errors_list[0]
+    if isinstance(first_error, dict):
+        return ResultError(
+            type=str(first_error.get("type", "UnknownError")),
+            message=str(first_error.get("message", ""))[:500],
+        )
+    return None
+
+
+def _parse_counts_payload(
+    payload: dict[str, Any],
+    record: RunRecord,
+) -> tuple[list[ResultItem], bool]:
+    """Parse counts payload into ResultItems."""
+    items: list[ResultItem] = []
+    format_was_assumed = False
+    payload_format = payload.get("counts_format")
+    adapter = record.record.get("adapter", "manual")
+
+    # Handle batch format
+    experiments = payload.get("experiments")
+    if isinstance(experiments, list) and experiments:
+        for idx, exp in enumerate(experiments):
+            if isinstance(exp, dict) and exp.get("counts"):
+                counts_data = exp["counts"]
+                shots = sum(counts_data.values()) if counts_data else 0
+                format_dict, assumed = _build_counts_format(payload_format, adapter)
+                if assumed:
+                    format_was_assumed = True
+
+                items.append(
+                    ResultItem(
+                        item_index=idx,
+                        success=True,
+                        counts={
+                            "counts": counts_data,
+                            "shots": shots,
+                            "format": format_dict,
+                        },
+                    )
+                )
+    else:
+        # Simple format
+        counts_data = payload.get("counts", {})
+        if counts_data:
+            shots = sum(counts_data.values())
+            format_dict, assumed = _build_counts_format(payload_format, adapter)
+            if assumed:
+                format_was_assumed = True
+
+            items.append(
+                ResultItem(
+                    item_index=0,
+                    success=True,
+                    counts={
+                        "counts": counts_data,
+                        "shots": shots,
+                        "format": format_dict,
+                    },
+                )
+            )
+
+    return items, format_was_assumed
+
+
+def _build_counts_format(
+    payload_format: dict[str, Any] | None,
+    adapter: str,
+) -> tuple[dict[str, Any], bool]:
     """
-    Build devqubit namespace metadata from RunRecord.
+    Build counts format dict.
 
-    This extracts params, metrics, project, and fingerprints from the
-    RunRecord to populate envelope.metadata.devqubit for compare module
-    compatibility.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract metadata from.
-
-    Returns
-    -------
-    dict
-        Devqubit namespace metadata with params, metrics, project, fingerprints.
+    Returns (format_dict, was_assumed).
     """
-    devqubit: dict[str, Any] = {}
+    if payload_format and isinstance(payload_format, dict):
+        return {
+            "source_sdk": payload_format.get("source_sdk", adapter),
+            "source_key_format": payload_format.get("source_key_format", "run"),
+            "bit_order": payload_format.get("bit_order", "cbit0_right"),
+            "transformed": payload_format.get("transformed", False),
+        }, False
 
-    # Extract params from record["data"]["params"]
-    data = record.record.get("data") or {}
-    params = data.get("params")
-    if params and isinstance(params, dict):
-        devqubit["params"] = params
-
-    # Extract metrics from record["data"]["metrics"]
-    metrics = data.get("metrics")
-    if metrics and isinstance(metrics, dict):
-        devqubit["metrics"] = metrics
-
-    # Extract project from record["project"]
-    # Handle both string and dict {"name": ...} formats
-    project = record.record.get("project")
-    if project:
-        if isinstance(project, dict):
-            project_name = project.get("name")
-            if project_name:
-                devqubit["project"] = project_name
-        else:
-            devqubit["project"] = project
-
-    # Build fingerprints from artifacts (if available)
-    # For synthesized envelopes, we compute a simple fingerprint from
-    # program artifact digests + backend + shots
-    fingerprints: dict[str, str] = {}
-
-    # Compute run fingerprint from stable inputs
-    fingerprint_parts: list[str] = []
-
-    # Add program digests
-    program_digests = sorted(
-        art.digest for art in record.artifacts if art.role == "program" and art.digest
+    # Assume canonical format
+    return (
+        CountsFormat(
+            source_sdk=adapter,
+            source_key_format="run",
+            bit_order="cbit0_right",
+            transformed=False,
+        ).to_dict(),
+        True,
     )
-    if program_digests:
-        fingerprint_parts.extend(program_digests)
 
-    # Add backend name
-    backend = record.record.get("backend") or {}
-    if isinstance(backend, dict) and backend.get("name"):
-        fingerprint_parts.append(f"backend:{backend['name']}")
 
-    # Add shots
-    execute = record.record.get("execute") or {}
-    shots = execute.get("shots") if isinstance(execute, dict) else None
-    if shots is None:
-        shots = params.get("shots") if params else None
-    if shots is not None:
-        fingerprint_parts.append(f"shots:{shots}")
-
-    if fingerprint_parts:
-        combined = "|".join(str(p) for p in fingerprint_parts)
-        run_fingerprint = hashlib.sha256(combined.encode()).hexdigest()[:16]
-        fingerprints["run"] = run_fingerprint
-
-    if fingerprints:
-        devqubit["fingerprints"] = fingerprints
-
-    return devqubit
+# ---------------------------------------------------------------------------
+# Main synthesis function
+# ---------------------------------------------------------------------------
 
 
 def synthesize_envelope(
-    record: "RunRecord",
-    store: "ObjectStoreProtocol",
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+    fingerprints: dict[str, str] | None = None,
 ) -> ExecutionEnvelope:
     """
     Synthesize ExecutionEnvelope from RunRecord and artifacts.
 
-    This function synthesizes an envelope from data when no envelope
-    artifact exists. Intended for **manual runs only** - adapter runs
-    should always have envelope created by the adapter.
+    Creates an envelope from run data when no envelope artifact exists.
+    Intended for **manual runs only** - adapter runs should always have
+    envelope created by the adapter.
 
     Parameters
     ----------
@@ -603,11 +583,13 @@ def synthesize_envelope(
         Run record to build envelope from.
     store : ObjectStoreProtocol
         Object store for loading artifacts.
+    fingerprints : dict, optional
+        Pre-computed fingerprints to include in tracker namespace.
 
     Returns
     -------
     ExecutionEnvelope
-        Synthesized envelope (best effort, valid structure).
+        Synthesized envelope with valid structure.
 
     Notes
     -----
@@ -615,22 +597,11 @@ def synthesize_envelope(
 
     - ``metadata.synthesized_from_run=True`` marks as synthesized
     - ``metadata.manual_run=True`` marks as manual (if no adapter)
-    - ``program.structural_hash`` computed from artifact digests (not circuit structure)
-    - ``program.parametric_hash`` is None (engine cannot compute)
-
-    Synthesized envelopes include ``metadata.devqubit`` namespace with
-    params, metrics, project, and fingerprints for compare module compatibility.
-
-    Examples
-    --------
-    >>> envelope = synthesize_envelope(record, store)
-    >>> envelope.metadata.get("synthesized_from_run")
-    True
-    >>> envelope.metadata.get("devqubit", {}).get("project")
-    'my-project'
+    - ``program.structural_hash`` computed from artifact digests
+    - ``program.parametric_hash`` is None
     """
     producer = _build_producer(record)
-    device = _build_device(record)
+    device = build_device_from_record(record)
     execution = _build_execution(record)
     program = _build_program(record)
     result = _build_result(record, store)
@@ -646,19 +617,13 @@ def synthesize_envelope(
         metadata["manual_run"] = True
 
     # Add warning if counts format was assumed
-    if result.items:
-        for item in result.items:
-            if item.counts:
-                fmt = item.counts.get("format", {})
-                if fmt.get("source_key_format") == "run":
-                    metadata["counts_format_assumed"] = True
-                    break
+    if result.metadata and result.metadata.get("counts_format_assumed"):
+        metadata["counts_format_assumed"] = True
 
-    # Add devqubit namespace for compare module compatibility
-    # This is critical for synthesized envelopes to work with diff/verify
-    devqubit = _build_devqubit_metadata(record)
-    if devqubit:
-        metadata["devqubit"] = devqubit
+    # Add tracker namespace with params, metrics, project, fingerprints
+    tracker_ns = build_tracker_namespace(record.record, fingerprints)
+    if tracker_ns:
+        metadata["tracker"] = tracker_ns
 
     envelope = ExecutionEnvelope.create(
         producer=producer,
@@ -670,12 +635,10 @@ def synthesize_envelope(
     )
 
     logger.debug(
-        "Synthesized envelope from run: run=%s, envelope_id=%s, manual=%s, "
-        "has_devqubit=%s",
+        "Synthesized envelope: run=%s, envelope_id=%s, manual=%s",
         record.run_id,
         envelope.envelope_id,
         is_manual,
-        bool(devqubit),
     )
 
     return envelope
