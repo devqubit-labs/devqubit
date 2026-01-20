@@ -63,9 +63,9 @@ class RunContext:
 # =============================================================================
 
 
-def extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
+def extract_tracker_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """
-    Extract devqubit namespace from envelope metadata.
+    Extract tracker namespace from envelope metadata.
 
     Parameters
     ----------
@@ -75,23 +75,23 @@ def extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
     Returns
     -------
     dict
-        The devqubit metadata namespace, or empty dict if not present.
+        The tracker metadata namespace, or empty dict if not present.
     """
-    devqubit = envelope.metadata.get("devqubit")
-    if devqubit is None:
+    tracker_meta = envelope.metadata.get("tracker")
+    if tracker_meta is None:
         return {}
-    if not isinstance(devqubit, dict):
+    if not isinstance(tracker_meta, dict):
         logger.warning(
-            "envelope.metadata.devqubit is not a dict (got %s), treating as empty",
-            type(devqubit).__name__,
+            "envelope.metadata.tracker is not a dict (got %s), treating as empty",
+            type(tracker_meta).__name__,
         )
         return {}
-    return devqubit
+    return tracker_meta
 
 
 def extract_params(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """
-    Extract parameters from envelope metadata.devqubit namespace.
+    Extract parameters from envelope metadata.tracker namespace.
 
     Parameters
     ----------
@@ -103,13 +103,13 @@ def extract_params(envelope: ExecutionEnvelope) -> dict[str, Any]:
     dict
         Parameters dictionary, or empty dict if not present.
     """
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("params", {}) or {}
+    tracker_meta = extract_tracker_metadata(envelope)
+    return tracker_meta.get("params", {}) or {}
 
 
 def extract_metrics(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """
-    Extract metrics from envelope metadata.devqubit namespace.
+    Extract metrics from envelope metadata.tracker namespace.
 
     Parameters
     ----------
@@ -121,13 +121,13 @@ def extract_metrics(envelope: ExecutionEnvelope) -> dict[str, Any]:
     dict
         Metrics dictionary, or empty dict if not present.
     """
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("metrics", {}) or {}
+    tracker_meta = extract_tracker_metadata(envelope)
+    return tracker_meta.get("metrics", {}) or {}
 
 
 def extract_project(envelope: ExecutionEnvelope) -> str | None:
     """
-    Extract project name from envelope metadata.devqubit namespace.
+    Extract project name from envelope metadata.tracker namespace.
 
     Parameters
     ----------
@@ -139,13 +139,13 @@ def extract_project(envelope: ExecutionEnvelope) -> str | None:
     str or None
         Project name if present.
     """
-    devqubit = extract_devqubit_metadata(envelope)
-    return devqubit.get("project")
+    tracker_meta = extract_tracker_metadata(envelope)
+    return tracker_meta.get("project")
 
 
 def extract_fingerprint(envelope: ExecutionEnvelope) -> str | None:
     """
-    Extract run fingerprint from envelope metadata.devqubit namespace.
+    Extract run fingerprint from envelope metadata.tracker namespace.
 
     Parameters
     ----------
@@ -157,8 +157,8 @@ def extract_fingerprint(envelope: ExecutionEnvelope) -> str | None:
     str or None
         Run fingerprint if present.
     """
-    devqubit = extract_devqubit_metadata(envelope)
-    fingerprints = devqubit.get("fingerprints", {}) or {}
+    tracker_meta = extract_tracker_metadata(envelope)
+    fingerprints = tracker_meta.get("fingerprints", {}) or {}
     return fingerprints.get("run")
 
 

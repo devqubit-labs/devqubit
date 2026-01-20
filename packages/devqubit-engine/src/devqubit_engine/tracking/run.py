@@ -51,13 +51,17 @@ from devqubit_engine.storage.types import (
     RegistryProtocol,
 )
 from devqubit_engine.tracking.fingerprints import (
-    compute_fingerprints,
+    compute_fingerprints_from_envelope,
     compute_fingerprints_from_envelopes,
 )
 from devqubit_engine.tracking.record import RunRecord
-from devqubit_engine.uec.errors import EnvelopeValidationError, MissingEnvelopeError
+from devqubit_engine.uec.errors import EnvelopeValidationError
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
-from devqubit_engine.utils.common import sha256_digest, utc_now_iso
+from devqubit_engine.utils.common import (
+    is_manual_run_record,
+    sha256_digest,
+    utc_now_iso,
+)
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
 from devqubit_engine.utils.qasm3 import coerce_openqasm3_sources
 from devqubit_engine.utils.serialization import json_dumps, to_jsonable
@@ -68,134 +72,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum artifact size in bytes (20 MB default)
 MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
-
-
-def _has_valid_envelope(artifacts: list) -> bool:
-    """
-    Check if a valid envelope artifact exists in the artifact list.
-
-    Only returns True if there is a valid envelope
-    (kind="devqubit.envelope.json"). Invalid envelopes
-    (kind="devqubit.envelope.invalid.json") are ignored.
-
-    Parameters
-    ----------
-    artifacts : list of ArtifactRef
-        List of artifact references to check.
-
-    Returns
-    -------
-    bool
-        True if at least one valid envelope artifact exists.
-    """
-    for artifact in artifacts:
-        if artifact.role == "envelope" and artifact.kind == "devqubit.envelope.json":
-            return True
-    return False
-
-
-def _synthesize_envelope_for_manual_run(
-    record: dict[str, Any],
-    artifacts: list,
-    store: ObjectStoreProtocol,
-) -> Any | None:
-    """
-    Synthesize an envelope for a manual run.
-
-    This is called during finalization when a manual run doesn't have
-    an explicit envelope. The synthesized envelope provides basic structure
-    with limited semantics compared to adapter-generated envelopes.
-
-    Parameters
-    ----------
-    record : dict
-        Raw run record dictionary.
-    artifacts : list of ArtifactRef
-        Current artifact list.
-    store : ObjectStoreProtocol
-        Object store for artifact retrieval.
-
-    Returns
-    -------
-    ExecutionEnvelope or None
-        Synthesized envelope, or None if synthesis fails.
-
-    Notes
-    -----
-    The synthesized envelope will have:
-
-    - metadata.auto_generated=True
-    - metadata.manual_run=True (set by synthesize_envelope)
-    - metadata.devqubit namespace with params, metrics, project, fingerprints
-    - program.structural_hash computed from artifact digests (not circuit structure)
-    - program.parametric_hash is None (engine cannot compute)
-    """
-    try:
-        from devqubit_engine.tracking.record import RunRecord
-        from devqubit_engine.uec.api.synthesize import synthesize_envelope
-
-        temp_record = RunRecord(record=record, artifacts=artifacts)
-        envelope = synthesize_envelope(temp_record, store)
-        envelope.metadata["auto_generated"] = True
-
-        # Enrich with devqubit namespace
-        _enrich_envelope_devqubit_metadata(envelope, record)
-
-        return envelope
-
-    except Exception as e:
-        logger.warning("Failed to synthesize envelope: %s", e)
-        return None
-
-
-def _enrich_envelope_devqubit_metadata(
-    envelope: Any,
-    record: dict[str, Any],
-    fingerprints: dict[str, str] | None = None,
-) -> None:
-    """
-    Enrich envelope metadata with devqubit namespace.
-
-    Adds project, params, metrics, and fingerprints to envelope.metadata.devqubit
-    so that compare module can extract this data uniformly from envelopes.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Envelope to enrich.
-    record : dict
-        Run record dictionary containing project, params, metrics.
-    fingerprints : dict, optional
-        Pre-computed fingerprints. If None, will not be included.
-    """
-    # Extract data from record
-    project_data = record.get("project", {})
-    project_name = project_data.get("name") if isinstance(project_data, dict) else None
-
-    data = record.get("data", {}) or {}
-    params = data.get("params", {}) or {}
-    metrics = data.get("metrics", {}) or {}
-
-    # Build devqubit namespace
-    devqubit: dict[str, Any] = {}
-
-    if project_name:
-        devqubit["project"] = project_name
-
-    if params:
-        devqubit["params"] = dict(params)
-
-    if metrics:
-        devqubit["metrics"] = dict(metrics)
-
-    if fingerprints:
-        devqubit["fingerprints"] = dict(fingerprints)
-
-    # Only add if we have content
-    if devqubit:
-        if "devqubit" not in envelope.metadata:
-            envelope.metadata["devqubit"] = {}
-        envelope.metadata["devqubit"].update(devqubit)
 
 
 class Run:
@@ -261,7 +137,6 @@ class Run:
         group_name: str | None = None,
         parent_run_id: str | None = None,
     ) -> None:
-        # Thread-safety lock for record and artifact mutations
         self._lock = threading.Lock()
 
         # Generate unique run ID
@@ -273,12 +148,10 @@ class Run:
         self._adapter = adapter
         self._run_name = run_name
         self._artifacts: list[ArtifactRef] = []
-        self._pending_tracked_jobs: list[Any] = []  # Jobs awaiting .result() call
+        self._pending_tracked_jobs: list[Any] = []
 
-        # Get config (use provided or global)
+        # Get config and backends
         cfg = config or get_config()
-
-        # Use provided backends or create from config
         self._store = store or create_store(config=cfg)
         self._registry = registry or create_registry(config=cfg)
         self._config = cfg
@@ -325,53 +198,33 @@ class Run:
             adapter,
         )
 
+    # -----------------------------------------------------------------------
+    # Properties
+    # -----------------------------------------------------------------------
+
     @property
     def run_id(self) -> str:
-        """
-        Get the unique run identifier.
-
-        Returns
-        -------
-        str
-            ULID-based run identifier.
-        """
+        """Get the unique run identifier."""
         return self._run_id
 
     @property
     def status(self) -> str:
-        """
-        Get the current run status.
-
-        Returns
-        -------
-        str
-            One of: "RUNNING", "FINISHED", "FAILED", "KILLED".
-        """
+        """Get the current run status."""
         return self.record.get("info", {}).get("status", "RUNNING")
 
     @property
     def store(self) -> ObjectStoreProtocol:
-        """
-        Get the object store for artifacts.
-
-        Returns
-        -------
-        ObjectStoreProtocol
-            Object store instance.
-        """
+        """Get the object store for artifacts."""
         return self._store
 
     @property
     def registry(self) -> RegistryProtocol:
-        """
-        Get the run registry.
-
-        Returns
-        -------
-        RegistryProtocol
-            Registry instance.
-        """
+        """Get the run registry."""
         return self._registry
+
+    # -----------------------------------------------------------------------
+    # Logging methods
+    # -----------------------------------------------------------------------
 
     def log_param(self, key: str, value: Any) -> None:
         """
@@ -418,8 +271,7 @@ class Run:
             Metric value (will be converted to float).
         step : int, optional
             Step number for time series tracking. If provided, the metric
-            is stored as a time series point. If None, stores as a scalar
-            (overwrites previous value).
+            is stored as a time series point. If None, stores as a scalar.
 
         Raises
         ------
@@ -438,7 +290,6 @@ class Run:
             if step < 0:
                 raise ValueError(f"step must be non-negative, got {step}")
 
-            # Time series mode
             with self._lock:
                 if "metric_series" not in self.record["data"]:
                     self.record["data"]["metric_series"] = {}
@@ -455,7 +306,6 @@ class Run:
                 )
             logger.debug("Logged metric series: %s[%d]=%f", key, step, value_f)
         else:
-            # Scalar mode (overwrites previous value)
             with self._lock:
                 self.record["data"]["metrics"][key] = value_f
             logger.debug("Logged metric: %s=%f", key, value_f)
@@ -501,6 +351,10 @@ class Run:
         """
         for key, value in tags.items():
             self.set_tag(key, value)
+
+    # -----------------------------------------------------------------------
+    # Artifact logging methods
+    # -----------------------------------------------------------------------
 
     def log_text(
         self,
@@ -571,16 +425,12 @@ class Run:
             MIME type (e.g., "application/x-qpy").
         role : str, optional
             Logical role. Default is "artifact".
-            Common values: "program", "results", "device_snapshot".
         meta : dict, optional
             Additional metadata.
         max_bytes : int, optional
             Maximum allowed size in bytes. Defaults to ``MAX_ARTIFACT_BYTES``.
-            Set to 0 or negative to disable size limit.
         truncate : bool, optional
-            If True and data exceeds max_bytes, truncate data and add
-            a digest of full content to metadata. If False (default),
-            raise ValueError for oversized artifacts.
+            If True and data exceeds max_bytes, truncate data.
 
         Returns
         -------
@@ -670,12 +520,8 @@ class Run:
         Validate and log execution envelope.
 
         This is the canonical validation function that all adapters shall use.
-        It ensures identical validation behavior across all SDKs.
-
         For adapter runs, invalid envelope raises EnvelopeValidationError.
         For manual runs, invalid envelope is logged but execution continues.
-
-        Multiple envelopes per run are allowed (e.g., one per circuit batch).
 
         Parameters
         ----------
@@ -691,21 +537,16 @@ class Run:
         ------
         EnvelopeValidationError
             If adapter run produces invalid envelope (strict enforcement).
-            This error MUST NOT be silenced by adapters.
         """
-        # Validate envelope
         validation = envelope.validate_schema()
 
-        # Check if this is an adapter run (strict mode)
         is_adapter_run = (
             envelope.producer.adapter
             and envelope.producer.adapter != "manual"
             and envelope.producer.adapter != ""
         )
 
-        # Log based on validation result
         if validation.ok:
-            # Log valid envelope
             self.log_json(
                 name="execution_envelope",
                 obj=envelope.to_dict(),
@@ -714,7 +555,6 @@ class Run:
             )
             logger.debug("Logged valid execution envelope")
         else:
-            # For adapter runs: strict enforcement - raise error
             if is_adapter_run:
                 error_details = [str(e) for e in validation.errors]
                 raise EnvelopeValidationError(
@@ -722,13 +562,11 @@ class Run:
                     errors=error_details,
                 )
 
-            # For manual runs: log warning and continue
             logger.warning(
                 "Envelope validation failed (manual run, continuing): %d errors",
                 validation.error_count,
             )
 
-            # Log validation errors for debugging
             self.log_json(
                 name="envelope_validation_error",
                 obj={
@@ -739,14 +577,12 @@ class Run:
                 kind="devqubit.envelope.validation_error.json",
             )
 
-            # Store summary in tracker record for visibility
             with self._lock:
                 self.record["envelope_validation_error"] = {
                     "errors": [str(e) for e in validation.errors],
                     "count": validation.error_count,
                 }
 
-            # Log invalid envelope for debugging
             self.log_json(
                 name="execution_envelope_invalid",
                 obj=envelope.to_dict(),
@@ -804,19 +640,13 @@ class Run:
         """
         Log OpenQASM 3 program(s).
 
-        Supports both single-circuit and multi-circuit runs. For multiple
-        programs, each is stored as separate artifacts with stable indices.
+        Supports both single-circuit and multi-circuit runs.
 
         Parameters
         ----------
         source : str, sequence, or dict
-            OpenQASM3 input(s). Accepts:
-
-            - Single string (one circuit)
-            - List of strings (multiple circuits)
-            - List of dicts with "name" and "source" keys
-            - Dict mapping names to sources
-
+            OpenQASM3 input(s). Accepts single string, list of strings,
+            list of dicts with "name"/"source" keys, or dict mapping names.
         name : str, optional
             Logical name for the source. Default is "program".
         role : str, optional
@@ -829,10 +659,7 @@ class Run:
         Returns
         -------
         dict
-            Result with keys:
-
-            - ``items``: List of per-circuit results (each with name, index, ref)
-            - ``ref``: Top-level convenience key for single-circuit input
+            Result with keys: ``items`` (list) and ``ref`` (single-circuit).
         """
         items_in = coerce_openqasm3_sources(source, default_name=name)
 
@@ -868,7 +695,6 @@ class Run:
                 }
             )
 
-        # Anchor pointers in the run record
         if anchor:
             with self._lock:
                 prog = self.record.setdefault("program", {})
@@ -890,28 +716,26 @@ class Run:
                     oq3_list.append(entry)
 
         result: dict[str, Any] = {"items": out_items}
-
-        # Convenience key for single-circuit callers
         if len(out_items) == 1:
             result["ref"] = out_items[0]["ref"]
 
         logger.debug("Logged %d OpenQASM3 program(s)", len(out_items))
         return result
 
+    # -----------------------------------------------------------------------
+    # Executor wrapping
+    # -----------------------------------------------------------------------
+
     def wrap(self, executor: Any, **kwargs: Any) -> Any:
         """
         Wrap an executor (backend/device) for automatic tracking.
 
-        The wrapped executor intercepts execution calls and automatically
-        logs circuits, results, and device snapshots.
-
         Parameters
         ----------
         executor : Any
-            SDK executor (e.g., Qiskit backend, PennyLane device,
-            Cirq sampler).
+            SDK executor (e.g., Qiskit backend, PennyLane device).
         **kwargs : Any
-            Adapter-specific options forwarded to wrap_executor().
+            Adapter-specific options.
 
         Returns
         -------
@@ -922,13 +746,6 @@ class Run:
         ------
         ValueError
             If no adapter supports the given executor type.
-
-        Examples
-        --------
-        >>> from qiskit_aer import AerSimulator
-        >>> with track(project="test") as run:
-        ...     backend = run.wrap(AerSimulator())
-        ...     job = backend.run(circuit)
         """
         from devqubit_engine.adapters import resolve_adapter
 
@@ -943,6 +760,10 @@ class Run:
 
         logger.debug("Wrapped executor with adapter: %s", adapter.name)
         return adapter.wrap_executor(executor, self, **kwargs)
+
+    # -----------------------------------------------------------------------
+    # Status management
+    # -----------------------------------------------------------------------
 
     def fail(
         self,
@@ -964,8 +785,7 @@ class Run:
         exc_tb : Any, optional
             Traceback object for formatting.
         status : str, optional
-            Status to set. Default is "FAILED". Use "KILLED" for
-            interrupts.
+            Status to set. Default is "FAILED".
         """
         with self._lock:
             self.record["info"]["status"] = status
@@ -996,54 +816,75 @@ class Run:
             str(error),
         )
 
-    def _has_envelope_artifact(self) -> bool:
-        """
-        Check if a valid envelope artifact exists.
+    # -----------------------------------------------------------------------
+    # Internal methods
+    # -----------------------------------------------------------------------
 
-        Only returns True if there is a valid envelope (kind="devqubit.envelope.json").
-        Invalid envelopes (kind="devqubit.envelope.invalid.json") are ignored,
-        allowing auto-generation to proceed.
+    def _has_valid_envelope(self) -> bool:
+        """Check if a valid envelope artifact exists."""
+        with self._lock:
+            for artifact in self._artifacts:
+                if (
+                    artifact.role == "envelope"
+                    and artifact.kind == "devqubit.envelope.json"
+                ):
+                    return True
+        return False
+
+    def _load_all_envelopes(self) -> list[ExecutionEnvelope]:
+        """
+        Load all existing envelope artifacts.
 
         Returns
         -------
-        bool
-            True if valid envelope artifact exists in self._artifacts.
+        list of ExecutionEnvelope
+            All loaded envelopes (may be empty).
         """
+        from devqubit_engine.storage.artifacts.io import load_artifact_json
+
+        envelopes: list[ExecutionEnvelope] = []
+
         with self._lock:
-            return _has_valid_envelope(self._artifacts)
+            envelope_artifacts = [
+                a
+                for a in self._artifacts
+                if a.role == "envelope" and a.kind == "devqubit.envelope.json"
+            ]
 
-    def _ensure_envelope(self) -> None:
+        for artifact in envelope_artifacts:
+            try:
+                envelope_data = load_artifact_json(artifact, self._store)
+                if isinstance(envelope_data, dict):
+                    envelope = ExecutionEnvelope.from_dict(envelope_data)
+                    envelopes.append(envelope)
+            except Exception as e:
+                logger.warning("Failed to load envelope: %s", e)
+
+        return envelopes
+
+    def _build_final_envelopes(self) -> list[ExecutionEnvelope]:
         """
-        Ensure an envelope artifact exists before finalization.
+        Build or load final envelopes for finalization.
 
-        For **manual runs only**: synthesizes envelope from run record.
-        For **adapter runs**: missing envelope marks the run as FAILED with
-        a structured error. Adapters MUST create envelopes - no exceptions.
+        For adapter runs: loads all existing envelopes from artifacts.
+        For manual runs: synthesizes single envelope from run record.
 
-        Notes
-        -----
-        This is called automatically during _finalize(). For manual runs,
-        the synthesized envelope will have:
-
-        - metadata.auto_generated=True
-        - metadata.manual_run=True
-        - No program hashes (engine cannot compute them)
-
-        For adapter runs without envelope, the run is marked FAILED with
-        a ``MissingExecutionEnvelope`` error in the errors list. The run
-        is still persisted (for debugging) but marked as failed.
+        Returns
+        -------
+        list of ExecutionEnvelope
+            Final envelopes. Empty list if adapter run has no envelope (error).
         """
-        from devqubit_engine.utils.common import is_manual_run_record
+        from devqubit_engine.uec.api.synthesize import synthesize_envelope
 
-        if self._has_envelope_artifact():
-            logger.debug("Envelope artifact already exists, skipping auto-generation")
-            return
+        is_manual = is_manual_run_record(self.record)
 
-        # Only auto-generate for manual runs
-        if not is_manual_run_record(self.record):
+        if self._has_valid_envelope():
+            # Adapter run with existing envelope(s) - load all
+            return self._load_all_envelopes()
+
+        if not is_manual:
+            # Adapter run without envelope - this is an error
             adapter = self.record.get("adapter", "unknown")
-
-            # Mark run as FAILED with structured error
             with self._lock:
                 self.record["info"]["status"] = "FAILED"
                 self.record.setdefault("errors", []).append(
@@ -1060,124 +901,95 @@ class Run:
 
             logger.error(
                 "Adapter run '%s' (adapter=%s) completing without envelope. "
-                "Run marked as FAILED. This is an adapter integration error.",
+                "Run marked as FAILED.",
                 self._run_id,
                 adapter,
             )
-            return
+            return []
 
-        # Build envelope for manual run
+        # Manual run - synthesize single envelope
         with self._lock:
             record_copy = dict(self.record)
             artifacts_copy = list(self._artifacts)
 
-        envelope = _synthesize_envelope_for_manual_run(
-            record=record_copy, artifacts=artifacts_copy, store=self._store
-        )
+        try:
+            temp_record = RunRecord(record=record_copy, artifacts=artifacts_copy)
+            envelope = synthesize_envelope(temp_record, self._store)
+            envelope.metadata["auto_generated"] = True
+            logger.debug("Synthesized envelope for manual run %s", self._run_id)
+            return [envelope]
+        except Exception as e:
+            logger.warning("Failed to synthesize envelope: %s", e)
+            return []
 
-        if envelope is not None:
-            # Log the envelope (skip validation for auto-generated)
-            self.log_json(
-                name="execution_envelope",
-                obj=envelope.to_dict(),
-                role="envelope",
-                kind="devqubit.envelope.json",
-            )
-            logger.debug(
-                "Auto-generated envelope for manual run %s",
-                self._run_id,
-            )
-        else:
-            logger.warning(
-                "Failed to auto-generate envelope for run %s",
-                self._run_id,
-            )
-
-    def _compute_fingerprints(self, run_record: RunRecord) -> dict[str, str]:
+    def _compute_fingerprints_from_envelopes(
+        self,
+        envelopes: list[ExecutionEnvelope],
+    ) -> dict[str, str]:
         """
-        Compute fingerprints using canonical envelope resolution.
-
-        Uses the canonical resolver (load_all_envelopes) to load envelopes
-        and compute fingerprints. Handles errors gracefully by returning
-        empty fingerprints and marking the run as FAILED.
+        Compute fingerprints from one or more envelopes.
 
         Parameters
         ----------
-        run_record : RunRecord
-            Run record with artifacts.
+        envelopes : list of ExecutionEnvelope
+            Envelopes to compute fingerprints from.
 
         Returns
         -------
         dict
-            Fingerprints dictionary. Empty dict if envelope resolution fails.
+            Computed fingerprints.
         """
-        from devqubit_engine.uec.api.resolve import load_all_envelopes
-
-        try:
-            envelopes = load_all_envelopes(run_record, self._store)
-
-            if not envelopes:
-                # No envelopes found - use artifact-based fallback
-                logger.debug("No envelopes found, using artifact-based fingerprints")
-                return compute_fingerprints(run_record, envelope=None)
-
-            if len(envelopes) == 1:
-                return compute_fingerprints(run_record, envelope=envelopes[0])
-
-            # Multi-envelope: aggregate fingerprints
-            return compute_fingerprints_from_envelopes(envelopes)
-
-        except (MissingEnvelopeError, EnvelopeValidationError) as e:
-            adapter = self.record.get("adapter", "unknown")
-            error_type = type(e).__name__
-
-            with self._lock:
-                self.record["info"]["status"] = "FAILED"
-                self.record.setdefault("errors", []).append(
-                    {
-                        "type": error_type,
-                        "message": str(e),
-                        "adapter": adapter,
-                    }
-                )
-
-            logger.error(
-                "Envelope error during fingerprinting for run '%s': %s - %s",
-                self._run_id,
-                error_type,
-                str(e),
-            )
+        if not envelopes:
             return {}
 
-        except Exception as e:
-            logger.warning(
-                "Unexpected error computing fingerprints for run '%s': %s",
-                self._run_id,
-                e,
-            )
-            # Fall back to artifact-based fingerprints
-            return compute_fingerprints(run_record, envelope=None)
+        if len(envelopes) == 1:
+            return compute_fingerprints_from_envelope(envelopes[0])
+
+        # Multi-envelope: aggregate fingerprints
+        return compute_fingerprints_from_envelopes(envelopes)
+
+    def _enrich_envelopes(
+        self,
+        envelopes: list[ExecutionEnvelope],
+        fingerprints: dict[str, str],
+    ) -> None:
+        """
+        Enrich all envelopes with tracker namespace and fingerprints.
+
+        Parameters
+        ----------
+        envelopes : list of ExecutionEnvelope
+            Envelopes to enrich (modified in-place).
+        fingerprints : dict
+            Fingerprints to add.
+        """
+        from devqubit_engine.uec.api.synthesize import (
+            add_fingerprints_to_envelope,
+            enrich_envelope_with_tracker,
+        )
+
+        with self._lock:
+            record_copy = dict(self.record)
+
+        for envelope in envelopes:
+            if "tracker" not in envelope.metadata:
+                enrich_envelope_with_tracker(envelope, record_copy, fingerprints)
+            else:
+                add_fingerprints_to_envelope(envelope, fingerprints)
 
     def _finalize_pending_tracked_jobs(self) -> None:
-        """
-        Finalize any tracked jobs that never had .result() called.
-
-        For each pending job, logs a pending envelope to ensure tracking
-        data exists even for abandoned or long-running async jobs.
-        """
+        """Finalize any tracked jobs that never had .result() called."""
         if not self._pending_tracked_jobs:
             return
 
-        pending_count = len(self._pending_tracked_jobs)
         logger.debug(
             "Finalizing %d pending tracked job(s) for run '%s'",
-            pending_count,
+            len(self._pending_tracked_jobs),
             self._run_id,
         )
 
         for job in self._pending_tracked_jobs:
             try:
-                # Call the job's finalize method if it has one
                 if hasattr(job, "finalize_as_pending"):
                     job.finalize_as_pending()
             except Exception as e:
@@ -1185,95 +997,63 @@ class Run:
 
         self._pending_tracked_jobs.clear()
 
-    def _enrich_envelopes_with_devqubit(
-        self, fingerprints: dict[str, str] | None = None
-    ) -> None:
-        """
-        Enrich existing envelope artifacts with devqubit metadata.
-
-        For adapter runs, the envelope is created by the adapter without
-        devqubit namespace. This method loads existing envelopes, adds
-        the devqubit namespace (params, metrics, project, fingerprints),
-        and re-logs them.
-
-        For manual runs, the envelope was synthesized earlier without fingerprints
-        (since they're computed later in _finalize). This method adds the
-        fingerprints to the devqubit namespace.
-
-        Parameters
-        ----------
-        fingerprints : dict, optional
-            Pre-computed fingerprints to include in devqubit namespace.
-        """
-        from devqubit_engine.storage.artifacts.io import load_artifact_json
-        from devqubit_engine.uec.models.envelope import ExecutionEnvelope
-        from devqubit_engine.utils.common import is_manual_run_record
-
-        is_manual = is_manual_run_record(self.record)
-
-        # Find envelope artifacts
-        envelope_artifacts = []
+    def _remove_old_envelope_artifacts(self) -> None:
+        """Remove old envelope artifacts (before logging final envelope)."""
         with self._lock:
+            # Find indices of envelope artifacts to remove
+            indices_to_remove = []
             for idx, artifact in enumerate(self._artifacts):
                 if (
                     artifact.role == "envelope"
                     and artifact.kind == "devqubit.envelope.json"
                 ):
-                    envelope_artifacts.append((idx, artifact))
+                    indices_to_remove.append(idx)
 
-        if not envelope_artifacts:
-            return
+            # Remove in reverse order to preserve indices
+            for idx in reversed(indices_to_remove):
+                self._artifacts.pop(idx)
 
-        # Track indices and digests to remove (in descending order for safe removal)
-        artifacts_to_remove: list[tuple[int, str]] = []  # (index, digest)
+    def _finalize(self, success: bool = True) -> None:
+        """
+        Finalize the run record and persist it.
 
-        # Process each envelope
-        for orig_idx, artifact in envelope_artifacts:
-            try:
-                # Load envelope
-                envelope_data = load_artifact_json(artifact, self._store)
-                if not isinstance(envelope_data, dict):
-                    continue
+        Envelope lifecycle:
+        1. Build or load envelope(s) (single source of truth)
+        2. Compute fingerprints from all envelopes
+        3. Enrich all envelopes with tracker namespace + fingerprints
+        4. Log final envelopes (replacing old ones)
+        5. Save to registry
 
-                envelope = ExecutionEnvelope.from_dict(envelope_data)
+        Parameters
+        ----------
+        success : bool, optional
+            If True and status is "RUNNING", set to "FINISHED".
+        """
+        # Update status
+        with self._lock:
+            if success and self.record["info"]["status"] == "RUNNING":
+                self.record["info"]["status"] = "FINISHED"
+                self.record["info"]["ended_at"] = utc_now_iso()
 
-                # Check current state
-                has_devqubit = "devqubit" in envelope.metadata
-                devqubit_ns = envelope.metadata.get("devqubit", {})
-                has_fingerprints = (
-                    isinstance(devqubit_ns, dict) and "fingerprints" in devqubit_ns
-                )
+        # Finalize pending tracked jobs
+        self._finalize_pending_tracked_jobs()
 
-                if is_manual:
-                    # Manual run: envelope already has devqubit namespace from synthesis
-                    # Just need to add fingerprints if not present
-                    if has_fingerprints or not fingerprints:
-                        continue  # Already has fingerprints or none to add
-                    if has_devqubit and isinstance(devqubit_ns, dict):
-                        envelope.metadata["devqubit"]["fingerprints"] = dict(
-                            fingerprints
-                        )
-                    else:
-                        # Shouldn't happen, but handle gracefully
-                        _enrich_envelope_devqubit_metadata(
-                            envelope, self.record, fingerprints
-                        )
-                else:
-                    # Adapter run: need full enrichment
-                    if has_devqubit and has_fingerprints:
-                        continue  # Already fully enriched
-                    if has_devqubit and fingerprints and not has_fingerprints:
-                        # Just add fingerprints
-                        envelope.metadata["devqubit"]["fingerprints"] = dict(
-                            fingerprints
-                        )
-                    else:
-                        # Full enrichment
-                        _enrich_envelope_devqubit_metadata(
-                            envelope, self.record, fingerprints
-                        )
+        # Build or load all envelopes
+        envelopes = self._build_final_envelopes()
 
-                # Re-log the enriched envelope
+        fingerprints: dict[str, str] = {}
+        if envelopes:
+            # Compute fingerprints from all envelopes
+            fingerprints = self._compute_fingerprints_from_envelopes(envelopes)
+
+            # Enrich all envelopes with tracker namespace + fingerprints
+            self._enrich_envelopes(envelopes, fingerprints)
+
+            # Remove old envelope artifacts
+            self._remove_old_envelope_artifacts()
+
+            # Log all enriched envelopes
+            for envelope in envelopes:
                 self.log_json(
                     name="execution_envelope",
                     obj=envelope.to_dict(),
@@ -1281,88 +1061,9 @@ class Run:
                     kind="devqubit.envelope.json",
                 )
 
-                # Mark old artifact for removal (index and digest for cleanup)
-                artifacts_to_remove.append((orig_idx, artifact.digest))
-
-                logger.debug(
-                    "Enriched envelope with devqubit metadata: run=%s, envelope_id=%s",
-                    self._run_id,
-                    envelope.envelope_id,
-                )
-
-            except Exception as e:
-                logger.warning(
-                    "Failed to enrich envelope for run '%s': %s",
-                    self._run_id,
-                    e,
-                )
-
-        # Remove old artifacts in descending order to preserve indices
-        if artifacts_to_remove:
-            with self._lock:
-                for idx, _ in sorted(
-                    artifacts_to_remove, key=lambda x: x[0], reverse=True
-                ):
-                    if idx < len(self._artifacts):
-                        self._artifacts.pop(idx)
-                # Collect remaining digests after removal (new envelope added by log_json)
-                remaining_digests = {a.digest for a in self._artifacts}
-
-            # Clean up old objects from store to avoid orphans
-            # Only delete if digest is not referenced by any current artifact
-            for _, old_digest in artifacts_to_remove:
-                if old_digest in remaining_digests:
-                    # Digest still in use (same content or referenced elsewhere)
-                    continue
-                try:
-                    self._store.delete(old_digest)
-                    logger.debug(
-                        "Deleted superseded envelope object: %s", old_digest[:16]
-                    )
-                except Exception as e:
-                    # Best effort - don't fail if cleanup fails
-                    logger.debug(
-                        "Failed to delete old envelope object %s: %s",
-                        old_digest[:16],
-                        e,
-                    )
-
-    def _finalize(self, success: bool = True) -> None:
-        """
-        Finalize the run record and persist it.
-
-        Parameters
-        ----------
-        success : bool, optional
-            If True and status is "RUNNING", set to "FINISHED".
-        """
-        with self._lock:
-            if success and self.record["info"]["status"] == "RUNNING":
-                self.record["info"]["status"] = "FINISHED"
-                self.record["info"]["ended_at"] = utc_now_iso()
-
-        # Finalize any pending tracked jobs (jobs where .result() was never called)
-        self._finalize_pending_tracked_jobs()
-
-        # Ensure envelope exists (auto-generate if needed)
-        self._ensure_envelope()
-
-        # Serialize artifacts and compute fingerprints
-        with self._lock:
-            self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
-            run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
-
-        # Compute fingerprints using canonical envelope resolution
-        fingerprints = self._compute_fingerprints(run_record)
+        # Update record with fingerprints
         with self._lock:
             self.record["fingerprints"] = fingerprints
-
-        # Enrich existing envelope with devqubit metadata (for adapter runs)
-        # Manual runs are enriched during synthesis
-        self._enrich_envelopes_with_devqubit(fingerprints)
-
-        # Re-serialize artifacts after enrichment
-        with self._lock:
             self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
             run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
 
@@ -1375,11 +1076,16 @@ class Run:
         self._registry.save(run_record.to_dict())
 
         logger.info(
-            "Run finalized: run_id=%s, status=%s, artifacts=%d",
+            "Run finalized: run_id=%s, status=%s, artifacts=%d, envelopes=%d",
             self._run_id,
             self.record["info"]["status"],
             len(self._artifacts),
+            len(envelopes),
         )
+
+    # -----------------------------------------------------------------------
+    # Context manager
+    # -----------------------------------------------------------------------
 
     def __enter__(self) -> Run:
         """Enter the run context."""
@@ -1388,7 +1094,6 @@ class Run:
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
         """Exit the run context, handling any exceptions."""
         if exc_type is not None:
-            # Determine status based on exception type
             if exc_type is KeyboardInterrupt:
                 status = "KILLED"
                 error = (
@@ -1409,7 +1114,6 @@ class Run:
             try:
                 self._finalize(success=False)
             except Exception as finalize_error:
-                # Best-effort: preserve original exception, record finalization error
                 with self._lock:
                     self.record.setdefault("errors", []).append(
                         {
@@ -1420,13 +1124,11 @@ class Run:
                     )
                 logger.exception("Error during run finalization")
 
-            return False  # Propagate original exception
+            return False
 
-        # Success path - wrap in try/except for robustness
         try:
             self._finalize(success=True)
         except Exception as finalize_error:
-            # Best-effort: record error but don't raise on exit
             with self._lock:
                 self.record.setdefault("errors", []).append(
                     {
@@ -1437,7 +1139,6 @@ class Run:
                 )
             logger.exception("Error during run finalization (success path)")
 
-            # Attempt to save the run record even with incomplete data
             try:
                 self._registry.save(self.record)
             except Exception:
@@ -1451,6 +1152,11 @@ class Run:
             f"Run(run_id={self._run_id!r}, project={self._project!r}, "
             f"adapter={self._adapter!r}, status={self.status!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience functions
+# ---------------------------------------------------------------------------
 
 
 def track(
@@ -1476,16 +1182,15 @@ def track(
     project : str
         Project name for organizing runs.
     adapter : str, optional
-        Adapter name. Auto-detected when using ``wrap()``.
-        Default is "manual".
+        Adapter name. Auto-detected when using ``wrap()``. Default is "manual".
     run_name : str, optional
         Human-readable run name.
     store : ObjectStoreProtocol, optional
-        Object store for artifacts. Created from config if not provided.
+        Object store for artifacts.
     registry : RegistryProtocol, optional
-        Run registry. Created from config if not provided.
+        Run registry.
     config : Config, optional
-        Configuration object. Uses global config if not provided.
+        Configuration object.
     capture_env : bool, optional
         Capture environment on start. Default is True.
     capture_git : bool, optional
@@ -1507,13 +1212,6 @@ def track(
     >>> with track(project="bell_state") as run:
     ...     run.log_param("shots", 1000)
     ...     run.log_metric("fidelity", 0.95)
-
-    Grouped runs:
-
-    >>> sweep_id = "sweep_20240101"
-    >>> for shots in [100, 1000, 10000]:
-    ...     with track(project="bell_state", group_id=sweep_id) as run:
-    ...         run.log_param("shots", shots)
     """
     return Run(
         project=project,
@@ -1535,8 +1233,6 @@ def wrap_backend(run: Run, backend: Any, **kwargs: Any) -> Any:
     Wrap a quantum backend for automatic artifact tracking.
 
     Convenience function equivalent to ``run.wrap(backend, **kwargs)``.
-    The wrapped backend intercepts execution calls and automatically
-    logs circuits, results, and device snapshots.
 
     Parameters
     ----------
@@ -1545,23 +1241,15 @@ def wrap_backend(run: Run, backend: Any, **kwargs: Any) -> Any:
     backend : Any
         Quantum backend or device instance.
     **kwargs : Any
-        Adapter-specific options forwarded to the adapter.
+        Adapter-specific options.
 
     Returns
     -------
     Any
         Wrapped backend with the same interface as the original.
 
-    Raises
-    ------
-    ValueError
-        If no adapter supports the given backend type.
-
     Examples
     --------
-    >>> from devqubit_engine.tracking.run import track, wrap_backend
-    >>> from qiskit_aer import AerSimulator
-    >>>
     >>> with track(project="bell") as run:
     ...     backend = wrap_backend(run, AerSimulator())
     ...     job = backend.run(qc, shots=1000)
