@@ -432,3 +432,63 @@ class TestCirqHelperFunctions:
         """_get_num_qubits returns 0 for empty circuit."""
         circuit = cirq.Circuit()
         assert _get_num_qubits(circuit) == 0
+
+
+class TestCirqHashingDeterminism:
+    """Tests for deterministic hashing across process invocations.
+
+    These tests verify that hashing does not use Python's built-in hash()
+    which is randomized per process since Python 3.3.
+    """
+
+    def test_named_qubit_hash_stable_without_builtin_hash(self):
+        """NamedQubit hashing must not depend on Python's hash().
+
+        Python's hash() is randomized per process (PYTHONHASHSEED).
+        Qubit indexing must use deterministic methods like sum(ord()).
+        """
+        from devqubit_cirq.circuits import _build_qubit_map
+
+        qa = cirq.NamedQubit("alice")
+        qb = cirq.NamedQubit("bob")
+        qc = cirq.NamedQubit("charlie")
+
+        circuit = cirq.Circuit(
+            [
+                cirq.H(qa),
+                cirq.CNOT(qa, qb),
+                cirq.CNOT(qb, qc),
+                cirq.measure(qa, qb, qc, key="m"),
+            ]
+        )
+
+        # Build qubit map multiple times - must be identical
+        map1 = _build_qubit_map(circuit)
+        map2 = _build_qubit_map(circuit)
+
+        assert map1 == map2, "Qubit map must be deterministic"
+
+        # Verify sorted string order is used (alice < bob < charlie)
+        assert (
+            map1["alice"] < map1["bob"] < map1["charlie"]
+        ), "NamedQubit indices should follow sorted string order"
+
+    def test_circuit_hash_deterministic_with_named_qubits(self):
+        """Circuit with NamedQubits must hash identically on repeated calls."""
+        qa = cirq.NamedQubit("q_alpha")
+        qb = cirq.NamedQubit("q_beta")
+
+        circuit = cirq.Circuit(
+            [
+                cirq.H(qa),
+                cirq.CNOT(qa, qb),
+                cirq.measure(qa, qb, key="result"),
+            ]
+        )
+
+        # Hash 10 times - all must be identical
+        hashes = [compute_structural_hash([circuit]) for _ in range(10)]
+
+        assert (
+            len(set(hashes)) == 1
+        ), "NamedQubit circuit hash must be deterministic across calls"

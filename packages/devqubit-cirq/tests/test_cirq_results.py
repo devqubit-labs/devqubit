@@ -48,7 +48,7 @@ class TestCountsFromMeasurements:
     def test_single_key_measurements(self):
         """Builds counts from single measurement key."""
         measurements = {"m": np.array([[0, 0], [0, 1], [1, 0], [1, 1], [0, 0]])}
-        counts, keys, nbits = counts_from_measurements(measurements)
+        counts, keys, nbits, key_bit_ranges = counts_from_measurements(measurements)
 
         assert keys == ["m"]
         assert nbits == 2
@@ -56,6 +56,14 @@ class TestCountsFromMeasurements:
         assert counts["01"] == 1
         assert counts["10"] == 1
         assert counts["11"] == 1
+        # Verify key_bit_ranges
+        assert len(key_bit_ranges) == 1
+        assert key_bit_ranges[0] == {
+            "key": "m",
+            "start_bit": 0,
+            "end_bit": 2,
+            "num_bits": 2,
+        }
 
     def test_multiple_keys_sorted(self):
         """Concatenates multiple keys in sorted order."""
@@ -63,7 +71,7 @@ class TestCountsFromMeasurements:
             "b": np.array([[0], [1], [0], [1]]),
             "a": np.array([[0], [0], [1], [1]]),
         }
-        counts, keys, nbits = counts_from_measurements(measurements)
+        counts, keys, nbits, key_bit_ranges = counts_from_measurements(measurements)
 
         assert keys == ["a", "b"]  # Sorted order
         assert nbits == 2
@@ -71,16 +79,17 @@ class TestCountsFromMeasurements:
 
     def test_empty_measurements(self):
         """Handles empty measurements gracefully."""
-        counts, keys, nbits = counts_from_measurements({})
+        counts, keys, nbits, key_bit_ranges = counts_from_measurements({})
 
         assert counts == {}
         assert keys == []
         assert nbits == 0
+        assert key_bit_ranges == []
 
     def test_1d_array_reshaped(self):
         """1D arrays are reshaped to 2D."""
         measurements = {"m": np.array([0, 1, 0, 1])}
-        counts, keys, nbits = counts_from_measurements(measurements)
+        counts, keys, nbits, _ = counts_from_measurements(measurements)
 
         assert nbits == 1
         assert counts["0"] == 2
@@ -95,7 +104,7 @@ class TestCountsFromMeasurements:
         measurements = {
             "m": np.array([[False, True], [True, False], [False, True]], dtype=bool)
         }
-        counts, keys, nbits = counts_from_measurements(measurements)
+        counts, keys, nbits, _ = counts_from_measurements(measurements)
 
         assert keys == ["m"]
         assert nbits == 2
@@ -108,7 +117,7 @@ class TestCountsFromMeasurements:
             "a": np.array([[False], [True], [False]], dtype=bool),
             "b": np.array([[0], [1], [1]], dtype=int),
         }
-        counts, keys, nbits = counts_from_measurements(measurements)
+        counts, keys, nbits, _ = counts_from_measurements(measurements)
 
         assert keys == ["a", "b"]
         assert nbits == 2
@@ -126,6 +135,42 @@ class TestCountsFromMeasurements:
 
         with pytest.raises(ValueError, match="Inconsistent repetition counts"):
             counts_from_measurements(measurements)
+
+    def test_key_bit_ranges_multi_key(self):
+        """key_bit_ranges documents bit layout for multi-key measurements.
+
+        This enables unambiguous interpretation of concatenated bitstrings
+        when multiple measurement keys are present.
+        """
+        measurements = {
+            "z_meas": np.array([[0, 0], [1, 1]]),  # 2 bits
+            "ancilla": np.array([[1], [0]]),  # 1 bit
+        }
+        counts, keys, nbits, key_bit_ranges = counts_from_measurements(measurements)
+
+        # Keys sorted alphabetically
+        assert keys == ["ancilla", "z_meas"]
+        assert nbits == 3
+
+        # key_bit_ranges documents the bit layout
+        assert len(key_bit_ranges) == 2
+        assert key_bit_ranges[0] == {
+            "key": "ancilla",
+            "start_bit": 0,
+            "end_bit": 1,
+            "num_bits": 1,
+        }
+        assert key_bit_ranges[1] == {
+            "key": "z_meas",
+            "start_bit": 1,
+            "end_bit": 3,
+            "num_bits": 2,
+        }
+
+        # Verify bitstring interpretation matches ranges
+        # Row 0: ancilla=1, z_meas=00 -> "100"
+        # Row 1: ancilla=0, z_meas=11 -> "011"
+        assert counts == {"100": 1, "011": 1}
 
 
 class TestNormalizeCountsPayload:

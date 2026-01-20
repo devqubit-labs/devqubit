@@ -439,3 +439,58 @@ class TestUECCompliance:
             snapshot.get("sdk") == "cirq"
             or loaded.record.get("backend", {}).get("provider") == "cirq"
         )
+
+
+class TestEnvelopeValidation:
+    """Tests for envelope validation behavior."""
+
+    def test_valid_envelope_is_logged_not_invalid(
+        self, bell_circuit, simulator, store, registry
+    ):
+        """Valid execution produces devqubit.envelope.json, not .invalid.json.
+
+        This verifies that envelope validation passes for normal executions
+        and that validation errors would not be silently swallowed.
+        """
+        with track(project="test", store=store, registry=registry) as run:
+            tracked = run.wrap(simulator)
+            tracked.run(bell_circuit, repetitions=100)
+
+        loaded = registry.load(run.run_id)
+
+        # Should have valid envelope
+        valid_envs = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(valid_envs) == 1, "Should have exactly one valid envelope"
+
+        # Should NOT have invalid envelope
+        invalid_envs = _artifacts_of_kind(loaded, "devqubit.envelope.invalid.json")
+        assert len(invalid_envs) == 0, "Should not have invalid envelope artifacts"
+
+    def test_envelope_has_required_uec_fields(
+        self, bell_circuit, simulator, store, registry
+    ):
+        """Envelope contains all UEC-required fields that would fail validation if missing."""
+        with track(project="test", store=store, registry=registry) as run:
+            tracked = run.wrap(simulator)
+            tracked.run(bell_circuit, repetitions=50)
+
+        loaded = registry.load(run.run_id)
+        env = _load_single_envelope(store, loaded)
+
+        # These fields are required by UEC schema - missing any would cause
+        # EnvelopeValidationError if validation wasn't working
+        assert "envelope_id" in env
+        assert "created_at" in env
+        assert "producer" in env
+        assert env["producer"]["adapter"] == "devqubit-cirq"
+        assert env["producer"]["sdk"] == "cirq"
+        assert "device" in env
+        assert "program" in env
+        assert "execution" in env
+        assert "result" in env
+        assert env["result"]["status"] in (
+            "completed",
+            "failed",
+            "partial",
+            "cancelled",
+        )
