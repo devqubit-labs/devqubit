@@ -22,7 +22,9 @@ For circuits without parameters: ``parametric_hash == structural_hash``
 
 Encoding
 --------
+- Integers: "i:<decimal>" prefix preserves arbitrary precision
 - Floats: IEEE-754 binary64 big-endian hex
+- Booleans: "b:true" or "b:false"
 - Negative zero: normalized to positive zero
 - NaN: encoded as "nan"
 - Infinity: encoded as "inf" or "-inf"
@@ -69,7 +71,7 @@ def _float_to_hex(value: float) -> str:
     return struct.pack(">d", value).hex()
 
 
-def _encode_value(value: Any) -> str:
+def encode_value(value: Any) -> str:
     """
     Encode parameter value deterministically.
 
@@ -85,10 +87,18 @@ def _encode_value(value: Any) -> str:
     """
     if value is None:
         return "__unbound__"
+    if isinstance(value, bool):
+        return f"b:{str(value).lower()}"
+    if isinstance(value, int):
+        return f"i:{value}"
     if isinstance(value, float):
         return _float_to_hex(value)
-    if isinstance(value, int):
+    # numpy scalar types (avoid numpy import)
+    type_name = type(value).__name__
+    if "float" in type_name.lower():
         return _float_to_hex(float(value))
+    if "int" in type_name.lower():
+        return f"i:{int(value)}"
     return str(value)
 
 
@@ -139,9 +149,9 @@ def _normalize_op(op: dict[str, Any], with_values: bool) -> dict[str, Any]:
         if with_values:
             # Parametric hash: include actual values
             if isinstance(params, dict):
-                out["p"] = {str(k): _encode_value(v) for k, v in sorted(params.items())}
+                out["p"] = {str(k): encode_value(v) for k, v in sorted(params.items())}
             else:
-                out["p"] = [_encode_value(v) for v in params]
+                out["p"] = [encode_value(v) for v in params]
         else:
             # Structural hash: only record arity
             out["pa"] = len(params) if isinstance(params, (dict, list, tuple)) else 1

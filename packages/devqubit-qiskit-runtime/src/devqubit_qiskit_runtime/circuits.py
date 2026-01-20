@@ -21,14 +21,84 @@ consistent op_stream conversion across both Qiskit adapters.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
-from devqubit_engine.circuit.hashing import hash_circuit_pair
+from devqubit_engine.circuit.hashing import encode_value, hash_circuit_pair
 from devqubit_qiskit.circuits import circuit_to_op_stream
 
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_params_digest(parameter_values: list[Any] | None) -> str | None:
+    """
+    Compute a canonical digest for pub parameter values.
+
+    This digest is combined with the circuit hash to form the final
+    parametric_hash, ensuring that different parameter values produce
+    different hashes even when circuits are identical.
+
+    Parameters
+    ----------
+    parameter_values : list or None
+        List of parameter value arrays/objects, one per pub.
+
+    Returns
+    -------
+    str or None
+        SHA-256 digest of parameter values, or None if no values present.
+    """
+    if not parameter_values:
+        return None
+
+    # Check if there are any actual values
+    has_values = any(pv is not None for pv in parameter_values)
+    if not has_values:
+        return None
+
+    # Build canonical representation
+    parts: list[str] = []
+
+    for pub_idx, pv in enumerate(parameter_values):
+        if pv is None:
+            parts.append(f"pub{pub_idx}:null")
+            continue
+
+        # Handle ndarray-like (BindingsArray, np.ndarray)
+        if hasattr(pv, "flatten"):
+            try:
+                flat = pv.flatten()
+                encoded = [encode_value(v) for v in flat]
+                parts.append(f"pub{pub_idx}:[{','.join(encoded)}]")
+                continue
+            except Exception:
+                pass
+
+        # Handle list/tuple of values
+        if isinstance(pv, (list, tuple)):
+            try:
+                encoded = [encode_value(v) for v in pv]
+                parts.append(f"pub{pub_idx}:[{','.join(encoded)}]")
+                continue
+            except Exception:
+                pass
+
+        # Handle dict-like parameter bindings
+        if isinstance(pv, dict):
+            try:
+                encoded = [f"{k}={encode_value(v)}" for k, v in sorted(pv.items())]
+                parts.append(f"pub{pub_idx}:{{{','.join(encoded)}}}")
+                continue
+            except Exception:
+                pass
+
+        # Fallback: string representation
+        parts.append(f"pub{pub_idx}:{str(pv)[:200]}")
+
+    canonical = "|".join(parts)
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def compute_structural_hash(circuits: list[Any]) -> str | None:
@@ -100,6 +170,7 @@ def compute_parametric_hash(circuits: list[Any]) -> str | None:
     - All structural information (gates, qubits, classical bits)
     - Bound parameter values (IEEE-754 binary64 encoding)
     - Unbound parameter names
+    - Pub-level parameter_values (when provided)
 
     UEC Contract: For circuits without parameters, parametric_hash == structural_hash.
     This is enforced by the engine's hash_circuit_pair function.
@@ -119,6 +190,57 @@ def compute_parametric_hash(circuits: list[Any]) -> str | None:
         return None
     _, parametric = _compute_hashes(circuits)
     return parametric
+
+
+def compute_parametric_hash_with_params(
+    circuits: list[Any],
+    parameter_values: list[Any] | None = None,
+) -> str | None:
+    """
+    Compute a parametric hash including external parameter values from pubs.
+
+    Runtime primitives can pass parameter values separately from circuits.
+    This function combines circuit parameter values with pub-level parameter
+    values to produce an accurate fingerprint.
+
+    Parameters
+    ----------
+    circuits : list[Any]
+        List of Qiskit QuantumCircuit objects.
+    parameter_values : list, optional
+        List of parameter value arrays from pubs. Each element corresponds
+        to a pub and may contain broadcasted parameter values.
+
+    Returns
+    -------
+    str or None
+        Full SHA-256 digest in format ``sha256:<hex>``, or None if empty.
+
+    Notes
+    -----
+    The hash is computed by:
+    1. Computing the base parametric hash from circuits
+    2. Computing a digest of pub parameter_values (if any)
+    3. Combining both into a final hash
+
+    This ensures that executions with identical circuits but different
+    parameter values produce different hashes.
+    """
+    if not circuits:
+        return None
+
+    _, base_parametric = _compute_hashes(circuits)
+
+    # Compute params digest
+    params_digest = _compute_params_digest(parameter_values)
+
+    if params_digest is None:
+        return base_parametric
+
+    # Combine circuit hash with params digest
+    combined = f"{base_parametric}|params:{params_digest}"
+    final_hash = hashlib.sha256(combined.encode()).hexdigest()
+    return f"sha256:{final_hash}"
 
 
 def compute_circuit_hashes(circuits: list[Any]) -> tuple[str | None, str | None]:
@@ -154,6 +276,52 @@ def compute_circuit_hashes(circuits: list[Any]) -> tuple[str | None, str | None]
     if not circuits:
         return None, None
     return _compute_hashes(circuits)
+
+
+def compute_circuit_hashes_with_params(
+    circuits: list[Any],
+    parameter_values: list[Any] | None = None,
+) -> tuple[str | None, str | None]:
+    """
+    Compute both structural and parametric hashes including pub parameter values.
+
+    This function combines circuit hashes with external parameter values from
+    pubs, producing accurate fingerprints for Runtime primitive executions.
+
+    Parameters
+    ----------
+    circuits : list
+        List of Qiskit QuantumCircuit objects.
+    parameter_values : list, optional
+        List of parameter value arrays from pubs.
+
+    Returns
+    -------
+    structural_hash : str or None
+        Structure-only hash (ignores parameter values).
+    parametric_hash : str or None
+        Hash including bound parameter values AND pub parameter values.
+
+    Notes
+    -----
+    The structural_hash is independent of parameter values.
+    The parametric_hash combines circuit parameters with pub-level parameters.
+    """
+    if not circuits:
+        return None, None
+
+    structural, base_parametric = _compute_hashes(circuits)
+
+    # Compute params digest
+    params_digest = _compute_params_digest(parameter_values)
+
+    if params_digest is None:
+        return structural, base_parametric
+
+    # Combine circuit hash with params digest
+    combined = f"{base_parametric}|params:{params_digest}"
+    final_hash = hashlib.sha256(combined.encode()).hexdigest()
+    return structural, f"sha256:{final_hash}"
 
 
 def _compute_hashes(circuits: list[Any]) -> tuple[str, str]:

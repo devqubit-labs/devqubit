@@ -344,7 +344,9 @@
             "completed",
             "failed",
             "cancelled",
-            "partial"
+            "partial",
+            "pending",
+            "running"
           ]
         },
         "items": {

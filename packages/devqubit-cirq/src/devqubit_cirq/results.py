@@ -69,7 +69,7 @@ def get_result_measurements(result: Any) -> dict[str, Any]:
 
 def counts_from_measurements(
     measurements: dict[str, Any] | None,
-) -> tuple[dict[str, int], list[str], int]:
+) -> tuple[dict[str, int], list[str], int, list[dict[str, Any]]]:
     """
     Build bitstring counts from Cirq measurement arrays.
 
@@ -90,21 +90,42 @@ def counts_from_measurements(
         Sorted list of measurement keys used.
     total_bits : int
         Total number of bits in each bitstring.
+    key_bit_ranges : list of dict
+        Mapping describing which bits correspond to each measurement key.
+        Each dict contains: key, start_bit, end_bit, num_bits.
+        Bit positions are 0-indexed from the left of the bitstring.
 
     Raises
     ------
     ValueError
         If measurement arrays have inconsistent repetition counts.
 
+    Notes
+    -----
+    When multiple measurement keys are present, bits are concatenated in
+    sorted key order. The returned ``key_bit_ranges`` documents this layout
+    to enable unambiguous interpretation of the combined bitstring.
+
     Examples
     --------
     >>> measurements = {"m": np.array([[0, 1], [1, 0], [0, 1]])}
-    >>> counts, keys, nbits = counts_from_measurements(measurements)
+    >>> counts, keys, nbits, ranges = counts_from_measurements(measurements)
     >>> counts
     {'01': 2, '10': 1}
+    >>> ranges
+    [{'key': 'm', 'start_bit': 0, 'end_bit': 2, 'num_bits': 2}]
+
+    >>> # Multi-key example
+    >>> measurements = {"a": np.array([[0], [1]]), "b": np.array([[1], [0]])}
+    >>> counts, keys, nbits, ranges = counts_from_measurements(measurements)
+    >>> keys
+    ['a', 'b']
+    >>> ranges
+    [{'key': 'a', 'start_bit': 0, 'end_bit': 1, 'num_bits': 1},
+     {'key': 'b', 'start_bit': 1, 'end_bit': 2, 'num_bits': 1}]
     """
     if not measurements:
-        return {}, [], 0
+        return {}, [], 0, []
 
     keys = sorted(measurements.keys())
     arrays = []
@@ -115,7 +136,7 @@ def counts_from_measurements(
         arrays.append(arr)
 
     if not arrays:
-        return {}, [], 0
+        return {}, [], 0, []
 
     # Validate consistent repetition counts
     reps = arrays[0].shape[0]
@@ -127,7 +148,22 @@ def counts_from_measurements(
                 f"All measurement arrays must have the same number of repetitions."
             )
 
-    total_bits = sum(a.shape[1] for a in arrays)
+    # Build bit range mapping for each key
+    key_bit_ranges: list[dict[str, Any]] = []
+    bit_offset = 0
+    for key, arr in zip(keys, arrays):
+        num_bits = arr.shape[1]
+        key_bit_ranges.append(
+            {
+                "key": key,
+                "start_bit": bit_offset,
+                "end_bit": bit_offset + num_bits,
+                "num_bits": num_bits,
+            }
+        )
+        bit_offset += num_bits
+
+    total_bits = bit_offset
 
     # Build bitstrings and count
     counts: dict[str, int] = {}
@@ -135,7 +171,7 @@ def counts_from_measurements(
         bits = "".join("".join("1" if b else "0" for b in arr[i]) for arr in arrays)
         counts[bits] = counts.get(bits, 0) + 1
 
-    return counts, keys, total_bits
+    return counts, keys, total_bits, key_bit_ranges
 
 
 def _is_result_like(obj: Any) -> bool:
@@ -216,9 +252,10 @@ def _process_result(
     dict
         Experiment dictionary with counts and metadata.
     """
+    key_bit_ranges: list[dict[str, Any]] = []
     try:
         meas = get_result_measurements(result)
-        counts, keys, nbits = counts_from_measurements(meas)
+        counts, keys, nbits, key_bit_ranges = counts_from_measurements(meas)
     except Exception:
         counts, keys, nbits = {}, [], 0
 
@@ -233,6 +270,9 @@ def _process_result(
         "measurement_keys": keys,
         "num_bits": nbits,
     }
+    # Include key_bit_ranges for multi-key measurements to document bit layout
+    if key_bit_ranges:
+        exp["key_bit_ranges"] = key_bit_ranges
     if batch_idx is not None:
         exp["batch_index"] = batch_idx
         exp["sweep_index"] = sweep_idx
@@ -267,6 +307,7 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
                         "counts": dict[str, int],
                         "measurement_keys": list[str],
                         "num_bits": int,
+                        "key_bit_ranges": list[dict],  # Bit layout for multi-key
                         "params": dict[str, Any] | None,  # Parameter values
                         # Optional for nested results:
                         "batch_index": int,
@@ -275,6 +316,10 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
                     ...
                 ]
             }
+
+        The ``key_bit_ranges`` field documents which bits in the concatenated
+        bitstring correspond to each measurement key, enabling unambiguous
+        interpretation when multiple measurement keys are present.
 
     Examples
     --------

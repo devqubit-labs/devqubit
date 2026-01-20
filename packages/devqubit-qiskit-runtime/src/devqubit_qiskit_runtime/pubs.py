@@ -347,3 +347,67 @@ def extract_pubs_structure(
         pubs_struct.append(info)
 
     return pubs_struct
+
+
+def extract_parameter_values_from_pubs(
+    pubs: Any,
+    *,
+    primitive_type: str | None = None,
+) -> list[Any]:
+    """
+    Extract parameter values from pubs for parametric hash computation.
+
+    PUBs can carry parameter values separately from circuit data. For accurate
+    fingerprinting, we need to include these values in the parametric hash.
+
+    Parameters
+    ----------
+    pubs : Any
+        PUB collection in any supported form.
+    primitive_type : str, optional
+        Type of primitive ('sampler' or 'estimator'). Determines the position
+        of parameter values in tuple PUBs.
+
+    Returns
+    -------
+    list
+        List of parameter value arrays/objects, one per pub. Each element is:
+        - None if pub has no parameter values
+        - ndarray-like if pub has broadcasted parameters
+        - dict if pub uses named parameters
+
+    Notes
+    -----
+    Parameter value positions in tuple PUBs:
+    - Sampler:   (circuit, params, shots)       -> index 1
+    - Estimator: (circuit, obs, params, prec)   -> index 2
+    """
+    param_values: list[Any] = []
+
+    for pub in materialize_pubs(pubs):
+        pv: Any = None
+
+        # Object-style pub with .parameter_values
+        if hasattr(pub, "parameter_values"):
+            try:
+                pv = pub.parameter_values
+            except Exception:
+                pass
+
+        # Dict-style pub
+        elif isinstance(pub, dict):
+            pv = pub.get("parameter_values")
+
+        # Tuple-style V2 pub
+        elif is_v2_pub_tuple(pub):
+            param_idx = 2 if primitive_type == "estimator" else 1
+            if len(pub) > param_idx:
+                candidate = pub[param_idx]
+                # Distinguish parameters from observables/shots
+                if candidate is not None and not isinstance(candidate, (str, dict)):
+                    if hasattr(candidate, "__len__") or hasattr(candidate, "__iter__"):
+                        pv = candidate
+
+        param_values.append(pv)
+
+    return param_values

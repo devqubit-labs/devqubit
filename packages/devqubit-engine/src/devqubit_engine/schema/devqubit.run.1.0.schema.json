@@ -286,40 +286,19 @@
       "additionalProperties": false
     },
 
-    "digest_ptr": {
-      "type": "object",
-      "description": "Pointer to an artifact by (kind, digest).",
-      "required": ["kind", "digest"],
-      "properties": {
-        "kind": { "type": "string" },
-        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
-      },
-      "additionalProperties": false
-    },
-
     "openqasm3_anchor": {
       "type": "object",
-      "description": "Anchor to OpenQASM3 raw/canonical artifacts for a single circuit/program.",
-      "required": ["index"],
+      "description": "Anchor to OpenQASM3 artifact for a single circuit/program.",
+      "required": ["index", "kind", "digest"],
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "index": { "type": "integer", "minimum": 0 },
-
-        "raw": { "$ref": "#/$defs/digest_ptr" },
-        "canonical": { "$ref": "#/$defs/digest_ptr" },
-
-        "canonicalization": {
-          "type": "object",
-          "description": "Metadata about canonicalization steps/warnings.",
-          "additionalProperties": true
-        }
+        "kind": { "type": "string", "minLength": 3 },
+        "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "media_type": { "type": "string", "minLength": 3 },
+        "role": { "type": "string", "minLength": 1 }
       },
-
-      "allOf": [
-        { "anyOf": [ { "required": ["raw"] }, { "required": ["canonical"] } ] }
-      ],
-
-      "additionalProperties": true
+      "additionalProperties": false
     },
 
     "param_value": {

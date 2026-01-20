@@ -33,7 +33,12 @@ from devqubit_engine.uec.models.result import (
 from devqubit_engine.utils.common import utc_now_iso
 from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_qiskit.device import create_device_snapshot, detect_provider
-from devqubit_qiskit.results import extract_result_metadata, normalize_result_counts
+from devqubit_qiskit.results import (
+    detect_result_type,
+    extract_quasi_distributions,
+    extract_result_metadata,
+    normalize_result_counts,
+)
 from devqubit_qiskit.utils import get_backend_name, qiskit_version
 
 
@@ -169,6 +174,11 @@ def create_result_snapshot(
     -----
     Qiskit uses little-endian bit order (cbit[0] on right), which
     is the UEC canonical format. No transformation is needed.
+
+    Supported result types:
+    - Measurement counts (standard)
+    - Quasi-distributions (Runtime Sampler)
+    - Statevector (simulators) - logged as raw artifact only
     """
     if result is None:
         return ResultSnapshot(
@@ -181,6 +191,9 @@ def create_result_snapshot(
 
     # Log raw result
     raw_result_ref = _log_raw_result(tracker, result)
+
+    # Detect result type
+    result_type = detect_result_type(result)
 
     # Normalize and log counts
     counts_data = normalize_result_counts(result)
@@ -222,21 +235,90 @@ def create_result_snapshot(
             )
         )
 
+    # Handle quasi-distributions (Runtime Sampler)
+    quasi_dists = extract_quasi_distributions(result)
+    if quasi_dists is not None and not items:
+        for i, qd in enumerate(quasi_dists):
+            from devqubit_engine.uec.models.result import QuasiProbability
+
+            quasi_prob = QuasiProbability(
+                distribution=qd,
+                sum_probs=sum(qd.values()) if qd else None,
+                min_prob=min(qd.values()) if qd else None,
+                max_prob=max(qd.values()) if qd else None,
+            )
+            items.append(
+                ResultItem(
+                    item_index=i,
+                    success=True,
+                    quasi_probability=quasi_prob,
+                )
+            )
+        tracker.log_json(
+            name="quasi_distributions",
+            obj={"distributions": quasi_dists},
+            role="results",
+            kind="result.quasi_dist.json",
+        )
+
+    # Handle statevector (simulators) - log as artifact only
+    statevector_ref = _log_statevector_if_present(tracker, result)
+
     meta = extract_result_metadata(result)
     success = meta.get("success", True)
     status = "completed" if success else "failed"
+
+    result_metadata: dict[str, Any] = {
+        "backend_name": backend_name,
+        "num_experiments": len(experiments),
+        "result_type": result_type.value,
+        **meta,
+    }
+    if statevector_ref is not None:
+        result_metadata["statevector_ref"] = str(statevector_ref)
 
     return ResultSnapshot(
         success=success,
         status=status,
         items=items,
         raw_result_ref=raw_result_ref,
-        metadata={
-            "backend_name": backend_name,
-            "num_experiments": len(experiments),
-            **meta,
-        },
+        metadata=result_metadata,
     )
+
+
+def _log_statevector_if_present(tracker: Run, result: Any) -> ArtifactRef | None:
+    """Log statevector as artifact if present (simulator results)."""
+    try:
+        if not hasattr(result, "get_statevector"):
+            return None
+
+        sv = result.get_statevector()
+        if sv is None:
+            return None
+
+        # Convert to serializable format
+        sv_data: dict[str, Any] = {}
+
+        if hasattr(sv, "data"):
+            # Qiskit Statevector object
+            data = sv.data
+            sv_data["amplitudes_real"] = [float(x.real) for x in data]
+            sv_data["amplitudes_imag"] = [float(x.imag) for x in data]
+            sv_data["num_qubits"] = int(getattr(sv, "num_qubits", 0))
+        else:
+            # Raw array
+            sv_data["raw"] = str(sv)[:10000]
+
+        return tracker.log_json(
+            name="statevector",
+            obj=sv_data,
+            role="results",
+            kind="result.statevector.json",
+        )
+
+    except Exception as e:
+        logger.debug("Failed to log statevector: %s", e)
+        return None
 
 
 def create_failure_result_snapshot(

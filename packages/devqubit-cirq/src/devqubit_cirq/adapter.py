@@ -558,11 +558,9 @@ def _finalize_envelope_with_result(
         logger.debug("Failed to normalize counts payload: %s", e)
         counts_payload = {"experiments": []}
 
-    # Validate and log envelope
-    try:
-        tracker.log_envelope(envelope=envelope)
-    except Exception as e:
-        logger.warning("Failed to log envelope: %s", e)
+    # Validate and log envelope - EnvelopeValidationError must propagate
+    # to enforce strict validation for adapter runs
+    tracker.log_envelope(envelope=envelope)
 
     # Log normalized counts
     if counts_payload.get("experiments"):

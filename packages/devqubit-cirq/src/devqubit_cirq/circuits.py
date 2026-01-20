@@ -15,6 +15,17 @@ All hashing is delegated to ``devqubit_engine.circuit.hashing`` to ensure:
 - IEEE-754 float encoding for determinism
 - For circuits without parameters: ``parametric_hash == structural_hash``
 
+Qubit Indexing
+--------------
+Qubit-to-index mapping is deterministic across Python process invocations:
+
+- LineQubit: uses x coordinate
+- GridQubit: uses row * 1000 + col
+- NamedQubit: uses sorted string representation order
+
+This avoids Python's per-process hash randomization which would otherwise
+cause identical circuits to produce different hashes across runs.
+
 Notes
 -----
 Cirq uses "moments" to organize operations that happen simultaneously.
@@ -32,7 +43,7 @@ from devqubit_engine.circuit.hashing import hash_circuit_pair
 logger = logging.getLogger(__name__)
 
 
-def _qubit_to_index(qubit: Any) -> int:
+def _qubit_to_index(qubit: Any, qubit_map: dict[str, int] | None = None) -> int:
     """
     Convert a Cirq qubit to an integer index.
 
@@ -40,6 +51,10 @@ def _qubit_to_index(qubit: Any) -> int:
     ----------
     qubit : Any
         Cirq qubit (LineQubit, GridQubit, NamedQubit, etc.).
+    qubit_map : dict, optional
+        Pre-computed deterministic mapping from qubit string representation
+        to index. When provided, this takes precedence for NamedQubit and
+        other non-standard qubit types to ensure deterministic hashing.
 
     Returns
     -------
@@ -50,7 +65,8 @@ def _qubit_to_index(qubit: Any) -> int:
     -----
     For LineQubit, uses the x coordinate.
     For GridQubit, uses row * 1000 + col for uniqueness.
-    For NamedQubit, uses hash of name.
+    For NamedQubit or other types, uses the provided qubit_map for
+    deterministic indexing (falls back to string-based offset if no map).
     """
     # LineQubit: has .x attribute
     if hasattr(qubit, "x"):
@@ -66,11 +82,20 @@ def _qubit_to_index(qubit: Any) -> int:
         except (TypeError, ValueError):
             pass
 
-    # NamedQubit or other: use hash of string representation
-    return hash(str(qubit)) % (2**31)
+    # NamedQubit or other: use deterministic mapping
+    qubit_str = str(qubit)
+    if qubit_map is not None and qubit_str in qubit_map:
+        return qubit_map[qubit_str]
+
+    # Fallback: deterministic string-based index (sum of character codes)
+    # This is stable across process runs unlike hash()
+    return sum(ord(c) for c in qubit_str) % (2**31)
 
 
-def _qubits_to_list(qubits: Any) -> list[int]:
+def _qubits_to_list(
+    qubits: Any,
+    qubit_map: dict[str, int] | None = None,
+) -> list[int]:
     """
     Convert qubits to list of integer indices.
 
@@ -78,6 +103,9 @@ def _qubits_to_list(qubits: Any) -> list[int]:
     ----------
     qubits : Any
         Iterable of Cirq qubit objects.
+    qubit_map : dict, optional
+        Pre-computed deterministic mapping from qubit string representation
+        to index for NamedQubit and other non-standard qubit types.
 
     Returns
     -------
@@ -85,9 +113,9 @@ def _qubits_to_list(qubits: Any) -> list[int]:
         List of integer qubit indices (order preserved).
     """
     try:
-        return [_qubit_to_index(q) for q in qubits]
+        return [_qubit_to_index(q, qubit_map) for q in qubits]
     except TypeError:
-        return [_qubit_to_index(qubits)]
+        return [_qubit_to_index(qubits, qubit_map)]
 
 
 def _get_gate_params(gate: Any) -> list[tuple[str, Any]]:
@@ -206,9 +234,76 @@ def _is_symbolic(value: Any) -> bool:
         return True
 
 
+def _build_qubit_map(circuit: Any) -> dict[str, int]:
+    """
+    Build a deterministic qubit-to-index mapping for a circuit.
+
+    Creates a stable mapping by sorting qubits by their string representation,
+    ensuring identical circuits produce identical mappings across process runs.
+
+    Parameters
+    ----------
+    circuit : Any
+        Cirq Circuit object.
+
+    Returns
+    -------
+    dict
+        Mapping from qubit string representation to deterministic integer index.
+        For LineQubit/GridQubit, the index matches their natural coordinate-based
+        index. For NamedQubit and other types, indices are assigned based on
+        sorted string representation order.
+
+    Notes
+    -----
+    This function is critical for hash determinism. It avoids using Python's
+    built-in hash() which is randomized per process since Python 3.3.
+    """
+    try:
+        all_qubits = list(circuit.all_qubits())
+    except Exception:
+        return {}
+
+    if not all_qubits:
+        return {}
+
+    # Sort qubits by string representation for deterministic ordering
+    sorted_qubits = sorted(all_qubits, key=str)
+
+    # Build mapping - use natural indices for standard qubit types,
+    # sequential indices for others
+    qubit_map: dict[str, int] = {}
+    named_offset = 10000  # Offset for non-standard qubits to avoid collisions
+
+    for i, qubit in enumerate(sorted_qubits):
+        qubit_str = str(qubit)
+
+        # LineQubit: use x coordinate
+        if hasattr(qubit, "x"):
+            try:
+                qubit_map[qubit_str] = int(qubit.x)
+                continue
+            except (TypeError, ValueError):
+                pass
+
+        # GridQubit: use row * 1000 + col
+        if hasattr(qubit, "row") and hasattr(qubit, "col"):
+            try:
+                qubit_map[qubit_str] = int(qubit.row) * 1000 + int(qubit.col)
+                continue
+            except (TypeError, ValueError):
+                pass
+
+        # NamedQubit or other: use deterministic sequential index
+        qubit_map[qubit_str] = named_offset + i
+
+    return qubit_map
+
+
 def circuit_to_op_stream(
     circuit: Any,
     resolver: Any | None = None,
+    qubit_map: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Convert a Cirq Circuit to canonical op_stream format.
@@ -221,6 +316,9 @@ def circuit_to_op_stream(
         Cirq Circuit object.
     resolver : cirq.ParamResolver or None
         Parameter resolver for binding symbolic parameters.
+    qubit_map : dict, optional
+        Pre-computed deterministic qubit mapping. If not provided, a mapping
+        will be built from the circuit.
 
     Returns
     -------
@@ -236,24 +334,33 @@ def circuit_to_op_stream(
     -----
     Qubit order is preserved for directional gates (e.g., CNOT).
     Operations within moments are sorted by qubit indices for determinism.
+    Qubit indices are deterministic across process runs.
     """
+    # Build qubit map if not provided
+    if qubit_map is None:
+        qubit_map = _build_qubit_map(circuit)
+
     ops: list[dict[str, Any]] = []
 
     for moment in circuit:
         # Sort operations within moment by qubit indices for determinism
         moment_ops = list(moment)
         moment_ops.sort(
-            key=lambda op: tuple(_qubits_to_list(getattr(op, "qubits", ())))
+            key=lambda op: tuple(_qubits_to_list(getattr(op, "qubits", ()), qubit_map))
         )
 
         for op in moment_ops:
-            op_dict = _convert_operation(op, resolver)
+            op_dict = _convert_operation(op, resolver, qubit_map)
             ops.append(op_dict)
 
     return ops
 
 
-def _convert_operation(op: Any, resolver: Any | None = None) -> dict[str, Any]:
+def _convert_operation(
+    op: Any,
+    resolver: Any | None = None,
+    qubit_map: dict[str, int] | None = None,
+) -> dict[str, Any]:
     """
     Convert a Cirq operation to canonical format.
 
@@ -263,6 +370,9 @@ def _convert_operation(op: Any, resolver: Any | None = None) -> dict[str, Any]:
         Cirq operation.
     resolver : cirq.ParamResolver or None
         Parameter resolver for binding symbolic parameters.
+    qubit_map : dict, optional
+        Pre-computed deterministic qubit mapping for NamedQubit and
+        other non-standard qubit types.
 
     Returns
     -------
@@ -286,7 +396,7 @@ def _convert_operation(op: Any, resolver: Any | None = None) -> dict[str, Any]:
             gate_name = f"{gate_name}_key:{key_str}"
 
     # Qubits as integer indices (order preserved!)
-    qubits = _qubits_to_list(getattr(op, "qubits", ()))
+    qubits = _qubits_to_list(getattr(op, "qubits", ()), qubit_map)
 
     # Parameter handling
     params: dict[str, Any] = {}
@@ -339,7 +449,10 @@ def _convert_operation(op: Any, resolver: Any | None = None) -> dict[str, Any]:
     return op_dict
 
 
-def _get_num_qubits(circuit: Any) -> int:
+def _get_num_qubits(
+    circuit: Any,
+    qubit_map: dict[str, int] | None = None,
+) -> int:
     """
     Get the number of qubits in a circuit.
 
@@ -347,6 +460,8 @@ def _get_num_qubits(circuit: Any) -> int:
     ----------
     circuit : Any
         Cirq Circuit object.
+    qubit_map : dict, optional
+        Pre-computed deterministic qubit mapping.
 
     Returns
     -------
@@ -356,7 +471,7 @@ def _get_num_qubits(circuit: Any) -> int:
     try:
         all_qubits = circuit.all_qubits()
         if all_qubits:
-            indices = [_qubit_to_index(q) for q in all_qubits]
+            indices = [_qubit_to_index(q, qubit_map) for q in all_qubits]
             return max(indices) + 1
         return 0
     except Exception:
@@ -473,6 +588,11 @@ def _compute_hashes(
     -------
     tuple of (str, str)
         (structural_hash, parametric_hash)
+
+    Notes
+    -----
+    Uses deterministic qubit mapping to ensure hash stability across
+    different Python process invocations.
     """
     all_ops: list[dict[str, Any]] = []
     total_nq = 0
@@ -480,8 +600,11 @@ def _compute_hashes(
 
     for circuit in circuits:
         try:
+            # Build deterministic qubit mapping for this circuit
+            qubit_map = _build_qubit_map(circuit)
+
             # Determine circuit dimensions
-            nq = _get_num_qubits(circuit)
+            nq = _get_num_qubits(circuit, qubit_map)
             nc = 0  # Cirq doesn't have classical bits at circuit level
             total_nq += nq
             total_nc += nc
@@ -496,7 +619,7 @@ def _compute_hashes(
             )
 
             # Convert circuit to op_stream (with resolver for parametric)
-            ops = circuit_to_op_stream(circuit, resolver)
+            ops = circuit_to_op_stream(circuit, resolver, qubit_map)
             all_ops.extend(ops)
 
         except Exception as e:

@@ -14,7 +14,7 @@ from devqubit_qiskit_runtime.adapter import QiskitRuntimeAdapter
 from devqubit_qiskit_runtime.transpilation import (
     TranspilationConfig,
     TranspilationOptions,
-    circuit_looks_isa,
+    circuit_looks_isa_simple,
     prepare_pubs_for_primitive,
 )
 from qiskit import QuantumCircuit
@@ -159,26 +159,26 @@ class TestCircuitLooksIsa:
         elif "ecr" in op_names:
             qc.ecr(0, 1)
 
-        assert circuit_looks_isa(qc, real_target, strict=False) is True
+        assert circuit_looks_isa_simple(qc, real_target, strict=False) is True
 
     def test_non_isa_circuit_fails(self, real_target, non_isa_circuit):
         """Non-ISA circuit (H gate) fails check with real target."""
-        assert circuit_looks_isa(non_isa_circuit, real_target) is False
+        assert circuit_looks_isa_simple(non_isa_circuit, real_target) is False
 
     def test_no_target_returns_true(self, non_isa_circuit):
         """Returns True if no target provided (can't check)."""
-        assert circuit_looks_isa(non_isa_circuit, None) is True
+        assert circuit_looks_isa_simple(non_isa_circuit, None) is True
 
     def test_empty_circuit_is_isa(self, real_target):
         """Empty circuit is ISA compatible."""
         qc = QuantumCircuit(2)
-        assert circuit_looks_isa(qc, real_target) is True
+        assert circuit_looks_isa_simple(qc, real_target) is True
 
     def test_barrier_only_is_isa(self, real_target):
         """Circuit with only barriers is ISA compatible."""
         qc = QuantumCircuit(2)
         qc.barrier()
-        assert circuit_looks_isa(qc, real_target) is True
+        assert circuit_looks_isa_simple(qc, real_target) is True
 
 
 # =============================================================================

@@ -146,7 +146,7 @@ class TestEnvelopeValidation:
 
     def test_invalid_result_status_fails(self, valid_envelope):
         """Invalid result status fails."""
-        valid_envelope["result"]["status"] = "running"  # not in enum
+        valid_envelope["result"]["status"] = "unknown_status"  # not in enum
 
         with pytest.raises(ValueError, match="status"):
             validate_envelope(valid_envelope)

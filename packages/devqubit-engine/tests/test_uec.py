@@ -233,6 +233,22 @@ class TestResultHandling:
         assert result.items[1].success is False
         assert result.items[2].success is True
 
+    def test_pending_and_running_statuses(self):
+        """Async statuses pending/running are valid and serializable."""
+        pending = ResultSnapshot.create_pending(metadata={"job_id": "JOB123"})
+        running = ResultSnapshot.create_running(metadata={"progress": 0.5})
+
+        assert pending.status == "pending"
+        assert pending.success is False
+        assert pending.metadata["job_id"] == "JOB123"
+
+        assert running.status == "running"
+        assert running.success is False
+
+        # Round-trip through dict
+        pending_restored = ResultSnapshot.from_dict(pending.to_dict())
+        assert pending_restored.status == "pending"
+
 
 class TestCalibrationFlow:
     """Tests for calibration data through the UEC pipeline."""
@@ -330,3 +346,67 @@ class TestEnvelopeValidation:
         warnings = envelope.validate()
 
         assert "Failed result missing error details" in warnings
+
+
+class TestMultiEnvelopeSelection:
+    """Tests for envelope selection with multiple envelopes."""
+
+    def test_load_envelope_prefers_latest_completed_at(self, store, run_factory):
+        """When multiple envelopes exist, prefer the one with latest completed_at."""
+        # Envelope 1: earlier completion
+        envelope_early = {
+            "schema": "devqubit.envelope/1.0",
+            "envelope_id": "ENV_EARLY",
+            "created_at": "2024-01-01T00:00:00Z",
+            "producer": {
+                "name": "devqubit",
+                "adapter": "qiskit",
+                "frontends": ["qiskit"],
+            },
+            "execution": {
+                "submitted_at": "2024-01-01T00:00:00Z",
+                "completed_at": "2024-01-01T01:00:00Z",
+            },
+            "result": {"success": True, "status": "completed", "items": []},
+        }
+        # Envelope 2: later completion (should be selected)
+        envelope_late = {
+            "schema": "devqubit.envelope/1.0",
+            "envelope_id": "ENV_LATE",
+            "created_at": "2024-01-01T00:00:00Z",
+            "producer": {
+                "name": "devqubit",
+                "adapter": "qiskit",
+                "frontends": ["qiskit"],
+            },
+            "execution": {
+                "submitted_at": "2024-01-01T00:00:00Z",
+                "completed_at": "2024-01-01T02:00:00Z",
+            },
+            "result": {"success": True, "status": "completed", "items": []},
+        }
+
+        digest_early = store.put_bytes(json.dumps(envelope_early).encode())
+        digest_late = store.put_bytes(json.dumps(envelope_late).encode())
+
+        # Add early first, late second (order shouldn't matter)
+        artifacts = [
+            ArtifactRef(
+                kind="devqubit.envelope.json",
+                digest=digest_early,
+                media_type="application/json",
+                role="envelope",
+            ),
+            ArtifactRef(
+                kind="devqubit.envelope.json",
+                digest=digest_late,
+                media_type="application/json",
+                role="envelope",
+            ),
+        ]
+        run = run_factory(run_id="MULTI_ENV", artifacts=artifacts)
+
+        envelope = load_envelope(run, store)
+
+        assert envelope is not None
+        assert envelope.envelope_id == "ENV_LATE"

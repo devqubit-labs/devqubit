@@ -173,8 +173,11 @@ def _sample_to_bitstring(sample: Any) -> str:
 
     except Exception as e:
         logger.debug("Failed to convert sample to bitstring: %s", e)
-        # Last resort: hash for uniqueness
-        return f"sample_{hash(str(sample)) % 10000:04d}"
+        # Use deterministic SHA256 hash instead of Python's hash()
+        import hashlib
+
+        digest = hashlib.sha256(str(sample).encode("utf-8")).hexdigest()[:8]
+        return f"sample_{digest}"
 
 
 def _extract_expectation_values(

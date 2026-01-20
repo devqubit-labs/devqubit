@@ -18,6 +18,7 @@ Entry Point Group
 from __future__ import annotations
 
 import logging
+import threading
 import traceback
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -133,9 +134,10 @@ class AdapterLoadError:
         return f"{self.entry_point}: {self.exc_type}: {self.message}"
 
 
-# Module-level cache for loaded adapters
+# Module-level cache for loaded adapters (protected by _cache_lock)
 _adapters: list[AdapterProtocol] | None = None
 _adapter_errors: list[AdapterLoadError] = []
+_cache_lock = threading.RLock()
 
 
 def clear_adapter_cache() -> None:
@@ -147,8 +149,9 @@ def clear_adapter_cache() -> None:
     adapter packages.
     """
     global _adapters, _adapter_errors
-    _adapters = None
-    _adapter_errors = []
+    with _cache_lock:
+        _adapters = None
+        _adapter_errors = []
     logger.debug("Adapter cache cleared")
 
 
@@ -179,63 +182,74 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
     """
     global _adapters, _adapter_errors
 
-    if _adapters is not None and not force_reload:
+    with _cache_lock:
+        if _adapters is not None and not force_reload:
+            return _adapters
+
+        logger.debug("Loading adapters from entry points")
+
+        _adapters = []
+        _adapter_errors = []
+
+        # Get entry points (compatible with Python 3.10+)
+        eps = entry_points()
+        if hasattr(eps, "select"):
+            # Python 3.10+ / importlib_metadata 3.6+
+            group_eps = eps.select(group=ADAPTER_ENTRY_POINT_GROUP)
+        else:
+            # Fallback for older versions
+            group_eps = eps.get(ADAPTER_ENTRY_POINT_GROUP, [])
+
+        for ep in group_eps:
+            ep_spec = f"{ep.name}={ep.value}"
+            logger.debug("Loading adapter: %s", ep_spec)
+
+            try:
+                adapter_cls = ep.load()
+                adapter = adapter_cls()
+
+                # Validate adapter has required 'name' attribute
+                if not getattr(adapter, "name", None):
+                    raise TypeError(
+                        f"Adapter class {adapter_cls.__name__} has no 'name' attribute"
+                    )
+
+                # Validate adapter conforms to protocol
+                if not isinstance(adapter, AdapterProtocol):
+                    raise TypeError(
+                        f"Adapter {adapter.name} does not implement AdapterProtocol"
+                    )
+
+                # Warn if entry point name differs from adapter.name
+                if ep.name != adapter.name:
+                    logger.warning(
+                        "Entry point name %r does not match adapter.name %r",
+                        ep.name,
+                        adapter.name,
+                    )
+
+                _adapters.append(adapter)
+                logger.info("Loaded adapter: %s", adapter.name)
+
+            except Exception as e:
+                error = AdapterLoadError(
+                    entry_point=ep_spec,
+                    exc_type=type(e).__name__,
+                    message=str(e),
+                    traceback=traceback.format_exc(),
+                )
+                _adapter_errors.append(error)
+                logger.warning(
+                    "Failed to load adapter %s: %s", ep_spec, e, exc_info=True
+                )
+
+        logger.debug(
+            "Adapter loading complete: %d loaded, %d errors",
+            len(_adapters),
+            len(_adapter_errors),
+        )
+
         return _adapters
-
-    logger.debug("Loading adapters from entry points")
-
-    _adapters = []
-    _adapter_errors = []
-
-    # Get entry points (compatible with Python 3.10+)
-    eps = entry_points()
-    if hasattr(eps, "select"):
-        # Python 3.10+ / importlib_metadata 3.6+
-        group_eps = eps.select(group=ADAPTER_ENTRY_POINT_GROUP)
-    else:
-        # Fallback for older versions
-        group_eps = eps.get(ADAPTER_ENTRY_POINT_GROUP, [])
-
-    for ep in group_eps:
-        ep_spec = f"{ep.name}={ep.value}"
-        logger.debug("Loading adapter: %s", ep_spec)
-
-        try:
-            adapter_cls = ep.load()
-            adapter = adapter_cls()
-
-            # Validate adapter has required 'name' attribute
-            if not getattr(adapter, "name", None):
-                raise TypeError(
-                    f"Adapter class {adapter_cls.__name__} has no 'name' attribute"
-                )
-
-            # Validate adapter conforms to protocol
-            if not isinstance(adapter, AdapterProtocol):
-                raise TypeError(
-                    f"Adapter {adapter.name} does not implement AdapterProtocol"
-                )
-
-            _adapters.append(adapter)
-            logger.info("Loaded adapter: %s", adapter.name)
-
-        except Exception as e:
-            error = AdapterLoadError(
-                entry_point=ep_spec,
-                exc_type=type(e).__name__,
-                message=str(e),
-                traceback=traceback.format_exc(),
-            )
-            _adapter_errors.append(error)
-            logger.warning("Failed to load adapter %s: %s", ep_spec, e)
-
-    logger.debug(
-        "Adapter loading complete: %d loaded, %d errors",
-        len(_adapters),
-        len(_adapter_errors),
-    )
-
-    return _adapters
 
 
 def adapter_load_errors() -> list[AdapterLoadError]:
@@ -264,9 +278,9 @@ def list_available_adapters(*, force_reload: bool = False) -> list[str]:
     Returns
     -------
     list of str
-        Names of successfully loaded adapters.
+        Names of successfully loaded adapters (sorted alphabetically).
     """
-    return [a.name for a in load_adapters(force_reload=force_reload)]
+    return sorted(a.name for a in load_adapters(force_reload=force_reload))
 
 
 def get_adapter_by_name(name: str) -> AdapterProtocol | None:
@@ -343,6 +357,7 @@ def resolve_adapter(
                 "Adapter %s raised exception in supports_executor: %s",
                 adapter.name,
                 e,
+                exc_info=True,
             )
             continue
 

@@ -51,6 +51,7 @@ import uuid
 from typing import Any
 
 from devqubit_engine.tracking.run import Run
+from devqubit_engine.uec.errors import EnvelopeValidationError
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
@@ -289,8 +290,8 @@ def _finalize_envelope_with_result(
     """
     Finalize envelope with result and log it.
 
-    Validation errors are logged but never crash the experiment.
-    Tracking should never abort user experiments.
+    Validation errors are re-raised since they indicate adapter bugs.
+    Other errors (network, storage) are logged but don't crash experiments.
 
     Parameters
     ----------
@@ -305,6 +306,8 @@ def _finalize_envelope_with_result(
     ------
     ValueError
         If envelope is None.
+    EnvelopeValidationError
+        If envelope validation fails (indicates adapter bug).
     """
     if envelope is None:
         raise ValueError("Cannot finalize None envelope")
@@ -322,7 +325,11 @@ def _finalize_envelope_with_result(
     # Log the envelope using tracker's canonical method
     try:
         tracker.log_envelope(envelope=envelope)
+    except EnvelopeValidationError:
+        # Validation errors indicate adapter bugs - re-raise to make them visible
+        raise
     except Exception as e:
+        # Other errors (network, storage) - log but don't crash user experiment
         logger.warning("Failed to log envelope: %s", e)
 
 
@@ -349,6 +356,18 @@ def patch_device(
         Auto-log new circuit structures.
     stats_update_interval : int
         Update stats every N executions.
+
+    Warnings
+    --------
+    Thread Safety
+        This function is NOT thread-safe. A device should only be used
+        by one tracker at a time. For concurrent execution, create
+        separate device instances for each run.
+
+    See Also
+    --------
+    unpatch_device : Remove tracking patches from a device.
+    is_device_patched : Check if a device is patched.
     """
     if getattr(device, "_devqubit_patched", False):
         device._devqubit_log_every_n = log_every_n
@@ -576,6 +595,18 @@ def patch_device(
 
             # Log results and build ResultSnapshot + ExecutionEnvelope
             if should_log_results and tapes:
+                # Ensure minimal tags are set (idempotent - tags are typically set once)
+                if not should_log_structure:
+                    physical_provider = (
+                        self._devqubit_device_snapshot.provider
+                        if self._devqubit_device_snapshot
+                        else "local"
+                    )
+                    tracker.set_tag("backend_name", backend_name)
+                    tracker.set_tag("provider", physical_provider)
+                    tracker.set_tag("sdk", "pennylane")
+                    tracker.set_tag("adapter", "devqubit-pennylane")
+
                 try:
                     result_type = (
                         extract_result_type(tapes) if execution_succeeded else None
@@ -640,6 +671,21 @@ def patch_device(
                             result_snapshot=self._devqubit_result_snapshot,
                         )
                         logger.debug("Created execution envelope for %s", backend_name)
+                    except EnvelopeValidationError as val_err:
+                        # Validation errors indicate adapter bugs - log at ERROR level
+                        logger.error(
+                            "Envelope validation failed for %s: %s "
+                            "(this indicates an adapter bug)",
+                            backend_name,
+                            val_err,
+                        )
+                        tracker.record.setdefault("errors", []).append(
+                            {
+                                "type": "envelope_validation_error",
+                                "message": str(val_err),
+                                "backend_name": backend_name,
+                            }
+                        )
                     except Exception as log_err:
                         logger.warning(
                             "Failed to finalize envelope for %s: %s",
@@ -675,6 +721,79 @@ def patch_device(
         device.execute = types.MethodType(_make_wrapper("execute"), device)
     if hasattr(device, "batch_execute"):
         device.batch_execute = types.MethodType(_make_wrapper("batch_execute"), device)
+
+
+def unpatch_device(device: Any) -> bool:
+    """
+    Remove devqubit tracking patches from a PennyLane device.
+
+    Restores the original execute/batch_execute methods and cleans up
+    all devqubit-related attributes.
+
+    Parameters
+    ----------
+    device : Any
+        PennyLane device to unpatch.
+
+    Returns
+    -------
+    bool
+        True if the device was unpatched, False if it was not patched.
+    """
+    if not getattr(device, "_devqubit_patched", False):
+        return False
+
+    # Restore original methods
+    for method_name in ("execute", "batch_execute"):
+        original_attr = f"_devqubit_original_{method_name}"
+        if hasattr(device, original_attr):
+            original = getattr(device, original_attr)
+            setattr(device, method_name, original)
+            delattr(device, original_attr)
+
+    # Clean up all devqubit attributes
+    devqubit_attrs = [
+        "_devqubit_patched",
+        "_devqubit_tracker",
+        "_devqubit_execution_count",
+        "_devqubit_logged_execution_count",
+        "_devqubit_log_every_n",
+        "_devqubit_log_new_circuits",
+        "_devqubit_stats_update_interval",
+        "_devqubit_seen_circuit_hashes",
+        "_devqubit_logged_circuit_hashes",
+        "_devqubit_device_snapshot",
+        "_devqubit_program_snapshot",
+        "_devqubit_execution_snapshot",
+        "_devqubit_result_snapshot",
+        "_devqubit_envelope",
+    ]
+
+    for attr in devqubit_attrs:
+        if hasattr(device, attr):
+            try:
+                delattr(device, attr)
+            except (AttributeError, TypeError):
+                pass
+
+    return True
+
+
+def is_device_patched(device: Any) -> bool:
+    """
+    Check if a device is currently patched for tracking.
+
+    Parameters
+    ----------
+    device : Any
+        PennyLane device to check.
+
+    Returns
+    -------
+    bool
+        True if the device is patched.
+    """
+    return getattr(device, "_devqubit_patched", False)
 
 
 class PennyLaneAdapter:
@@ -791,7 +910,32 @@ class PennyLaneAdapter:
         -------
         Any
             The same device instance, patched in place.
+
+        Warnings
+        --------
+        Sharing a device between concurrent runs is not supported. Each run
+        should use its own device instance, or unpatch_device() should be
+        called between runs.
         """
+        # Check if device is already tracked by a different tracker
+        existing_tracker = getattr(device, "_devqubit_tracker", None)
+        if existing_tracker is not None and existing_tracker is not tracker:
+            logger.warning(
+                "Device is already patched with a different tracker. "
+                "Reassigning tracker and resetting state. "
+                "Sharing devices between concurrent runs is not supported."
+            )
+            # Reset per-run state to prevent leaking between runs
+            device._devqubit_execution_count = 0
+            device._devqubit_logged_execution_count = 0
+            device._devqubit_seen_circuit_hashes = set()
+            device._devqubit_logged_circuit_hashes = set()
+            device._devqubit_device_snapshot = None
+            device._devqubit_program_snapshot = None
+            device._devqubit_execution_snapshot = None
+            device._devqubit_result_snapshot = None
+            device._devqubit_envelope = None
+
         patch_device(
             device,
             log_every_n=log_every_n,

@@ -66,7 +66,10 @@ _serializer = BraketCircuitSerializer()
 # =============================================================================
 
 
-def _get_braket_counts_format(transformed: bool = False) -> dict[str, Any]:
+def _get_braket_counts_format(
+    transformed: bool = False,
+    measured_qubits: list[int] | None = None,
+) -> dict[str, Any]:
     """
     Get CountsFormat metadata for Braket results.
 
@@ -77,18 +80,67 @@ def _get_braket_counts_format(transformed: bool = False) -> dict[str, Any]:
     ----------
     transformed : bool
         Whether counts have been transformed to canonical ``cbit0_right`` format.
+    measured_qubits : list of int, optional
+        Ordered list of measured qubit indices (if known). When provided,
+        enables accurate cross-SDK comparison even when qubit ordering differs.
 
     Returns
     -------
     dict
         CountsFormat as dictionary for JSON serialization.
     """
-    return CountsFormat(
+    fmt = CountsFormat(
         source_sdk="braket",
         source_key_format="bitstring",
         bit_order="cbit0_left",
         transformed=transformed,
-    ).to_dict()
+    )
+    result = fmt.to_dict()
+
+    if measured_qubits is not None:
+        result["measured_qubits"] = measured_qubits
+
+    return result
+
+
+def _extract_measured_qubits(result: Any) -> list[int] | None:
+    """
+    Extract measured qubit indices from a Braket result.
+
+    The measured_qubits list indicates which qubits were measured and in what
+    order, enabling accurate bitstring interpretation even when qubit ordering
+    differs from the default sequential order.
+
+    Parameters
+    ----------
+    result : Any
+        Braket result object.
+
+    Returns
+    -------
+    list of int or None
+        Ordered list of measured qubit indices, or None if not available.
+    """
+    if result is None:
+        return None
+
+    # Try measured_qubits attribute (GateModelQuantumTaskResult)
+    try:
+        mq = getattr(result, "measured_qubits", None)
+        if mq is not None:
+            return [int(q) for q in mq]
+    except Exception:
+        pass
+
+    # Try measurement_counts_indices (some result types)
+    try:
+        mci = getattr(result, "measurement_counts_indices", None)
+        if mci is not None:
+            return [int(q) for q in mci]
+    except Exception:
+        pass
+
+    return None
 
 
 # =============================================================================
@@ -324,6 +376,9 @@ def _create_result_snapshot(
         )
         status = "failed"
     elif result is not None:
+        # Extract measured qubits if available (for accurate bit-order semantics)
+        measured_qubits = _extract_measured_qubits(result)
+
         # Check if result is already a combined payload dict (from batch)
         if isinstance(result, dict) and "experiments" in result:
             counts_payload = result
@@ -331,7 +386,7 @@ def _create_result_snapshot(
             counts_payload = extract_counts_payload(result)
 
         if counts_payload and counts_payload.get("experiments"):
-            format_dict = _get_braket_counts_format()
+            format_dict = _get_braket_counts_format(measured_qubits=measured_qubits)
 
             for exp in counts_payload["experiments"]:
                 counts_data = exp.get("counts", {})
@@ -488,11 +543,8 @@ def create_envelope(
     )
 
     # Create pending result (will be updated by finalize_envelope)
-    pending_result = ResultSnapshot(
-        success=False,
-        status="failed",
-        items=[],
-        metadata={"state": "pending"},
+    pending_result = ResultSnapshot.create_pending(
+        metadata={"awaiting_result": True},
     )
 
     return ExecutionEnvelope(
@@ -598,8 +650,15 @@ def finalize_envelope(
             logger.debug("Failed to extract counts payload: %s", e)
 
     # Validate and log envelope
+    # EnvelopeValidationError is raised by log_envelope for adapter runs with
+    # invalid envelopes - this MUST propagate to enforce UEC contract
+    from devqubit_engine.uec.errors import EnvelopeValidationError
+
     try:
         tracker.log_envelope(envelope=envelope)
+    except EnvelopeValidationError:
+        # Re-raise validation errors - adapters must produce valid envelopes
+        raise
     except Exception as e:
         logger.warning("Failed to log envelope: %s", e)
 

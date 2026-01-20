@@ -232,6 +232,59 @@ class TestBatchAndFormat:
 
 
 # =============================================================================
+# Parameter Binds Hashing Tests
+# =============================================================================
+
+
+class TestParameterBindsHashing:
+    """Tests for parameter_binds incorporation into parametric hash."""
+
+    def test_different_binds_different_parametric_hash(self):
+        """Different parameter_binds produce different parametric hashes."""
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1)
+        qc.rx(theta, 0)
+        qc.measure_all()
+
+        binds1 = [{theta: 0.5}]
+        binds2 = [{theta: 1.5}]
+
+        structural1, parametric1 = compute_circuit_hashes([qc], binds1)
+        structural2, parametric2 = compute_circuit_hashes([qc], binds2)
+
+        assert structural1 == structural2  # Same structure
+        assert parametric1 != parametric2  # Different binds
+
+    def test_same_binds_same_parametric_hash(self):
+        """Same parameter_binds produce same parametric hash."""
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1)
+        qc.rx(theta, 0)
+        qc.measure_all()
+
+        binds = [{theta: 0.5}]
+
+        _, parametric1 = compute_circuit_hashes([qc], binds)
+        _, parametric2 = compute_circuit_hashes([qc], binds)
+
+        assert parametric1 == parametric2
+
+    def test_no_binds_uses_circuit_params(self):
+        """Without parameter_binds, hash uses circuit's bound values."""
+        theta = Parameter("theta")
+        qc = QuantumCircuit(1)
+        qc.rx(theta, 0)
+
+        bound1 = qc.assign_parameters({theta: 0.5})
+        bound2 = qc.assign_parameters({theta: 1.5})
+
+        _, parametric1 = compute_circuit_hashes([bound1], None)
+        _, parametric2 = compute_circuit_hashes([bound2], None)
+
+        assert parametric1 != parametric2
+
+
+# =============================================================================
 # UEC Hashing Contract Tests
 # =============================================================================
 

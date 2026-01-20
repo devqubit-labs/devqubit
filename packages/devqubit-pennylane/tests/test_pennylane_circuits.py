@@ -11,6 +11,7 @@ import pytest
 from devqubit_engine.circuit.models import SDK, CircuitFormat
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
 from devqubit_pennylane.circuits import (
+    _deterministic_wire_hash,
     compute_circuit_hashes,
     compute_parametric_hash,
     compute_structural_hash,
@@ -208,3 +209,44 @@ class TestTapeTypeDetection:
         """Rejects non-tapes."""
         assert is_pennylane_tape(None) is False
         assert is_pennylane_tape("tape") is False
+
+
+class TestWireHashDeterminism:
+    """Tests for deterministic wire hashing (audit fix)."""
+
+    def test_string_wires_hash_deterministically(self):
+        """String wire labels produce consistent hashes across calls."""
+
+        # Same input should always produce same output
+        wire_str = "qubit_alpha"
+        hash1 = _deterministic_wire_hash(wire_str)
+        hash2 = _deterministic_wire_hash(wire_str)
+
+        assert hash1 == hash2
+        assert isinstance(hash1, int)
+        assert 0 <= hash1 < 2**31
+
+    def test_different_wires_different_hashes(self):
+        """Different wire labels produce different hashes."""
+
+        hash_a = _deterministic_wire_hash("wire_a")
+        hash_b = _deterministic_wire_hash("wire_b")
+
+        assert hash_a != hash_b
+
+    def test_string_wire_tapes_hash_consistently(self):
+        """Tapes with string wires produce consistent structural hashes."""
+        # Create tape with string wire labels
+        with qml.tape.QuantumTape() as tape1:
+            qml.Hadamard(wires="a")
+            qml.CNOT(wires=["a", "b"])
+
+        with qml.tape.QuantumTape() as tape2:
+            qml.Hadamard(wires="a")
+            qml.CNOT(wires=["a", "b"])
+
+        h1 = compute_structural_hash(tape1)
+        h2 = compute_structural_hash(tape2)
+
+        assert h1 == h2
+        assert h1 is not None

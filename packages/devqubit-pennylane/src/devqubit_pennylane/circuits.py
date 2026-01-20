@@ -23,6 +23,7 @@ A tape contains operations and measurements on wires.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any
 
@@ -30,6 +31,28 @@ from devqubit_engine.circuit.hashing import hash_circuit_pair
 
 
 logger = logging.getLogger(__name__)
+
+
+def _deterministic_wire_hash(wire_str: str) -> int:
+    """
+    Compute a deterministic hash for a wire string.
+
+    Uses SHA256 to ensure consistent results across processes and machines,
+    unlike Python's built-in hash() which uses a random seed.
+
+    Parameters
+    ----------
+    wire_str : str
+        String representation of the wire.
+
+    Returns
+    -------
+    int
+        Deterministic integer hash in range [0, 2^31).
+    """
+    digest = hashlib.sha256(wire_str.encode("utf-8")).digest()
+    # Use first 4 bytes as unsigned int, then mask to 31 bits
+    return int.from_bytes(digest[:4], "big") % (2**31)
 
 
 def _is_tape_like(obj: Any) -> bool:
@@ -65,9 +88,9 @@ def _normalize_wire(wire: Any) -> int:
         except (TypeError, ValueError):
             pass
 
-    # Last resort: hash the string representation
-    # This ensures determinism even for non-integer wires
-    return hash(str(wire)) % (2**31)
+    # Use deterministic SHA256-based hash for non-integer wires
+    # This ensures consistent results across processes and machines
+    return _deterministic_wire_hash(str(wire))
 
 
 def _wires_to_list(wires: Any) -> list[int]:
@@ -166,10 +189,17 @@ def _convert_operation(op: Any) -> dict[str, Any]:
     for i, p in enumerate(param_values):
         key = f"p{i}"
         if _is_trainable_param(p):
-            # Trainable/symbolic parameter - store as unbound
-            params[key] = None
-            param_name = getattr(p, "name", None) or str(p)
-            params[f"{key}_name"] = str(param_name)[:100]
+            # Trainable/symbolic parameter - try to extract numeric value
+            numeric_val = _extract_numeric_value(p)
+            if numeric_val is not None:
+                params[key] = numeric_val
+            else:
+                # Cannot extract value - mark as unbound for structural hash
+                params[key] = None
+            # Store parameter name for debugging/tracing
+            param_name = getattr(p, "name", None)
+            if param_name is not None:
+                params[f"{key}_name"] = str(param_name)[:100]
         else:
             # Numeric value
             try:
@@ -303,6 +333,60 @@ def _is_trainable_param(p: Any) -> bool:
             return True
 
     return False
+
+
+def _extract_numeric_value(p: Any) -> float | None:
+    """
+    Extract numeric value from a trainable parameter if possible.
+
+    Attempts multiple strategies to extract a concrete float value
+    from trainable parameters (tensors, ArrayBox, etc.).
+
+    Parameters
+    ----------
+    p : Any
+        Trainable parameter.
+
+    Returns
+    -------
+    float or None
+        Numeric value if extraction succeeds, None otherwise.
+    """
+    # Try direct float conversion first
+    try:
+        return float(p)
+    except (TypeError, ValueError):
+        pass
+
+    # Try .item() for tensor-like objects
+    if hasattr(p, "item"):
+        try:
+            return float(p.item())
+        except (TypeError, ValueError, RuntimeError):
+            pass
+
+    # Try .numpy() for JAX/TF tensors
+    if hasattr(p, "numpy"):
+        try:
+            return float(p.numpy())
+        except (TypeError, ValueError, RuntimeError):
+            pass
+
+    # Try ._value for autograd ArrayBox
+    if hasattr(p, "_value"):
+        try:
+            return float(p._value)
+        except (TypeError, ValueError):
+            pass
+
+    # Try .val for some symbolic wrappers
+    if hasattr(p, "val"):
+        try:
+            return float(p.val)
+        except (TypeError, ValueError):
+            pass
+
+    return None
 
 
 def _get_num_wires(tape: Any) -> int:

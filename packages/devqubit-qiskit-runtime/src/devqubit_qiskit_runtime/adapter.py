@@ -78,6 +78,7 @@ from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_qiskit.serialization import QiskitCircuitSerializer
 from devqubit_qiskit_runtime.circuits import (
     circuits_to_text,
+    compute_circuit_hashes_with_params,
     compute_parametric_hash,
     compute_structural_hash,
 )
@@ -89,6 +90,7 @@ from devqubit_qiskit_runtime.device import (
 )
 from devqubit_qiskit_runtime.pubs import (
     extract_circuits_from_pubs,
+    extract_parameter_values_from_pubs,
     extract_pubs_structure,
     iter_pubs,
 )
@@ -165,7 +167,6 @@ class TrackedRuntimeJob:
     envelope: ExecutionEnvelope | None = None
 
     result_snapshot: ResultSnapshot | None = field(default=None, init=False, repr=False)
-    _cached_result: Any = field(default=None, init=False, repr=False)
     _finalized: bool = field(default=False, init=False, repr=False)
 
     def __repr__(self) -> str:
@@ -179,21 +180,38 @@ class TrackedRuntimeJob:
         """
         Retrieve job result and log artifacts.
 
-        This method is idempotent - calling it multiple times returns the same
-        cached result and does not re-log artifacts.
+        Logging happens only on the first successful call. Subsequent calls
+        delegate directly to the underlying job without re-logging.
+
+        Parameters
+        ----------
+        *args : Any
+            Positional arguments passed to job.result().
+        **kwargs : Any
+            Keyword arguments passed to job.result().
 
         Returns
         -------
         Any
-            PrimitiveResult object.
+            PrimitiveResult object from the underlying job.
 
         Raises
         ------
         Exception
             Re-raises any exception from the underlying job.result().
+
+        Notes
+        -----
+        Unlike some wrappers, this does NOT cache the result object. Each call
+        to result() is passed through to the underlying job. This ensures
+        consistent behavior when different arguments (e.g., timeout, decoder
+        options) are passed on subsequent calls.
+
+        Logging artifacts are captured only once (first successful call).
         """
-        if self._cached_result is not None:
-            return self._cached_result
+        if self._finalized:
+            # Already logged, just delegate to underlying job
+            return self.job.result(*args, **kwargs)
 
         try:
             result = self.job.result(*args, **kwargs)
@@ -201,9 +219,7 @@ class TrackedRuntimeJob:
             self._log_failure(exc)
             raise
 
-        self._cached_result = result
-
-        if not self.should_log_results or self._finalized:
+        if not self.should_log_results:
             return result
 
         self._finalized = True
@@ -672,11 +688,18 @@ class TrackedRuntimePrimitive:
 
         circuits = extract_circuits_from_pubs(pubs_list)
 
+        # Extract parameter values from pubs for accurate fingerprinting
+        parameter_values = extract_parameter_values_from_pubs(
+            pubs_list, primitive_type=self.primitive_type
+        )
+
         self._execution_count += 1
         exec_count = self._execution_count
 
-        structural_hash = compute_structural_hash(circuits)
-        parametric_hash = compute_parametric_hash(circuits)
+        # Compute hashes including pub parameter values
+        structural_hash, parametric_hash = compute_circuit_hashes_with_params(
+            circuits, parameter_values
+        )
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
         )
@@ -815,16 +838,18 @@ class TrackedRuntimePrimitive:
             self._logged_execution_count += 1
 
         # Build ProgramSnapshot
-        executed_structural_hash = (
-            compute_structural_hash(transpiled_circuits)
-            if transpiled_circuits
-            else structural_hash
-        )
-        executed_parametric_hash = (
-            compute_parametric_hash(transpiled_circuits)
-            if transpiled_circuits
-            else parametric_hash
-        )
+        if transpiled_circuits:
+            # For transpiled circuits, extract parameters from transpiled pubs
+            transpiled_param_values = extract_parameter_values_from_pubs(
+                pubs_to_run, primitive_type=self.primitive_type
+            )
+            executed_structural_hash = compute_structural_hash(transpiled_circuits)
+            _, executed_parametric_hash = compute_circuit_hashes_with_params(
+                transpiled_circuits, transpiled_param_values
+            )
+        else:
+            executed_structural_hash = structural_hash
+            executed_parametric_hash = parametric_hash
 
         self.program_snapshot = ProgramSnapshot(
             logical=program_artifacts,
@@ -864,6 +889,7 @@ class TrackedRuntimePrimitive:
                 "layout_method": options.layout_method,
                 "routing_method": options.routing_method,
                 "seed_transpiler": options.seed_transpiler,
+                "isa_check": tmeta.get("isa_check"),
             },
             sdk="qiskit-ibm-runtime",
         )
@@ -953,18 +979,19 @@ class TrackedRuntimePrimitive:
             sdk_versions = collect_sdk_versions()
 
             producer = ProducerInfo.create(
-                adapter="devqubit-qiskit-runtime",
+                adapter="qiskit-runtime",
                 adapter_version=get_adapter_version(),
                 sdk="qiskit-ibm-runtime",
                 sdk_version=sdk_versions.get("qiskit_ibm_runtime", "unknown"),
                 frontends=["qiskit-ibm-runtime"],
             )
 
-            pending_result = ResultSnapshot(
-                success=False,
-                status="failed",
-                items=[],
-                metadata={"state": "pending"},
+            pending_result = ResultSnapshot.create_pending(
+                metadata={
+                    "backend_name": exec_name,
+                    "primitive_type": self.primitive_type,
+                    "job_id": jid,
+                }
             )
 
             envelope = ExecutionEnvelope(

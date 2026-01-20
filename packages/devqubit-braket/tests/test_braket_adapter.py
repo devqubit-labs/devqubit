@@ -114,7 +114,7 @@ class TestUECContract:
 
         loaded = registry.load(run.run_id)
 
-        assert loaded.record["data"]["tags"]["provider"] == "aws_braket"
+        assert loaded.record["data"]["tags"]["provider"] == "local"
         assert loaded.record["data"]["tags"]["adapter"] == "devqubit-braket"
         assert loaded.record["data"]["params"]["shots"] == shots
         assert loaded.record["data"]["params"]["num_circuits"] == 1
@@ -361,4 +361,45 @@ class TestAdapterInterface:
         desc = adapter.describe_executor(local_simulator)
 
         assert "name" in desc
-        assert desc["provider"] == "aws_braket"
+        assert desc["provider"] == "local"  # LocalSimulator is local, not aws_braket
+
+
+# =============================================================================
+# Provider Detection Tests
+# =============================================================================
+
+
+class TestProviderDetection:
+    """Tests for accurate provider detection in tags and envelope."""
+
+    def test_local_simulator_has_local_provider(self, store, registry, local_simulator):
+        """LocalSimulator is tagged with provider='local', not 'aws_braket'."""
+        adapter = BraketAdapter()
+        circuit = Circuit().h(0).measure(0)
+
+        with track(project="local_provider", store=store, registry=registry) as run:
+            device = adapter.wrap_executor(local_simulator, run)
+            device.run(circuit, shots=10).result()
+
+        loaded = registry.load(run.run_id)
+
+        # Tags should reflect actual provider
+        assert loaded.record["data"]["tags"]["provider"] == "local"
+        assert loaded.record["backend"]["provider"] == "local"
+
+        # Envelope should have correct provider
+        envelope_art = _artifacts_of_kind(loaded, "devqubit.envelope.json")[0]
+        envelope = _read_artifact_json(store, envelope_art)
+        assert envelope["device"]["provider"] == "local"
+
+    def test_mock_aws_device_has_aws_provider(self, store, registry, device_factory):
+        """Mock AWS device is tagged with provider='aws_braket'."""
+        mock_device = device_factory(name="aws_qpu", qubit_count=2)
+        adapter = BraketAdapter()
+
+        with track(project="aws_provider", store=store, registry=registry) as run:
+            device = adapter.wrap_executor(mock_device, run)
+            device.run(Circuit().h(0), shots=10).result()
+
+        loaded = registry.load(run.run_id)
+        assert loaded.record["data"]["tags"]["provider"] == "aws_braket"
