@@ -402,6 +402,32 @@ class TestCircuitHashing:
         h2 = hash_structural(ops, 2, 0)
         assert h1 == h2
 
+    def test_large_int_preserves_precision(self):
+        """Large integers (>2^53) hash deterministically without precision loss."""
+        large_int = 2**63
+        ops = [{"gate": "custom", "qubits": [0], "params": {"n": large_int}}]
+
+        h1 = hash_parametric(ops, 1, 0)
+        h2 = hash_parametric(ops, 1, 0)
+
+        # Same large int => same hash
+        assert h1 == h2
+
+        # Different large ints => different hashes
+        ops_different = [{"gate": "custom", "qubits": [0], "params": {"n": 2**63 + 1}}]
+        h3 = hash_parametric(ops_different, 1, 0)
+        assert h1 != h3
+
+    def test_int_float_distinguished(self):
+        """Integer 1 and float 1.0 produce different hashes."""
+        ops_int = [{"gate": "rz", "qubits": [0], "params": {"t": 1}}]
+        ops_float = [{"gate": "rz", "qubits": [0], "params": {"t": 1.0}}]
+
+        h_int = hash_parametric(ops_int, 1, 0)
+        h_float = hash_parametric(ops_float, 1, 0)
+
+        assert h_int != h_float
+
 
 class TestExtractFromRefs:
     """Test circuit extraction from artifact refs (UEC envelope flow)."""
