@@ -822,11 +822,14 @@ class Run:
                     raise TypeError("record['program']['openqasm3'] must be a list")
 
                 for item in out_items:
+                    ref = item["ref"]
                     entry: dict[str, Any] = {
                         "name": item["name"],
                         "index": int(item["index"]),
-                        "kind": item["ref"].kind,
-                        "digest": item["ref"].digest,
+                        "kind": ref.kind,
+                        "digest": ref.digest,
+                        "media_type": ref.media_type,
+                        "role": ref.role,
                     }
                     oq3_list.append(entry)
 
