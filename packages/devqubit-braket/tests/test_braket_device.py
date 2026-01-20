@@ -264,6 +264,25 @@ class TestBackendTypeResolution:
 
 
 # =============================================================================
+# Provider Detection
+# =============================================================================
+
+
+class TestProviderDetection:
+    """Tests for physical provider detection."""
+
+    def test_local_simulator_provider_is_local(self, local_simulator):
+        """LocalSimulator has provider='local'."""
+        snap = create_device_snapshot(local_simulator)
+        assert snap.provider == "local"
+
+    def test_mock_aws_device_provider_is_aws(self, mock_device):
+        """Mock AWS device has provider='aws_braket'."""
+        snap = create_device_snapshot(mock_device)
+        assert snap.provider == "aws_braket"
+
+
+# =============================================================================
 # Error Handling
 # =============================================================================
 

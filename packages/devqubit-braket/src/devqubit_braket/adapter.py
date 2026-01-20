@@ -487,9 +487,14 @@ class TrackedDevice:
             self._logged_circuit_hashes.add(structural_hash)
         self._logged_execution_count += 1
 
+        # Get actual provider from envelope device snapshot
+        provider = "aws_braket"
+        if envelope.device and envelope.device.provider:
+            provider = envelope.device.provider
+
         # Set tracker tags/params
         self.tracker.set_tag("backend_name", device_name)
-        self.tracker.set_tag("provider", "aws_braket")
+        self.tracker.set_tag("provider", provider)
         self.tracker.set_tag("adapter", "devqubit-braket")
 
         if is_batch:
@@ -506,7 +511,7 @@ class TrackedDevice:
         self.tracker.record["backend"] = {
             "name": device_name,
             "type": self.device.__class__.__name__,
-            "provider": "aws_braket",
+            "provider": provider,
         }
 
         self.tracker.record["execute"] = {
@@ -631,10 +636,12 @@ class BraketAdapter:
         dict
             Device description with name, type, and provider.
         """
+        from devqubit_braket.device import _detect_physical_provider
+
         return {
             "name": get_backend_name(device),
             "type": device.__class__.__name__,
-            "provider": "aws_braket",
+            "provider": _detect_physical_provider(device),
         }
 
     def wrap_executor(
