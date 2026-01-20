@@ -13,11 +13,23 @@ contract enforcement:
 2. **Manual runs**: Envelope is synthesized from RunRecord if not present.
    This is best-effort with limited semantics (no program hashes).
 
+Functions
+---------
+- :func:`resolve_envelope` - Primary entry point (UEC-first with synthesis fallback)
+- :func:`load_envelope` - Load first envelope from artifacts
+- :func:`load_all_envelopes` - Load all envelopes (for multi-circuit runs)
+
 Examples
 --------
->>> from devqubit_engine.uec import resolve_envelope
+>>> from devqubit_engine.uec.api.resolve import resolve_envelope
 >>> envelope = resolve_envelope(record, store)
 >>> print(envelope.envelope_id)
+
+>>> # For multi-circuit runs with multiple envelopes
+>>> from devqubit_engine.uec.api.resolve import load_all_envelopes
+>>> envelopes = load_all_envelopes(record, store)
+>>> for env in envelopes:
+...     print(env.envelope_id, env.program.num_circuits)
 """
 
 from __future__ import annotations
@@ -81,11 +93,15 @@ def load_envelope(
     Selection priority:
     1. role="envelope", kind="devqubit.envelope.json" (valid)
     2. role="envelope", kind="devqubit.envelope.invalid.json" (if include_invalid)
+
+    Multiple envelopes per run are supported (e.g., one per circuit batch).
+    This function returns the first valid envelope found. Use
+    ``load_all_envelopes()`` to retrieve all envelopes.
     """
     from devqubit_engine.storage.artifacts.io import load_artifact_json
     from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 
-    valid_artifact = None
+    valid_artifacts: list = []
     invalid_artifact = None
 
     for artifact in record.artifacts:
@@ -93,14 +109,22 @@ def load_envelope(
             continue
 
         if artifact.kind == "devqubit.envelope.json":
-            valid_artifact = artifact
-            break
+            valid_artifacts.append(artifact)
 
         if artifact.kind == "devqubit.envelope.invalid.json":
             invalid_artifact = artifact
 
-    if valid_artifact is not None:
-        target_artifact = valid_artifact
+    # Log info about multiple envelopes (expected for multi-circuit runs)
+    if len(valid_artifacts) > 1:
+        logger.debug(
+            "Found %d envelope artifacts for run %s (multi-circuit run). "
+            "Returning first envelope.",
+            len(valid_artifacts),
+            record.run_id,
+        )
+
+    if valid_artifacts:
+        target_artifact = valid_artifacts[0]
     elif include_invalid and invalid_artifact is not None:
         target_artifact = invalid_artifact
     else:
@@ -138,6 +162,65 @@ def load_envelope(
             adapter = record.record.get("adapter", "unknown")
             raise EnvelopeValidationError(str(adapter), [str(e)]) from e
         return None
+
+
+def load_all_envelopes(
+    record: RunRecord,
+    store: ObjectStoreProtocol,
+    *,
+    include_invalid: bool = False,
+) -> list[ExecutionEnvelope]:
+    """
+    Load all ExecutionEnvelopes from stored artifacts.
+
+    For runs with multiple circuit batches, each batch may have its own
+    envelope. This function returns all valid envelopes.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record to load envelopes from.
+    store : ObjectStoreProtocol
+        Object store for artifact retrieval.
+    include_invalid : bool, default=False
+        If True, also include invalid envelopes.
+
+    Returns
+    -------
+    list of ExecutionEnvelope
+        All loaded envelopes (may be empty).
+    """
+    from devqubit_engine.storage.artifacts.io import load_artifact_json
+    from devqubit_engine.uec.models.envelope import ExecutionEnvelope
+
+    envelopes: list[ExecutionEnvelope] = []
+    valid_kinds = {"devqubit.envelope.json"}
+    if include_invalid:
+        valid_kinds.add("devqubit.envelope.invalid.json")
+
+    for artifact in record.artifacts:
+        if artifact.role != "envelope" or artifact.kind not in valid_kinds:
+            continue
+
+        try:
+            envelope_data = load_artifact_json(artifact, store)
+            if isinstance(envelope_data, dict):
+                envelope = ExecutionEnvelope.from_dict(envelope_data)
+                envelopes.append(envelope)
+        except Exception as e:
+            logger.warning(
+                "Failed to parse envelope artifact %s for run %s: %s",
+                artifact.digest[:16],
+                record.run_id,
+                e,
+            )
+
+    logger.debug(
+        "Loaded %d envelope(s) for run %s",
+        len(envelopes),
+        record.run_id,
+    )
+    return envelopes
 
 
 def resolve_envelope(

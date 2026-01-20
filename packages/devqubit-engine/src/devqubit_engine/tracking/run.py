@@ -37,21 +37,25 @@ Using the wrap pattern for automatic artifact logging:
 from __future__ import annotations
 
 import logging
+import threading
 import traceback as _tb
 from pathlib import Path
 from typing import Any, Sequence
 
 from devqubit_engine.config import Config, get_config
 from devqubit_engine.schema.validation import validate_run_record
-from devqubit_engine.storage.artifacts.lookup import get_artifact_digests
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
     ArtifactRef,
     ObjectStoreProtocol,
     RegistryProtocol,
 )
+from devqubit_engine.tracking.fingerprints import (
+    compute_fingerprints,
+    compute_fingerprints_from_envelopes,
+)
 from devqubit_engine.tracking.record import RunRecord
-from devqubit_engine.uec.errors import EnvelopeValidationError
+from devqubit_engine.uec.errors import EnvelopeValidationError, MissingEnvelopeError
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import sha256_digest, utc_now_iso
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
@@ -62,139 +66,80 @@ from ulid import ULID
 
 logger = logging.getLogger(__name__)
 
+# Maximum artifact size in bytes (20 MB default)
+MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
 
-def _strip_volatile_keys(obj: Any, *, volatile_keys: set[str]) -> Any:
+
+def _has_valid_envelope(artifacts: list) -> bool:
     """
-    Remove known volatile keys from nested mappings.
+    Check if a valid envelope artifact exists in the artifact list.
+
+    Only returns True if there is a valid envelope
+    (kind="devqubit.envelope.json"). Invalid envelopes
+    (kind="devqubit.envelope.invalid.json") are ignored.
 
     Parameters
     ----------
-    obj : Any
-        Object to process (dict, list, or scalar).
-    volatile_keys : set of str
-        Keys to strip from dictionaries.
+    artifacts : list of ArtifactRef
+        List of artifact references to check.
 
     Returns
     -------
-    Any
-        Processed object with volatile keys removed.
+    bool
+        True if at least one valid envelope artifact exists.
     """
-    if isinstance(obj, dict):
-        return {
-            k: _strip_volatile_keys(v, volatile_keys=volatile_keys)
-            for k, v in obj.items()
-            if k not in volatile_keys
-        }
-    if isinstance(obj, list):
-        return [_strip_volatile_keys(v, volatile_keys=volatile_keys) for v in obj]
-    return obj
+    for artifact in artifacts:
+        if artifact.role == "envelope" and artifact.kind == "devqubit.envelope.json":
+            return True
+    return False
 
 
-def _compute_fingerprints(run: RunRecord) -> dict[str, str]:
+def _synthesize_envelope_for_manual_run(
+    record: dict[str, Any],
+    artifacts: list,
+    store: ObjectStoreProtocol,
+) -> Any | None:
     """
-    Compute stable fingerprints for a run record.
+    Synthesize an envelope for a manual run.
 
-    Fingerprints enable reproducibility tracking by creating stable
-    identifiers for different aspects of the experiment.
+    This is called during finalization when a manual run doesn't have
+    an explicit envelope. The synthesized envelope has limited semantics
+    (no program hashes) but provides basic structure.
 
     Parameters
     ----------
-    run : RunRecord
-        Run record to fingerprint.
+    record : dict
+        Raw run record dictionary.
+    artifacts : list of ArtifactRef
+        Current artifact list.
+    store : ObjectStoreProtocol
+        Object store for artifact retrieval.
 
     Returns
     -------
-    dict
-        Fingerprints dictionary with keys:
+    ExecutionEnvelope or None
+        Synthesized envelope, or None if synthesis fails.
 
-        - ``program``: Hash of all program artifact digests (role="program")
-        - ``canonical_program``: Hash of canonical OpenQASM3 artifacts (if present)
-        - ``device``: Hash of backend identity + device_snapshot artifacts
-        - ``intent``: Hash of adapter + compile + execute config (volatile keys stripped)
-        - ``run``: Combined hash of (program, device, intent)
+    Notes
+    -----
+    The synthesized envelope will have:
+
+    - metadata.auto_generated=True
+    - metadata.manual_run=True (set by synthesize_envelope)
+    - No program hashes (engine cannot compute them)
     """
-    record = run.record
+    try:
+        from devqubit_engine.tracking.record import RunRecord
+        from devqubit_engine.uec.api.synthesize import synthesize_envelope
 
-    # Program fingerprint: all program artifacts (QPY, QASM, etc.)
-    program_digests = get_artifact_digests(run, role="program")
-    fp_program = sha256_digest({"program_artifacts": program_digests})
+        temp_record = RunRecord(record=record, artifacts=artifacts)
+        envelope = synthesize_envelope(temp_record, store)
+        envelope.metadata["auto_generated"] = True
+        return envelope
 
-    # Canonical program fingerprint: only canonical OpenQASM3 artifacts
-    canonical_digests = get_artifact_digests(
-        run,
-        role="program",
-        kind_contains="openqasm3.canonical",
-    )
-    fp_canonical: str | None = None
-    if canonical_digests:
-        fp_canonical = sha256_digest({"program_artifacts": canonical_digests})
-
-    # Device fingerprint
-    backend = record.get("backend") or {}
-    if not isinstance(backend, dict):
-        backend = {}
-
-    device_snapshot_digests = get_artifact_digests(run, role="device_snapshot")
-    device_raw_digests = get_artifact_digests(run, role="device_raw")
-    device_digests = sorted(set(device_snapshot_digests + device_raw_digests))
-
-    fp_device = sha256_digest(
-        {
-            "backend": {
-                "name": backend.get("name"),
-                "type": backend.get("type"),
-                "provider": backend.get("provider"),
-            },
-            "device_snapshots": device_digests,
-        }
-    )
-
-    # Intent fingerprint (execution configuration)
-    execute_raw = record.get("execute") or {}
-    if not isinstance(execute_raw, dict):
-        execute_raw = {}
-
-    # Strip volatile keys that change between runs
-    volatile_execute_keys = {
-        "submitted_at",
-        "job_id",
-        "job_ids",
-        "completed_at",
-        "session_id",
-    }
-
-    fp_intent = sha256_digest(
-        {
-            "adapter": record.get("adapter"),
-            "compile": record.get("compile") or {},
-            "execute": _strip_volatile_keys(
-                execute_raw,
-                volatile_keys=volatile_execute_keys,
-            ),
-        }
-    )
-
-    # Combined run fingerprint
-    fp_run = sha256_digest(
-        {
-            "program": fp_program,
-            "device": fp_device,
-            "intent": fp_intent,
-        }
-    )
-
-    fingerprints: dict[str, str] = {
-        "program": fp_program,
-        "device": fp_device,
-        "intent": fp_intent,
-        "run": fp_run,
-    }
-
-    if fp_canonical is not None:
-        fingerprints["canonical_program"] = fp_canonical
-
-    logger.debug("Computed fingerprints: run=%s...", fp_run[:16])
-    return fingerprints
+    except Exception as e:
+        logger.warning("Failed to synthesize envelope: %s", e)
+        return None
 
 
 class Run:
@@ -244,27 +189,6 @@ class Run:
         Run registry for metadata.
     record : dict
         Raw run record dictionary.
-
-    Examples
-    --------
-    Basic tracking:
-
-    >>> with Run(project="bell_state") as run:
-    ...     run.log_param("shots", 1000)
-    ...     run.log_metric("fidelity", 0.95)
-
-    Grouped runs for parameter sweep:
-
-    >>> sweep_id = "sweep_20240101"
-    >>> for shots in [100, 1000, 10000]:
-    ...     with Run(project="bell_state", group_id=sweep_id) as run:
-    ...         run.log_param("shots", shots)
-    ...         # ... run experiment ...
-
-    See Also
-    --------
-    track : Convenience function for creating runs.
-    wrap_backend : Wrap backend for automatic artifact logging.
     """
 
     def __init__(
@@ -281,6 +205,9 @@ class Run:
         group_name: str | None = None,
         parent_run_id: str | None = None,
     ) -> None:
+        # Thread-safety lock for record and artifact mutations
+        self._lock = threading.Lock()
+
         # Generate unique run ID
         ulid_gen = ULID()
         self._run_id = (
@@ -403,7 +330,9 @@ class Run:
         value : Any
             Parameter value. Will be converted to JSON-serializable form.
         """
-        self.record["data"]["params"][key] = to_jsonable(value)
+        jsonable_value = to_jsonable(value)
+        with self._lock:
+            self.record["data"]["params"][key] = jsonable_value
         logger.debug("Logged param: %s=%r", key, value)
 
     def log_params(self, params: dict[str, Any]) -> None:
@@ -453,23 +382,25 @@ class Run:
                 raise ValueError(f"step must be non-negative, got {step}")
 
             # Time series mode
-            if "metric_series" not in self.record["data"]:
-                self.record["data"]["metric_series"] = {}
+            with self._lock:
+                if "metric_series" not in self.record["data"]:
+                    self.record["data"]["metric_series"] = {}
 
-            if key not in self.record["data"]["metric_series"]:
-                self.record["data"]["metric_series"][key] = []
+                if key not in self.record["data"]["metric_series"]:
+                    self.record["data"]["metric_series"][key] = []
 
-            self.record["data"]["metric_series"][key].append(
-                {
-                    "value": value_f,
-                    "step": step,
-                    "timestamp": utc_now_iso(),
-                }
-            )
+                self.record["data"]["metric_series"][key].append(
+                    {
+                        "value": value_f,
+                        "step": step,
+                        "timestamp": utc_now_iso(),
+                    }
+                )
             logger.debug("Logged metric series: %s[%d]=%f", key, step, value_f)
         else:
             # Scalar mode (overwrites previous value)
-            self.record["data"]["metrics"][key] = value_f
+            with self._lock:
+                self.record["data"]["metrics"][key] = value_f
             logger.debug("Logged metric: %s=%f", key, value_f)
 
     def log_metrics(self, metrics: dict[str, float]) -> None:
@@ -497,7 +428,9 @@ class Run:
         value : str
             Tag value (will be converted to string).
         """
-        self.record["data"]["tags"][key] = str(value)
+        str_value = str(value)
+        with self._lock:
+            self.record["data"]["tags"][key] = str_value
         logger.debug("Set tag: %s=%s", key, value)
 
     def set_tags(self, tags: dict[str, str]) -> None:
@@ -511,32 +444,6 @@ class Run:
         """
         for key, value in tags.items():
             self.set_tag(key, value)
-
-    def log_compile(self, config: dict[str, Any]) -> None:
-        """
-        Record compile/transpile configuration.
-
-        Parameters
-        ----------
-        config : dict
-            Compilation configuration (e.g., optimization_level,
-            seed_transpiler, routing_method, basis_gates).
-        """
-        self.record["compile"] = to_jsonable(config)
-        logger.debug("Logged compile config")
-
-    def log_execute(self, config: dict[str, Any]) -> None:
-        """
-        Record execution configuration.
-
-        Parameters
-        ----------
-        config : dict
-            Execution configuration (e.g., shots, resilience_level,
-            error_mitigation options, dynamic decoupling).
-        """
-        self.record["execute"] = to_jsonable(config)
-        logger.debug("Logged execute config")
 
     def log_text(
         self,
@@ -590,6 +497,9 @@ class Run:
         media_type: str,
         role: str = "artifact",
         meta: dict[str, Any] | None = None,
+        *,
+        max_bytes: int | None = None,
+        truncate: bool = False,
     ) -> ArtifactRef:
         """
         Log a binary artifact.
@@ -607,12 +517,47 @@ class Run:
             Common values: "program", "results", "device_snapshot".
         meta : dict, optional
             Additional metadata.
+        max_bytes : int, optional
+            Maximum allowed size in bytes. Defaults to ``MAX_ARTIFACT_BYTES``.
+            Set to 0 or negative to disable size limit.
+        truncate : bool, optional
+            If True and data exceeds max_bytes, truncate data and add
+            a digest of full content to metadata. If False (default),
+            raise ValueError for oversized artifacts.
 
         Returns
         -------
         ArtifactRef
             Reference to the stored artifact.
+
+        Raises
+        ------
+        ValueError
+            If data exceeds max_bytes and truncate is False.
         """
+        limit = max_bytes if max_bytes is not None else MAX_ARTIFACT_BYTES
+        size = len(data)
+
+        if limit > 0 and size > limit:
+            if truncate:
+                full_digest = sha256_digest(data)
+                data = data[:limit]
+                meta = dict(meta) if meta else {}
+                meta["truncated"] = True
+                meta["original_size"] = size
+                meta["original_digest"] = full_digest
+                logger.warning(
+                    "Artifact truncated: kind=%s, original_size=%d, limit=%d",
+                    kind,
+                    size,
+                    limit,
+                )
+            else:
+                raise ValueError(
+                    f"Artifact size ({size} bytes) exceeds limit ({limit} bytes). "
+                    f"Set truncate=True to allow truncation or increase max_bytes."
+                )
+
         digest = self._store.put_bytes(data)
         ref = ArtifactRef(
             kind=kind,
@@ -621,7 +566,8 @@ class Run:
             role=role,
             meta=meta,
         )
-        self._artifacts.append(ref)
+        with self._lock:
+            self._artifacts.append(ref)
         logger.debug(
             "Logged artifact: kind=%s, role=%s, digest=%s...", kind, role, digest[:24]
         )
@@ -662,101 +608,6 @@ class Run:
             meta={"name": name},
         )
 
-    def log_counts(
-        self,
-        counts: dict[str, int],
-        *,
-        shots: int | None = None,
-        source_sdk: str = "manual",
-        bit_order: str = "cbit0_right",
-        experiment_index: int = 0,
-        transform_to_canonical: bool = False,
-    ) -> ArtifactRef:
-        """
-        Log measurement counts as a standardized artifact.
-
-        This helper simplifies manual logging of quantum execution results
-        by ensuring counts are stored in a consistent format compatible
-        with compare/diff operations.
-
-        Parameters
-        ----------
-        counts : dict
-            Measurement counts as {bitstring: count} mapping.
-            Keys should be binary strings (e.g., "00", "01", "10", "11").
-        shots : int, optional
-            Total number of shots. If None, computed from counts.
-        source_sdk : str, default="manual"
-            SDK that produced the counts (e.g., "qiskit", "braket", "manual").
-        bit_order : str, default="cbit0_right"
-            Bit ordering convention of the counts keys.
-            - "cbit0_right": LSB on right (Qiskit convention, canonical)
-            - "cbit0_left": LSB on left (Braket/Cirq convention)
-        experiment_index : int, default=0
-            Experiment index for batch executions.
-        transform_to_canonical : bool, default=False
-            If True and bit_order is "cbit0_left", reverse bitstrings
-            to canonical "cbit0_right" format.
-
-        Returns
-        -------
-        ArtifactRef
-            Reference to the stored counts artifact.
-
-        Notes
-        -----
-        The canonical bit order for devqubit is "cbit0_right" (little-endian,
-        LSB on right), which matches Qiskit's convention. If your counts come
-        from Braket or Cirq (big-endian), set transform_to_canonical=True
-        to convert them.
-        """
-        # Compute shots if not provided
-        if shots is None:
-            shots = sum(counts.values())
-
-        # Transform to canonical bit order if requested
-        transformed = False
-        final_counts = counts
-        if transform_to_canonical and bit_order == "cbit0_left":
-            final_counts = {k[::-1]: v for k, v in counts.items()}
-            transformed = True
-            bit_order = "cbit0_right"
-
-        # Build payload in standard format
-        payload = {
-            "counts": final_counts,
-            "shots": shots,
-            "experiments": [
-                {
-                    "index": experiment_index,
-                    "counts": final_counts,
-                    "shots": shots,
-                }
-            ],
-            "counts_format": {
-                "source_sdk": source_sdk,
-                "source_key_format": f"{source_sdk}_counts",
-                "bit_order": bit_order,
-                "transformed": transformed,
-            },
-        }
-
-        ref = self.log_json(
-            name="result_counts",
-            obj=payload,
-            role="results",
-            kind="result.counts.json",
-        )
-
-        logger.debug(
-            "Logged counts: shots=%d, outcomes=%d, source_sdk=%s",
-            shots,
-            len(final_counts),
-            source_sdk,
-        )
-
-        return ref
-
     def log_envelope(self, envelope: ExecutionEnvelope) -> bool:
         """
         Validate and log execution envelope.
@@ -766,6 +617,8 @@ class Run:
 
         For adapter runs, invalid envelope raises EnvelopeValidationError.
         For manual runs, invalid envelope is logged but execution continues.
+
+        Multiple envelopes per run are allowed (e.g., one per circuit batch).
 
         Parameters
         ----------
@@ -781,6 +634,7 @@ class Run:
         ------
         EnvelopeValidationError
             If adapter run produces invalid envelope (strict enforcement).
+            This error MUST NOT be silenced by adapters.
         """
         # Validate envelope
         validation = envelope.validate_schema()
@@ -829,10 +683,11 @@ class Run:
             )
 
             # Store summary in tracker record for visibility
-            self.record["envelope_validation_error"] = {
-                "errors": [str(e) for e in validation.errors],
-                "count": validation.error_count,
-            }
+            with self._lock:
+                self.record["envelope_validation_error"] = {
+                    "errors": [str(e) for e in validation.errors],
+                    "count": validation.error_count,
+                }
 
             # Log invalid envelope for debugging
             self.log_json(
@@ -1007,34 +862,35 @@ class Run:
 
         # Anchor pointers in the run record
         if anchor:
-            prog = self.record.setdefault("program", {})
-            oq3_list = prog.setdefault("openqasm3", [])
+            with self._lock:
+                prog = self.record.setdefault("program", {})
+                oq3_list = prog.setdefault("openqasm3", [])
 
-            if not isinstance(oq3_list, list):
-                raise TypeError("record['program']['openqasm3'] must be a list")
+                if not isinstance(oq3_list, list):
+                    raise TypeError("record['program']['openqasm3'] must be a list")
 
-            for item in out_items:
-                entry: dict[str, Any] = {
-                    "name": item["name"],
-                    "index": int(item["index"]),
-                }
-
-                if item.get("raw_ref") is not None:
-                    entry["raw"] = {
-                        "kind": item["raw_ref"].kind,
-                        "digest": item["raw_ref"].digest,
+                for item in out_items:
+                    entry: dict[str, Any] = {
+                        "name": item["name"],
+                        "index": int(item["index"]),
                     }
 
-                if item.get("canonical_ref") is not None:
-                    entry["canonical"] = {
-                        "kind": item["canonical_ref"].kind,
-                        "digest": item["canonical_ref"].digest,
-                    }
+                    if item.get("raw_ref") is not None:
+                        entry["raw"] = {
+                            "kind": item["raw_ref"].kind,
+                            "digest": item["raw_ref"].digest,
+                        }
 
-                if item.get("canonical_info") is not None:
-                    entry["canonicalization"] = item["canonical_info"]
+                    if item.get("canonical_ref") is not None:
+                        entry["canonical"] = {
+                            "kind": item["canonical_ref"].kind,
+                            "digest": item["canonical_ref"].digest,
+                        }
 
-                oq3_list.append(entry)
+                    if item.get("canonical_info") is not None:
+                        entry["canonicalization"] = item["canonical_info"]
+
+                    oq3_list.append(entry)
 
         result: dict[str, Any] = {"items": out_items}
 
@@ -1082,20 +938,17 @@ class Run:
         >>> with track(project="test") as run:
         ...     backend = run.wrap(AerSimulator())
         ...     job = backend.run(circuit)
-
-        See Also
-        --------
-        wrap_backend : Standalone convenience function.
         """
         from devqubit_engine.adapters import resolve_adapter
 
         adapter = resolve_adapter(executor)
 
-        self.record["adapter"] = adapter.name
-        self._adapter = adapter.name
+        with self._lock:
+            self.record["adapter"] = adapter.name
+            self._adapter = adapter.name
 
-        desc = adapter.describe_executor(executor)
-        self.record["backend"] = desc
+            desc = adapter.describe_executor(executor)
+            self.record["backend"] = desc
 
         logger.debug("Wrapped executor with adapter: %s", adapter.name)
         return adapter.wrap_executor(executor, self, **kwargs)
@@ -1123,8 +976,9 @@ class Run:
             Status to set. Default is "FAILED". Use "KILLED" for
             interrupts.
         """
-        self.record["info"]["status"] = status
-        self.record["info"]["ended_at"] = utc_now_iso()
+        with self._lock:
+            self.record["info"]["status"] = status
+            self.record["info"]["ended_at"] = utc_now_iso()
 
         if error is None:
             logger.info("Run marked as %s: %s", status, self._run_id)
@@ -1134,13 +988,14 @@ class Run:
         tb = exc_tb if exc_tb is not None else getattr(error, "__traceback__", None)
         formatted = "".join(_tb.format_exception(etype, error, tb))
 
-        self.record.setdefault("errors", []).append(
-            {
-                "type": etype.__name__,
-                "message": str(error),
-                "traceback": formatted,
-            }
-        )
+        with self._lock:
+            self.record.setdefault("errors", []).append(
+                {
+                    "type": etype.__name__,
+                    "message": str(error),
+                    "traceback": formatted,
+                }
+            )
 
         logger.warning(
             "Run %s: %s - %s: %s",
@@ -1163,13 +1018,8 @@ class Run:
         bool
             True if valid envelope artifact exists in self._artifacts.
         """
-        for artifact in self._artifacts:
-            if (
-                artifact.role == "envelope"
-                and artifact.kind == "devqubit.envelope.json"
-            ):
-                return True
-        return False
+        with self._lock:
+            return _has_valid_envelope(self._artifacts)
 
     def _ensure_envelope(self) -> None:
         """
@@ -1203,18 +1053,19 @@ class Run:
             adapter = self.record.get("adapter", "unknown")
 
             # Mark run as FAILED with structured error
-            self.record["info"]["status"] = "FAILED"
-            self.record.setdefault("errors", []).append(
-                {
-                    "type": "MissingExecutionEnvelope",
-                    "message": (
-                        f"Adapter run (adapter={adapter}) completed without "
-                        f"creating execution envelope. This is an adapter "
-                        f"integration error - adapters must create envelopes."
-                    ),
-                    "adapter": adapter,
-                }
-            )
+            with self._lock:
+                self.record["info"]["status"] = "FAILED"
+                self.record.setdefault("errors", []).append(
+                    {
+                        "type": "MissingExecutionEnvelope",
+                        "message": (
+                            f"Adapter run (adapter={adapter}) completed without "
+                            f"creating execution envelope. This is an adapter "
+                            f"integration error - adapters must create envelopes."
+                        ),
+                        "adapter": adapter,
+                    }
+                )
 
             logger.error(
                 "Adapter run '%s' (adapter=%s) completing without envelope. "
@@ -1225,22 +1076,15 @@ class Run:
             return
 
         # Build envelope for manual run
-        try:
-            from devqubit_engine.uec.api.synthesize import (
-                synthesize_envelope,
-            )
+        with self._lock:
+            record_copy = dict(self.record)
+            artifacts_copy = list(self._artifacts)
 
-            # Create temporary RunRecord for envelope building
-            temp_record = RunRecord(
-                record=self.record,
-                artifacts=self._artifacts,
-            )
+        envelope = _synthesize_envelope_for_manual_run(
+            record=record_copy, artifacts=artifacts_copy, store=self._store
+        )
 
-            envelope = synthesize_envelope(temp_record, self._store)
-
-            # Mark as auto-generated (keep manual_run from synthesize_envelope)
-            envelope.metadata["auto_generated"] = True
-
+        if envelope is not None:
             # Log the envelope (skip validation for auto-generated)
             self.log_json(
                 name="execution_envelope",
@@ -1248,19 +1092,80 @@ class Run:
                 role="envelope",
                 kind="devqubit.envelope.json",
             )
-
             logger.debug(
                 "Auto-generated envelope for manual run %s",
                 self._run_id,
             )
+        else:
+            logger.warning(
+                "Failed to auto-generate envelope for run %s",
+                self._run_id,
+            )
+
+    def _compute_fingerprints(self, run_record: RunRecord) -> dict[str, str]:
+        """
+        Compute fingerprints using canonical envelope resolution.
+
+        Uses the canonical resolver (load_all_envelopes) to load envelopes
+        and compute fingerprints. Handles errors gracefully by returning
+        empty fingerprints and marking the run as FAILED.
+
+        Parameters
+        ----------
+        run_record : RunRecord
+            Run record with artifacts.
+
+        Returns
+        -------
+        dict
+            Fingerprints dictionary. Empty dict if envelope resolution fails.
+        """
+        from devqubit_engine.uec.api.resolve import load_all_envelopes
+
+        try:
+            envelopes = load_all_envelopes(run_record, self._store)
+
+            if not envelopes:
+                # No envelopes found - use artifact-based fallback
+                logger.debug("No envelopes found, using artifact-based fingerprints")
+                return compute_fingerprints(run_record, envelope=None)
+
+            if len(envelopes) == 1:
+                return compute_fingerprints(run_record, envelope=envelopes[0])
+
+            # Multi-envelope: aggregate fingerprints
+            return compute_fingerprints_from_envelopes(envelopes)
+
+        except (MissingEnvelopeError, EnvelopeValidationError) as e:
+            adapter = self.record.get("adapter", "unknown")
+            error_type = type(e).__name__
+
+            with self._lock:
+                self.record["info"]["status"] = "FAILED"
+                self.record.setdefault("errors", []).append(
+                    {
+                        "type": error_type,
+                        "message": str(e),
+                        "adapter": adapter,
+                    }
+                )
+
+            logger.error(
+                "Envelope error during fingerprinting for run '%s': %s - %s",
+                self._run_id,
+                error_type,
+                str(e),
+            )
+            return {}
 
         except Exception as e:
-            # Don't fail the run if envelope generation fails for manual runs
             logger.warning(
-                "Failed to auto-generate envelope for run %s: %s",
+                "Unexpected error computing fingerprints for run '%s': %s",
                 self._run_id,
                 e,
             )
+            # Fall back to artifact-based fingerprints
+            return compute_fingerprints(run_record, envelope=None)
 
     def _finalize(self, success: bool = True) -> None:
         """
@@ -1271,19 +1176,23 @@ class Run:
         success : bool, optional
             If True and status is "RUNNING", set to "FINISHED".
         """
-        if success and self.record["info"]["status"] == "RUNNING":
-            self.record["info"]["status"] = "FINISHED"
-            self.record["info"]["ended_at"] = utc_now_iso()
+        with self._lock:
+            if success and self.record["info"]["status"] == "RUNNING":
+                self.record["info"]["status"] = "FINISHED"
+                self.record["info"]["ended_at"] = utc_now_iso()
 
         # Ensure envelope exists (auto-generate if needed)
         self._ensure_envelope()
 
-        # Serialize artifacts
-        self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
+        # Serialize artifacts and compute fingerprints
+        with self._lock:
+            self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
+            run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
 
-        # Build RunRecord and compute fingerprints
-        run_record = RunRecord(record=self.record, artifacts=self._artifacts)
-        self.record["fingerprints"] = _compute_fingerprints(run_record)
+        # Compute fingerprints using canonical envelope resolution
+        fingerprints = self._compute_fingerprints(run_record)
+        with self._lock:
+            self.record["fingerprints"] = fingerprints
 
         # Validate if enabled
         if self._config.validate:
@@ -1329,6 +1238,24 @@ class Run:
                 self._finalize(success=False)
             except Exception as finalize_error:
                 # Best-effort: preserve original exception, record finalization error
+                with self._lock:
+                    self.record.setdefault("errors", []).append(
+                        {
+                            "type": type(finalize_error).__name__,
+                            "message": f"Finalization error: {finalize_error}",
+                            "traceback": _tb.format_exc(),
+                        }
+                    )
+                logger.exception("Error during run finalization")
+
+            return False  # Propagate original exception
+
+        # Success path - wrap in try/except for robustness
+        try:
+            self._finalize(success=True)
+        except Exception as finalize_error:
+            # Best-effort: record error but don't raise on exit
+            with self._lock:
                 self.record.setdefault("errors", []).append(
                     {
                         "type": type(finalize_error).__name__,
@@ -1336,11 +1263,14 @@ class Run:
                         "traceback": _tb.format_exc(),
                     }
                 )
-                logger.exception("Error during run finalization")
+            logger.exception("Error during run finalization (success path)")
 
-            return False  # Propagate original exception
+            # Attempt to save the run record even with incomplete data
+            try:
+                self._registry.save(self.record)
+            except Exception:
+                logger.exception("Failed to save run record after finalization error")
 
-        self._finalize(success=True)
         return False
 
     def __repr__(self) -> str:
@@ -1454,11 +1384,6 @@ def wrap_backend(run: Run, backend: Any, **kwargs: Any) -> Any:
     ------
     ValueError
         If no adapter supports the given backend type.
-
-    See Also
-    --------
-    Run.wrap : Equivalent method on the Run class.
-    track : Context manager for creating tracked runs.
 
     Examples
     --------

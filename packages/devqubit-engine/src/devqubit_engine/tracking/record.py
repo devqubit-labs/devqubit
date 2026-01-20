@@ -10,6 +10,7 @@ persisting quantum experiment runs.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,6 +58,7 @@ class RunRecord:
 
     record: dict[str, Any]
     artifacts: list[ArtifactRef] = field(default_factory=list)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     @property
     def run_id(self) -> str:
@@ -68,7 +70,8 @@ class RunRecord:
         str
             Run ID, typically a ULID. Empty string if not set.
         """
-        return self.record.get("run_id", "")
+        with self._lock:
+            return self.record.get("run_id", "")
 
     @property
     def project(self) -> str:
@@ -80,10 +83,11 @@ class RunRecord:
         str
             Project name. Empty string if not set.
         """
-        proj = self.record.get("project", {})
-        if isinstance(proj, dict):
-            return proj.get("name", "")
-        return str(proj) if proj else ""
+        with self._lock:
+            proj = self.record.get("project", {})
+            if isinstance(proj, dict):
+                return proj.get("name", "")
+            return str(proj) if proj else ""
 
     @property
     def adapter(self) -> str:
@@ -95,7 +99,8 @@ class RunRecord:
         str
             Adapter name (e.g., "qiskit", "pennylane", "cirq").
         """
-        return self.record.get("adapter", "")
+        with self._lock:
+            return self.record.get("adapter", "")
 
     @property
     def status(self) -> str:
@@ -108,10 +113,11 @@ class RunRecord:
             One of: "RUNNING", "FINISHED", "FAILED", "KILLED".
             Defaults to "RUNNING" if not explicitly set.
         """
-        info = self.record.get("info", {})
-        if isinstance(info, dict):
-            return info.get("status", "RUNNING")
-        return "RUNNING"
+        with self._lock:
+            info = self.record.get("info", {})
+            if isinstance(info, dict):
+                return info.get("status", "RUNNING")
+            return "RUNNING"
 
     @property
     def created_at(self) -> str:
@@ -123,7 +129,8 @@ class RunRecord:
         str
             ISO 8601 formatted timestamp. Empty string if not set.
         """
-        return self.record.get("created_at", "")
+        with self._lock:
+            return self.record.get("created_at", "")
 
     @property
     def fingerprints(self) -> dict[str, str]:
@@ -136,8 +143,9 @@ class RunRecord:
             Dictionary of fingerprint type to SHA-256 digest.
             Common keys: "program", "device", "intent", "run".
         """
-        fps = self.record.get("fingerprints", {})
-        return fps if isinstance(fps, dict) else {}
+        with self._lock:
+            fps = self.record.get("fingerprints", {})
+            return dict(fps) if isinstance(fps, dict) else {}
 
     @property
     def run_fingerprint(self) -> str | None:
@@ -159,7 +167,9 @@ class RunRecord:
         """
         Get the program fingerprint.
 
-        Based on all program artifacts (QPY, QASM, etc.).
+        Computed from ExecutionEnvelope program hashes (structural_hash
+        and parametric_hash) when available. Falls back to artifact
+        digests for runs without envelope.
 
         Returns
         -------
@@ -179,10 +189,11 @@ class RunRecord:
             Backend name (e.g., "ibm_brisbane", "lightning.qubit"),
             or None if not set.
         """
-        backend = self.record.get("backend", {})
-        if isinstance(backend, dict):
-            return backend.get("name")
-        return None
+        with self._lock:
+            backend = self.record.get("backend", {})
+            if isinstance(backend, dict):
+                return backend.get("name")
+            return None
 
     @property
     def group_id(self) -> str | None:
@@ -200,7 +211,8 @@ class RunRecord:
         str or None
             Group identifier, or None if not part of a group.
         """
-        return self.record.get("group_id")
+        with self._lock:
+            return self.record.get("group_id")
 
     @property
     def group_name(self) -> str | None:
@@ -212,7 +224,8 @@ class RunRecord:
         str or None
             Group name, or None if not set.
         """
-        return self.record.get("group_name")
+        with self._lock:
+            return self.record.get("group_name")
 
     @property
     def parent_run_id(self) -> str | None:
@@ -229,7 +242,8 @@ class RunRecord:
         str or None
             Parent run ID, or None if this is a root run.
         """
-        return self.record.get("parent_run_id")
+        with self._lock:
+            return self.record.get("parent_run_id")
 
     @property
     def run_name(self) -> str | None:
@@ -241,10 +255,11 @@ class RunRecord:
         str or None
             Run name, or None if not set.
         """
-        info = self.record.get("info", {})
-        if isinstance(info, dict):
-            return info.get("run_name")
-        return None
+        with self._lock:
+            info = self.record.get("info", {})
+            if isinstance(info, dict):
+                return info.get("run_name")
+            return None
 
     @property
     def ended_at(self) -> str | None:
@@ -256,10 +271,11 @@ class RunRecord:
         str or None
             ISO 8601 formatted end timestamp, or None if still running.
         """
-        info = self.record.get("info", {})
-        if isinstance(info, dict):
-            return info.get("ended_at")
-        return None
+        with self._lock:
+            info = self.record.get("info", {})
+            if isinstance(info, dict):
+                return info.get("ended_at")
+            return None
 
     @property
     def params(self) -> dict[str, Any]:
@@ -274,11 +290,12 @@ class RunRecord:
         dict
             Parameter name to value mapping.
         """
-        data = self.record.get("data", {})
-        if isinstance(data, dict):
-            params = data.get("params", {})
-            return params if isinstance(params, dict) else {}
-        return {}
+        with self._lock:
+            data = self.record.get("data", {})
+            if isinstance(data, dict):
+                params = data.get("params", {})
+                return dict(params) if isinstance(params, dict) else {}
+            return {}
 
     @property
     def metrics(self) -> dict[str, float]:
@@ -292,11 +309,12 @@ class RunRecord:
         dict
             Metric name to numeric value mapping.
         """
-        data = self.record.get("data", {})
-        if isinstance(data, dict):
-            metrics = data.get("metrics", {})
-            return metrics if isinstance(metrics, dict) else {}
-        return {}
+        with self._lock:
+            data = self.record.get("data", {})
+            if isinstance(data, dict):
+                metrics = data.get("metrics", {})
+                return dict(metrics) if isinstance(metrics, dict) else {}
+            return {}
 
     @property
     def tags(self) -> dict[str, str]:
@@ -310,11 +328,12 @@ class RunRecord:
         dict
             Tag name to string value mapping.
         """
-        data = self.record.get("data", {})
-        if isinstance(data, dict):
-            tags = data.get("tags", {})
-            return tags if isinstance(tags, dict) else {}
-        return {}
+        with self._lock:
+            data = self.record.get("data", {})
+            if isinstance(data, dict):
+                tags = data.get("tags", {})
+                return dict(tags) if isinstance(tags, dict) else {}
+            return {}
 
     def to_dict(self) -> dict[str, Any]:
         """
@@ -325,8 +344,9 @@ class RunRecord:
         dict
             Complete run record with artifacts serialized.
         """
-        result = dict(self.record)
-        result["artifacts"] = [a.to_dict() for a in self.artifacts]
+        with self._lock:
+            result = dict(self.record)
+            result["artifacts"] = [a.to_dict() for a in self.artifacts]
         return result
 
     def __repr__(self) -> str:

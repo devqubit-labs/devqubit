@@ -94,18 +94,6 @@ class TestLogging:
         assert series[0]["value"] == 1.0
         assert series[2]["value"] == 0.2
 
-    def test_compile_execute_config(self, store, registry, config):
-        """Log transpiler and execution configuration."""
-        with track(project="config", config=config) as run:
-            run.log_compile({"optimization_level": 3, "routing_method": "sabre"})
-            run.log_execute({"shots": 4000, "resilience_level": 1})
-            run_id = run.run_id
-
-        loaded = registry.load(run_id)
-
-        assert loaded.record["compile"]["optimization_level"] == 3
-        assert loaded.record["execute"]["shots"] == 4000
-
 
 class TestArtifactLogging:
     """Tests for artifact logging methods."""
