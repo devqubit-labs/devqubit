@@ -13,6 +13,12 @@ The comparison logic operates entirely on ExecutionEnvelope (UEC) data.
 All run metadata (params, metrics, project, fingerprints) is extracted from
 envelope.metadata.devqubit namespace, ensuring consistent behavior across
 adapter and manual runs.
+
+Architecture
+------------
+- Core functions (diff_contexts) operate entirely on RunContext/envelope
+- Adapter functions (diff, diff_runs) handle RunRecord/registry/bundle IO
+- Extraction helpers are public for use by verdict module
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.result import canonicalize_bitstrings
 from devqubit_engine.utils.distributions import (
+    NoiseContext,
     compute_noise_context,
     normalize_counts,
     total_variation_distance,
@@ -61,6 +68,15 @@ from devqubit_engine.utils.distributions import (
 
 
 logger = logging.getLogger(__name__)
+
+
+# Tolerance for TVD comparison (floating point precision)
+_TVD_TOLERANCE = 1e-12
+
+
+# =============================================================================
+# RunContext: Core abstraction for comparison
+# =============================================================================
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,95 +109,12 @@ class RunContext:
     store: ObjectStoreProtocol
 
 
-def _num_equal(a: Any, b: Any, tolerance: float) -> bool:
-    """
-    Compare two values with numeric tolerance.
-
-    Handles bool, Real (including numpy types, Decimal), NaN, and Inf correctly.
-
-    Parameters
-    ----------
-    a : Any
-        First value.
-    b : Any
-        Second value.
-    tolerance : float
-        Tolerance for float comparison.
-
-    Returns
-    -------
-    bool
-        True if values are equal within tolerance.
-    """
-    # Booleans should not be compared as numbers
-    if isinstance(a, bool) or isinstance(b, bool):
-        return a == b
-
-    # Handle numeric types (including numpy.float64, Decimal, etc.)
-    if isinstance(a, Real) and isinstance(b, Real):
-        af, bf = float(a), float(b)
-
-        # NaN equals NaN for comparison purposes
-        if math.isnan(af) and math.isnan(bf):
-            return True
-
-        # Both NaN check failed, but one is NaN
-        if math.isnan(af) or math.isnan(bf):
-            return False
-
-        # Inf values must match exactly
-        if math.isinf(af) or math.isinf(bf):
-            return af == bf
-
-        return abs(af - bf) <= tolerance
-
-    return a == b
+# =============================================================================
+# Envelope extraction helpers (public API for verdict module)
+# =============================================================================
 
 
-def _diff_dict(
-    dict_a: dict[str, Any],
-    dict_b: dict[str, Any],
-    tolerance: float = 1e-9,
-) -> dict[str, Any]:
-    """
-    Compute difference between two dictionaries.
-
-    Parameters
-    ----------
-    dict_a : dict
-        Baseline dictionary.
-    dict_b : dict
-        Candidate dictionary.
-    tolerance : float
-        Tolerance for float comparison.
-
-    Returns
-    -------
-    dict
-        Comparison result with keys: match, added, removed, changed.
-    """
-    keys_a: set[str] = set(dict_a.keys())
-    keys_b: set[str] = set(dict_b.keys())
-
-    added = {k: dict_b[k] for k in keys_b - keys_a}
-    removed = {k: dict_a[k] for k in keys_a - keys_b}
-
-    changed: dict[str, dict[str, Any]] = {}
-    for k in keys_a & keys_b:
-        val_a = dict_a[k]
-        val_b = dict_b[k]
-        if not _num_equal(val_a, val_b, tolerance):
-            changed[k] = {"a": val_a, "b": val_b}
-
-    return {
-        "match": not added and not removed and not changed,
-        "added": added,
-        "removed": removed,
-        "changed": changed,
-    }
-
-
-def _extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
+def extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """
     Extract devqubit namespace from envelope metadata.
 
@@ -193,7 +126,7 @@ def _extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
     Returns
     -------
     dict
-        The devqubit metadata namespace, or empty dict if not present or invalid.
+        The devqubit metadata namespace, or empty dict if not present.
     """
     devqubit = envelope.metadata.get("devqubit")
     if devqubit is None:
@@ -207,43 +140,44 @@ def _extract_devqubit_metadata(envelope: ExecutionEnvelope) -> dict[str, Any]:
     return devqubit
 
 
-def _extract_params(envelope: ExecutionEnvelope) -> dict[str, Any]:
+def extract_params(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """Extract parameters from envelope metadata.devqubit namespace."""
-    devqubit = _extract_devqubit_metadata(envelope)
+    devqubit = extract_devqubit_metadata(envelope)
     return devqubit.get("params", {}) or {}
 
 
-def _extract_metrics(envelope: ExecutionEnvelope) -> dict[str, Any]:
+def extract_metrics(envelope: ExecutionEnvelope) -> dict[str, Any]:
     """Extract metrics from envelope metadata.devqubit namespace."""
-    devqubit = _extract_devqubit_metadata(envelope)
+    devqubit = extract_devqubit_metadata(envelope)
     return devqubit.get("metrics", {}) or {}
 
 
-def _extract_project(envelope: ExecutionEnvelope) -> str | None:
+def extract_project(envelope: ExecutionEnvelope) -> str | None:
     """Extract project name from envelope metadata.devqubit namespace."""
-    devqubit = _extract_devqubit_metadata(envelope)
+    devqubit = extract_devqubit_metadata(envelope)
     return devqubit.get("project")
 
 
-def _extract_fingerprint(envelope: ExecutionEnvelope) -> str | None:
+def extract_fingerprint(envelope: ExecutionEnvelope) -> str | None:
     """Extract run fingerprint from envelope metadata.devqubit namespace."""
-    devqubit = _extract_devqubit_metadata(envelope)
+    devqubit = extract_devqubit_metadata(envelope)
     fingerprints = devqubit.get("fingerprints", {}) or {}
     return fingerprints.get("run")
 
 
-def _extract_backend_name(envelope: ExecutionEnvelope) -> str | None:
+def extract_backend_name(envelope: ExecutionEnvelope) -> str | None:
     """Extract backend name from envelope device snapshot."""
     if envelope.device:
         return envelope.device.backend_name
     return None
 
 
-def _get_counts_from_envelope(
+def get_counts_from_envelope(
     envelope: ExecutionEnvelope,
     item_index: int = 0,
     *,
     canonicalize: bool = True,
+    skip_failed: bool = True,
 ) -> dict[str, int] | None:
     """
     Extract counts from envelope result item.
@@ -256,6 +190,8 @@ def _get_counts_from_envelope(
         Index of the result item to extract counts from.
     canonicalize : bool, default=True
         Whether to canonicalize bitstrings to cbit0_right format.
+    skip_failed : bool, default=True
+        If True, skip items with success=False and return None for them.
 
     Returns
     -------
@@ -269,6 +205,12 @@ def _get_counts_from_envelope(
         return None
 
     item = envelope.result.items[item_index]
+
+    # Skip failed items if requested
+    if skip_failed and item.success is False:
+        logger.debug("Skipping failed result item at index %d", item_index)
+        return None
+
     if not item.counts:
         return None
 
@@ -290,11 +232,12 @@ def _get_counts_from_envelope(
         return {str(k): int(v) for k, v in raw_counts.items()}
 
 
-def _get_all_counts_from_envelope(
+def get_all_counts_from_envelope(
     envelope: ExecutionEnvelope,
     *,
     canonicalize: bool = True,
-) -> list[dict[str, int]]:
+    skip_failed: bool = True,
+) -> list[tuple[int, dict[str, int]]]:
     """
     Extract counts from all result items in the envelope.
 
@@ -304,38 +247,46 @@ def _get_all_counts_from_envelope(
         Execution envelope.
     canonicalize : bool, default=True
         Whether to canonicalize bitstrings.
+    skip_failed : bool, default=True
+        If True, skip items with success=False.
 
     Returns
     -------
-    list of dict
-        List of counts dictionaries for each result item.
+    list of tuple
+        List of (item_index, counts) tuples for each successful result item.
+        Empty list if no counts available.
     """
-    results = []
+    results: list[tuple[int, dict[str, int]]] = []
+    skipped_count = 0
+
     for idx in range(len(envelope.result.items)):
-        counts = _get_counts_from_envelope(envelope, idx, canonicalize=canonicalize)
+        item = envelope.result.items[idx]
+
+        # Track skipped failed items for warning
+        if skip_failed and item.success is False:
+            skipped_count += 1
+            continue
+
+        counts = get_counts_from_envelope(
+            envelope, idx, canonicalize=canonicalize, skip_failed=False
+        )
         if counts is not None:
-            results.append(counts)
+            results.append((idx, counts))
+
+    if skipped_count > 0:
+        logger.debug(
+            "Skipped %d failed result items when extracting counts", skipped_count
+        )
+
     return results
 
 
-def _get_device_snapshot(envelope: ExecutionEnvelope) -> DeviceSnapshot | None:
-    """
-    Get device snapshot from envelope.
-
-    Parameters
-    ----------
-    envelope : ExecutionEnvelope
-        Execution envelope.
-
-    Returns
-    -------
-    DeviceSnapshot or None
-        Device snapshot if available in envelope.
-    """
+def get_device_snapshot(envelope: ExecutionEnvelope) -> DeviceSnapshot | None:
+    """Get device snapshot from envelope."""
     return envelope.device
 
 
-def _extract_circuit_summary(
+def extract_circuit_summary(
     envelope: ExecutionEnvelope,
     store: ObjectStoreProtocol,
     *,
@@ -371,6 +322,76 @@ def _extract_circuit_summary(
     return None
 
 
+# =============================================================================
+# Internal comparison helpers
+# =============================================================================
+
+
+def _num_equal(a: Any, b: Any, tolerance: float) -> bool:
+    """
+    Compare two values with numeric tolerance.
+
+    Handles bool, Real (including numpy types, Decimal), NaN, and Inf correctly.
+    """
+    # Booleans should not be compared as numbers
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a == b
+
+    # Handle numeric types (including numpy.float64, Decimal, etc.)
+    if isinstance(a, Real) and isinstance(b, Real):
+        af, bf = float(a), float(b)
+
+        # NaN equals NaN for comparison purposes
+        if math.isnan(af) and math.isnan(bf):
+            return True
+
+        # Both NaN check failed, but one is NaN
+        if math.isnan(af) or math.isnan(bf):
+            return False
+
+        # Inf values must match exactly
+        if math.isinf(af) or math.isinf(bf):
+            return af == bf
+
+        return abs(af - bf) <= tolerance
+
+    return a == b
+
+
+def _diff_dict(
+    dict_a: dict[str, Any],
+    dict_b: dict[str, Any],
+    tolerance: float = 1e-9,
+) -> dict[str, Any]:
+    """
+    Compute difference between two dictionaries.
+
+    Returns
+    -------
+    dict
+        Comparison result with keys: match, added, removed, changed.
+    """
+    keys_a: set[str] = set(dict_a.keys())
+    keys_b: set[str] = set(dict_b.keys())
+
+    added = {k: dict_b[k] for k in keys_b - keys_a}
+    removed = {k: dict_a[k] for k in keys_a - keys_b}
+
+    changed: dict[str, dict[str, Any]] = {}
+    for k in keys_a & keys_b:
+        val_a = dict_a[k]
+        val_b = dict_b[k]
+        if not _num_equal(val_a, val_b, tolerance):
+            changed[k] = {"a": val_a, "b": val_b}
+
+    return {
+        "match": not added and not removed and not changed,
+        "added": added,
+        "removed": removed,
+        "changed": changed,
+    }
+
+
 def _compare_programs(
     envelope_a: ExecutionEnvelope,
     envelope_b: ExecutionEnvelope,
@@ -380,19 +401,6 @@ def _compare_programs(
 
     Uses envelope program refs for exact matching and structural/parametric
     hashes for semantic matching.
-
-    Parameters
-    ----------
-    envelope_a : ExecutionEnvelope
-        Baseline envelope.
-    envelope_b : ExecutionEnvelope
-        Candidate envelope.
-
-    Returns
-    -------
-    ProgramComparison
-        Detailed comparison with status, exact_match, structural_match,
-        parametric_match, executed hashes, and hash availability.
     """
     # Exact match: compare artifact digests from envelope refs
     digests_a: list[str] = []
@@ -412,7 +420,8 @@ def _compare_programs(
         ]
         digests_b = sorted(set(logical_digests_b + physical_digests_b))
 
-    exact_match = digests_a == digests_b and len(digests_a) > 0
+    # Exact match: identical digests (including both empty = both have no programs)
+    exact_match = digests_a == digests_b
 
     # Extract hashes from envelope program snapshot
     hash_a: str | None = None
@@ -446,11 +455,10 @@ def _compare_programs(
             hash_available = False
 
     # Structural match: same circuit structure (ignores parameter values)
-    structural_match = False
+    # Both empty = match (no programs to compare)
+    structural_match = exact_match  # Start with exact_match (handles empty case)
     if hash_a and hash_b:
         structural_match = hash_a == hash_b
-    elif exact_match:
-        structural_match = True
 
     # Parametric match: same structure AND same parameter values
     parametric_match = False
@@ -498,6 +506,46 @@ def _compare_programs(
     )
 
 
+def _compute_tvd_for_item_pair(
+    counts_a: dict[str, int],
+    counts_b: dict[str, int],
+    *,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> tuple[float, NoiseContext | None]:
+    """
+    Compute TVD and optional noise context for a pair of counts.
+
+    Returns
+    -------
+    tuple
+        (tvd, noise_context) where noise_context may be None if not requested.
+    """
+    probs_a = normalize_counts(counts_a)
+    probs_b = normalize_counts(counts_b)
+    tvd = total_variation_distance(probs_a, probs_b)
+
+    noise_ctx = None
+    if include_noise_context:
+        noise_ctx = compute_noise_context(
+            counts_a,
+            counts_b,
+            tvd,
+            n_boot=noise_n_boot,
+            alpha=noise_alpha,
+            seed=noise_seed,
+        )
+
+    return tvd, noise_ctx
+
+
+# =============================================================================
+# Core: Envelope-only comparison
+# =============================================================================
+
+
 def diff_contexts(
     ctx_a: RunContext,
     ctx_b: RunContext,
@@ -532,7 +580,7 @@ def diff_contexts(
     item_index : int or "all", default=0
         Which result item(s) to use for TVD computation:
         - int: Use specific item index
-        - "all": Aggregate across all items (worst case: max TVD, min p_value)
+        - "all": Aggregate across all items (worst case: max TVD)
     noise_alpha : float, default=0.95
         Quantile level for noise_p95 threshold (0.99 for stricter CI).
     noise_n_boot : int, default=1000
@@ -554,12 +602,12 @@ def diff_contexts(
     logger.info("Comparing runs: %s vs %s", ctx_a.run_id, ctx_b.run_id)
 
     # Extract metadata from envelopes
-    project_a = _extract_project(envelope_a)
-    project_b = _extract_project(envelope_b)
-    backend_a = _extract_backend_name(envelope_a)
-    backend_b = _extract_backend_name(envelope_b)
-    fingerprint_a = _extract_fingerprint(envelope_a)
-    fingerprint_b = _extract_fingerprint(envelope_b)
+    project_a = extract_project(envelope_a)
+    project_b = extract_project(envelope_b)
+    backend_a = extract_backend_name(envelope_a)
+    backend_b = extract_backend_name(envelope_b)
+    fingerprint_a = extract_fingerprint(envelope_a)
+    fingerprint_b = extract_fingerprint(envelope_b)
 
     result = ComparisonResult(
         run_id_a=ctx_a.run_id,
@@ -568,10 +616,31 @@ def diff_contexts(
         fingerprint_b=fingerprint_b,
     )
 
-    # Metadata comparison
+    # Metadata comparison with proper warnings for missing data
+    project_match: bool | None = None
+    backend_match: bool | None = None
+
+    if project_a and project_b:
+        project_match = project_a == project_b
+    elif project_a or project_b:
+        # One has project, other doesn't - warn and treat as mismatch
+        project_match = False
+        result.warnings.append(
+            f"Project metadata incomplete: baseline={project_a!r}, candidate={project_b!r}"
+        )
+    # else: both None - no project info, match=None (unknown)
+
+    if backend_a and backend_b:
+        backend_match = backend_a == backend_b
+    elif backend_a or backend_b:
+        backend_match = False
+        result.warnings.append(
+            f"Backend metadata incomplete: baseline={backend_a!r}, candidate={backend_b!r}"
+        )
+
     result.metadata = {
-        "project_match": project_a == project_b if project_a and project_b else True,
-        "backend_match": backend_a == backend_b if backend_a and backend_b else True,
+        "project_match": project_match if project_match is not None else True,
+        "backend_match": backend_match if backend_match is not None else True,
         "project_a": project_a,
         "project_b": project_b,
         "backend_a": backend_a,
@@ -596,13 +665,13 @@ def diff_contexts(
         )
 
     # Parameter comparison
-    params_a = _extract_params(envelope_a)
-    params_b = _extract_params(envelope_b)
+    params_a = extract_params(envelope_a)
+    params_b = extract_params(envelope_b)
     result.params = _diff_dict(params_a, params_b)
 
     # Metrics comparison
-    metrics_a = _extract_metrics(envelope_a)
-    metrics_b = _extract_metrics(envelope_b)
+    metrics_a = extract_metrics(envelope_a)
+    metrics_b = extract_metrics(envelope_b)
     result.metrics = _diff_dict(metrics_a, metrics_b)
 
     # Program comparison
@@ -623,8 +692,8 @@ def diff_contexts(
     )
 
     # Device drift analysis
-    snapshot_a = _get_device_snapshot(envelope_a)
-    snapshot_b = _get_device_snapshot(envelope_b)
+    snapshot_a = get_device_snapshot(envelope_a)
+    snapshot_b = get_device_snapshot(envelope_b)
 
     if snapshot_a is None:
         result.warnings.append("Baseline envelope missing device snapshot")
@@ -641,79 +710,31 @@ def diff_contexts(
 
     # Results comparison (TVD)
     if item_index == "all":
-        # Aggregate across all items - worst case approach
-        all_counts_a = _get_all_counts_from_envelope(envelope_a)
-        all_counts_b = _get_all_counts_from_envelope(envelope_b)
-
-        if all_counts_a and all_counts_b:
-            # Check for batch size mismatch
-            len_a, len_b = len(all_counts_a), len(all_counts_b)
-            if len_a != len_b:
-                result.warnings.append(
-                    f"Batch size mismatch: baseline has {len_a} items, "
-                    f"candidate has {len_b} items. TVD comparison skipped."
-                )
-                result.tvd = None
-            else:
-                # Use first item for result.counts_a/b (representative)
-                result.counts_a = all_counts_a[0] if all_counts_a else None
-                result.counts_b = all_counts_b[0] if all_counts_b else None
-
-                # Compute TVD per item pair and take worst case
-                max_tvd = 0.0
-                worst_noise_ctx = None
-
-                for idx in range(len_a):
-                    ca, cb = all_counts_a[idx], all_counts_b[idx]
-                    probs_a = normalize_counts(ca)
-                    probs_b = normalize_counts(cb)
-                    tvd = total_variation_distance(probs_a, probs_b)
-
-                    if include_noise_context:
-                        noise_ctx = compute_noise_context(
-                            ca,
-                            cb,
-                            tvd,
-                            n_boot=noise_n_boot,
-                            alpha=noise_alpha,
-                            seed=noise_seed + idx,
-                        )
-                        if tvd > max_tvd:
-                            max_tvd = tvd
-                            worst_noise_ctx = noise_ctx
-                    else:
-                        max_tvd = max(max_tvd, tvd)
-
-                result.tvd = max_tvd
-                result.noise_context = worst_noise_ctx
-        else:
-            result.tvd = None
+        _compute_tvd_all_items(
+            result,
+            envelope_a,
+            envelope_b,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
     else:
-        # Single item comparison
-        result.counts_a = _get_counts_from_envelope(envelope_a, item_index)
-        result.counts_b = _get_counts_from_envelope(envelope_b, item_index)
-
-        if result.counts_a is not None and result.counts_b is not None:
-            probs_a = normalize_counts(result.counts_a)
-            probs_b = normalize_counts(result.counts_b)
-            result.tvd = total_variation_distance(probs_a, probs_b)
-
-            if include_noise_context:
-                result.noise_context = compute_noise_context(
-                    result.counts_a,
-                    result.counts_b,
-                    result.tvd,
-                    n_boot=noise_n_boot,
-                    alpha=noise_alpha,
-                    seed=noise_seed,
-                )
-
-            logger.debug("TVD: %.6f", result.tvd)
+        _compute_tvd_single_item(
+            result,
+            envelope_a,
+            envelope_b,
+            item_index=item_index,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
 
     # Circuit diff
     if include_circuit_diff:
-        summary_a = _extract_circuit_summary(envelope_a, ctx_a.store)
-        summary_b = _extract_circuit_summary(envelope_b, ctx_b.store)
+        summary_a = extract_circuit_summary(envelope_a, ctx_a.store)
+        summary_b = extract_circuit_summary(envelope_b, ctx_b.store)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
         elif not result.program.matches(ProgramMatchMode.EITHER):
@@ -721,8 +742,8 @@ def diff_contexts(
                 "Programs differ but circuit data not available for comparison."
             )
 
-    # Determine overall identity
-    tvd_match = result.tvd == 0.0 if result.tvd is not None else True
+    # Determine overall identity (with tolerance for TVD)
+    tvd_match = result.tvd is None or result.tvd <= _TVD_TOLERANCE
     drift_ok = not (result.device_drift and result.device_drift.significant_drift)
 
     result.identical = (
@@ -743,6 +764,116 @@ def diff_contexts(
     return result
 
 
+def _compute_tvd_single_item(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    item_index: int,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """Compute TVD for a single item index."""
+    result.counts_a = get_counts_from_envelope(envelope_a, item_index)
+    result.counts_b = get_counts_from_envelope(envelope_b, item_index)
+
+    if result.counts_a is not None and result.counts_b is not None:
+        result.tvd, result.noise_context = _compute_tvd_for_item_pair(
+            result.counts_a,
+            result.counts_b,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
+        logger.debug("TVD: %.6f", result.tvd)
+
+
+def _compute_tvd_all_items(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """
+    Compute TVD across all items using worst-case (max TVD) approach.
+
+    IMPORTANT: Keeps counts_a/b consistent with the item that produced max TVD.
+    This fixes the bug where counts were from the first item but TVD was from
+    the worst item.
+    """
+    all_counts_a = get_all_counts_from_envelope(envelope_a)
+    all_counts_b = get_all_counts_from_envelope(envelope_b)
+
+    if not all_counts_a or not all_counts_b:
+        result.tvd = None
+        return
+
+    # Check for batch size mismatch
+    len_a, len_b = len(all_counts_a), len(all_counts_b)
+    if len_a != len_b:
+        result.warnings.append(
+            f"Batch size mismatch: baseline has {len_a} items, "
+            f"candidate has {len_b} items. TVD comparison skipped."
+        )
+        result.tvd = None
+        return
+
+    # Find worst case (max TVD) - track EVERYTHING together
+    # Use >= to ensure we always have a valid worst case (even if TVD=0)
+    worst_tvd: float | None = None
+    worst_counts_a: dict[str, int] | None = None
+    worst_counts_b: dict[str, int] | None = None
+    worst_noise_ctx: NoiseContext | None = None
+    worst_item_idx: int | None = None
+
+    for i in range(len_a):
+        idx_a, ca = all_counts_a[i]
+        idx_b, cb = all_counts_b[i]
+
+        tvd, noise_ctx = _compute_tvd_for_item_pair(
+            ca,
+            cb,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed + i,
+        )
+
+        # Use >= to ensure we always have a valid worst case (fixes TVD=0 bug)
+        if worst_tvd is None or tvd >= worst_tvd:
+            worst_tvd = tvd
+            worst_counts_a = ca
+            worst_counts_b = cb
+            worst_noise_ctx = noise_ctx
+            worst_item_idx = i
+
+    # Set result with consistent data from worst item
+    result.tvd = worst_tvd
+    result.counts_a = worst_counts_a
+    result.counts_b = worst_counts_b
+    result.noise_context = worst_noise_ctx
+
+    if worst_item_idx is not None and len_a > 1:
+        logger.debug(
+            "Worst TVD %.6f found at item pair %d (of %d pairs)",
+            worst_tvd or 0.0,
+            worst_item_idx,
+            len_a,
+        )
+
+
+# =============================================================================
+# Adapters: RunRecord to RunContext conversion
+# =============================================================================
+
+
 def diff_runs(
     run_a: RunRecord,
     run_b: RunRecord,
@@ -761,8 +892,7 @@ def diff_runs(
     Compare two run records comprehensively.
 
     Resolves ExecutionEnvelope for each run and delegates to diff_contexts
-    for envelope-only comparison. This function provides the familiar
-    RunRecord-based API for backward compatibility.
+    for envelope-only comparison.
 
     Parameters
     ----------
@@ -815,6 +945,11 @@ def diff_runs(
     )
 
 
+# =============================================================================
+# Bundle loading helpers
+# =============================================================================
+
+
 class _BundleContext:
     """Context manager for loading run records from bundles."""
 
@@ -864,6 +999,11 @@ def load_from_bundle(path: Path) -> Iterator[tuple[RunRecord, ObjectStoreProtoco
         yield ctx.__enter__()
     finally:
         ctx.__exit__(None, None, None)
+
+
+# =============================================================================
+# High-level API: diff by reference (run_id, path, or bundle)
+# =============================================================================
 
 
 def diff(

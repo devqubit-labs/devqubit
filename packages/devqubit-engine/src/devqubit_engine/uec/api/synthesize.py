@@ -15,6 +15,10 @@ Synthesized envelopes have limitations:
 - ``metadata.manual_run=True`` marks as manual (if no adapter)
 - ``program.structural_hash`` computed from artifact digests (not circuit structure)
 - ``program.parametric_hash`` is None (engine cannot compute)
+
+Synthesized envelopes include ``metadata.devqubit`` namespace with params,
+metrics, project, and fingerprints extracted from RunRecord for compare
+module compatibility.
 """
 
 from __future__ import annotations
@@ -501,6 +505,87 @@ def _build_result(
     )
 
 
+def _build_devqubit_metadata(record: "RunRecord") -> dict[str, Any]:
+    """
+    Build devqubit namespace metadata from RunRecord.
+
+    This extracts params, metrics, project, and fingerprints from the
+    RunRecord to populate envelope.metadata.devqubit for compare module
+    compatibility.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record to extract metadata from.
+
+    Returns
+    -------
+    dict
+        Devqubit namespace metadata with params, metrics, project, fingerprints.
+    """
+    devqubit: dict[str, Any] = {}
+
+    # Extract params from record["data"]["params"]
+    data = record.record.get("data") or {}
+    params = data.get("params")
+    if params and isinstance(params, dict):
+        devqubit["params"] = params
+
+    # Extract metrics from record["data"]["metrics"]
+    metrics = data.get("metrics")
+    if metrics and isinstance(metrics, dict):
+        devqubit["metrics"] = metrics
+
+    # Extract project from record["project"]
+    # Handle both string and dict {"name": ...} formats
+    project = record.record.get("project")
+    if project:
+        if isinstance(project, dict):
+            project_name = project.get("name")
+            if project_name:
+                devqubit["project"] = project_name
+        else:
+            devqubit["project"] = project
+
+    # Build fingerprints from artifacts (if available)
+    # For synthesized envelopes, we compute a simple fingerprint from
+    # program artifact digests + backend + shots
+    fingerprints: dict[str, str] = {}
+
+    # Compute run fingerprint from stable inputs
+    fingerprint_parts: list[str] = []
+
+    # Add program digests
+    program_digests = sorted(
+        art.digest for art in record.artifacts if art.role == "program" and art.digest
+    )
+    if program_digests:
+        fingerprint_parts.extend(program_digests)
+
+    # Add backend name
+    backend = record.record.get("backend") or {}
+    if isinstance(backend, dict) and backend.get("name"):
+        fingerprint_parts.append(f"backend:{backend['name']}")
+
+    # Add shots
+    execute = record.record.get("execute") or {}
+    shots = execute.get("shots") if isinstance(execute, dict) else None
+    if shots is None:
+        shots = params.get("shots") if params else None
+    if shots is not None:
+        fingerprint_parts.append(f"shots:{shots}")
+
+    if fingerprint_parts:
+        combined = "|".join(str(p) for p in fingerprint_parts)
+        run_fingerprint = hashlib.sha256(combined.encode()).hexdigest()[:16]
+        fingerprints["run"] = run_fingerprint
+
+    if fingerprints:
+        devqubit["fingerprints"] = fingerprints
+
+    return devqubit
+
+
 def synthesize_envelope(
     record: "RunRecord",
     store: "ObjectStoreProtocol",
@@ -533,11 +618,16 @@ def synthesize_envelope(
     - ``program.structural_hash`` computed from artifact digests (not circuit structure)
     - ``program.parametric_hash`` is None (engine cannot compute)
 
+    Synthesized envelopes include ``metadata.devqubit`` namespace with
+    params, metrics, project, and fingerprints for compare module compatibility.
+
     Examples
     --------
     >>> envelope = synthesize_envelope(record, store)
     >>> envelope.metadata.get("synthesized_from_run")
     True
+    >>> envelope.metadata.get("devqubit", {}).get("project")
+    'my-project'
     """
     producer = _build_producer(record)
     device = _build_device(record)
@@ -564,6 +654,12 @@ def synthesize_envelope(
                     metadata["counts_format_assumed"] = True
                     break
 
+    # Add devqubit namespace for compare module compatibility
+    # This is critical for synthesized envelopes to work with diff/verify
+    devqubit = _build_devqubit_metadata(record)
+    if devqubit:
+        metadata["devqubit"] = devqubit
+
     envelope = ExecutionEnvelope.create(
         producer=producer,
         result=result,
@@ -574,10 +670,12 @@ def synthesize_envelope(
     )
 
     logger.debug(
-        "Synthesized envelope from run: run=%s, envelope_id=%s, manual=%s",
+        "Synthesized envelope from run: run=%s, envelope_id=%s, manual=%s, "
+        "has_devqubit=%s",
         record.run_id,
         envelope.envelope_id,
         is_manual,
+        bool(devqubit),
     )
 
     return envelope

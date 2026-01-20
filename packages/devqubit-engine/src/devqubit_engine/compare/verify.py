@@ -134,7 +134,9 @@ class VerifyPolicy:
     fingerprint_must_match : bool
         Require run fingerprints to match. Default is False.
     tvd_max : float or None
-        Maximum allowed TVD. If None, TVD is not checked.
+        Maximum allowed TVD (hard limit). If None, TVD is not checked.
+        When both tvd_max and noise_factor are set, the STRICTER (min)
+        threshold is used.
     noise_factor : float or None
         If set, fail if tvd > noise_factor * noise_p95.
         Uses bootstrap-calibrated noise_p95 threshold.
@@ -166,6 +168,9 @@ class VerifyPolicy:
 
     For strict production CI, consider using noise_alpha=0.99 combined with
     noise_factor=1.0 and noise_pvalue_cutoff=0.05.
+
+    When both tvd_max and noise_factor are set, the STRICTER threshold wins.
+    This ensures tvd_max acts as a true hard limit.
     """
 
     params_must_match: bool = True
@@ -312,12 +317,17 @@ def verify_contexts(
         ctx_baseline.run_id,
     )
 
+    # Determine if noise context is needed:
+    # - for noise_factor threshold calculation
+    # - for noise_pvalue_cutoff check
+    need_noise_context = bool(policy.noise_factor or policy.noise_pvalue_cutoff)
+
     # Core comparison via diff_contexts
     comparison = diff_contexts(
         ctx_baseline,
         ctx_candidate,
         include_circuit_diff=False,
-        include_noise_context=bool(policy.noise_factor),
+        include_noise_context=need_noise_context,
         noise_alpha=policy.noise_alpha,
         noise_n_boot=policy.noise_n_boot,
         noise_seed=policy.noise_seed if policy.noise_seed is not None else 12345,
@@ -363,16 +373,24 @@ def verify_contexts(
 
     # Check TVD threshold (with bootstrap-calibrated noise option)
     if comparison.tvd is not None:
-        effective_threshold = policy.tvd_max
+        effective_threshold: float | None = None
 
-        # Apply noise-aware threshold using bootstrap-calibrated p95
+        # Collect applicable thresholds
+        thresholds_to_apply: list[float] = []
+
+        # tvd_max is a hard limit
+        if policy.tvd_max is not None:
+            thresholds_to_apply.append(policy.tvd_max)
+
+        # noise-aware threshold using bootstrap-calibrated p95
         if policy.noise_factor and comparison.noise_context:
             noise_threshold = policy.noise_factor * comparison.noise_context.noise_p95
+            thresholds_to_apply.append(noise_threshold)
 
-            if effective_threshold is None:
-                effective_threshold = noise_threshold
-            else:
-                effective_threshold = max(effective_threshold, noise_threshold)
+        # Use the STRICTER (min) threshold when both are set
+        # This ensures tvd_max acts as a true hard limit
+        if thresholds_to_apply:
+            effective_threshold = min(thresholds_to_apply)
 
         if effective_threshold is not None and comparison.tvd > effective_threshold:
             # Check p-value cutoff if configured (reduces false positives)

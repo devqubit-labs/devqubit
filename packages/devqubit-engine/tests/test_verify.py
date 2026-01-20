@@ -190,6 +190,86 @@ class TestVerifyWorkflow:
 
         assert not result.ok
 
+    def test_tvd_max_is_hard_limit_over_noise_threshold(self, store, registry, config):
+        """tvd_max should be a hard limit even when noise_threshold is higher."""
+        # Create runs with TVD = 0.2
+        with track(project="threshold", config=config) as base:
+            base.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            base_id = base.run_id
+
+        with track(project="threshold", config=config) as cand:
+            cand.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 300, "11": 700}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            cand_id = cand.run_id
+
+        # tvd_max=0.1 should fail even if noise_factor would allow higher
+        # (noise_p95 for 1000 shots is ~0.03, so noise_factor=10 = 0.3)
+        # Old bug: max(0.1, 0.3) = 0.3, so TVD=0.2 would pass
+        # Fixed: min(0.1, 0.3) = 0.1, so TVD=0.2 fails
+        result = verify(
+            registry.load(base_id),
+            registry.load(cand_id),
+            store_baseline=store,
+            store_candidate=store,
+            policy=VerifyPolicy(
+                params_must_match=False,
+                program_must_match=False,
+                tvd_max=0.1,
+                noise_factor=10.0,  # Would give ~0.3 threshold
+            ),
+        )
+
+        assert not result.ok
+        assert any("tvd" in f.lower() for f in result.failures)
+
+    def test_noise_pvalue_cutoff_triggers_noise_context(self, store, registry, config):
+        """noise_pvalue_cutoff alone should trigger noise context computation."""
+        with track(project="pvalue", config=config) as base:
+            base.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            base_id = base.run_id
+
+        with track(project="pvalue", config=config) as cand:
+            cand.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 495, "11": 505}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            cand_id = cand.run_id
+
+        # Only noise_pvalue_cutoff, no noise_factor
+        # Old bug: noise_context not computed because noise_factor=None
+        result = verify(
+            registry.load(base_id),
+            registry.load(cand_id),
+            store_baseline=store,
+            store_candidate=store,
+            policy=VerifyPolicy(
+                params_must_match=False,
+                program_must_match=False,
+                tvd_max=0.001,  # Very strict
+                noise_pvalue_cutoff=0.05,  # Should trigger noise context
+            ),
+        )
+
+        # Should have noise_context computed for p-value check
+        assert result.comparison is not None
+        assert result.comparison.noise_context is not None
+
 
 class TestBaselineWorkflow:
     """Baseline management tests."""

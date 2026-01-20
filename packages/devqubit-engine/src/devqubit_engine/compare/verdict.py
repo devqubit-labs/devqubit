@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from devqubit_engine.circuit.summary import diff_summaries
-from devqubit_engine.compare.diff import RunContext, _extract_circuit_summary
+from devqubit_engine.compare.diff import RunContext, extract_circuit_summary
 from devqubit_engine.compare.results import ComparisonResult, Verdict, VerdictCategory
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
@@ -97,53 +97,81 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
     """
     Check if compilation changed (same program, different decomposition).
 
-    Detects significant changes (>20%) in depth or 2Q gate count,
-    in either direction (increase or decrease). Requires minimum
-    absolute change to avoid false positives on small circuits.
+    Uses a two-tier detection approach:
+    1. Primary: executed_*_hash mismatch when structural_match is True
+       (definitive signal that transpilation changed)
+    2. Secondary: significant changes (>20%) in depth or 2Q gate count
+       (evidence/explanation for what changed)
 
     Returns
     -------
     dict or None
         Evidence dict if compiler change detected, None otherwise.
     """
-    if not result.circuit_diff or result.circuit_diff.match:
-        return None
-
-    summary_a = result.circuit_diff.summary_a
-    summary_b = result.circuit_diff.summary_b
     evidence: dict[str, Any] = {}
 
-    # Check depth change (significant if > 20% AND abs delta >= 2)
-    if summary_a.depth > 0:
-        depth_delta = abs(summary_b.depth - summary_a.depth)
-        depth_ratio = summary_b.depth / summary_a.depth
-        if (
-            abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
-            and depth_delta >= _MIN_DEPTH_DELTA
-        ):
-            evidence["depth_change"] = _format_change(summary_a.depth, summary_b.depth)
+    # Primary detection: executed hashes differ while logical structure matches
+    # This is the most robust signal for compiler/transpiler changes
+    if result.program.structural_match and not result.program.executed_structural_match:
+        # Logical circuit is the same, but executed (physical) circuit differs
+        # This definitively indicates a compiler/transpiler change
+        evidence["executed_structural_hash_mismatch"] = True
+        evidence["logical_structural_hash_a"] = result.program.circuit_hash_a
+        evidence["logical_structural_hash_b"] = result.program.circuit_hash_b
+        evidence["executed_structural_hash_a"] = (
+            result.program.executed_structural_hash_a
+        )
+        evidence["executed_structural_hash_b"] = (
+            result.program.executed_structural_hash_b
+        )
 
-    # Check 2Q gate count change (significant if > 20% AND abs delta >= 5)
-    if summary_a.gate_count_2q > 0:
-        gate_delta = abs(summary_b.gate_count_2q - summary_a.gate_count_2q)
-        gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
-        if (
-            abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
-            and gate_delta >= _MIN_2Q_GATE_DELTA
-        ):
+        logger.debug(
+            "Compiler change detected via executed_structural_hash: "
+            "structural_match=%s, executed_structural_match=%s",
+            result.program.structural_match,
+            result.program.executed_structural_match,
+        )
+
+    # Secondary detection/evidence: circuit diff metrics
+    # This provides explanation of WHAT changed (depth, 2Q gates, etc.)
+    if result.circuit_diff and not result.circuit_diff.match:
+        summary_a = result.circuit_diff.summary_a
+        summary_b = result.circuit_diff.summary_b
+
+        # Check depth change (significant if > 20% AND abs delta >= 2)
+        if summary_a.depth > 0:
+            depth_delta = abs(summary_b.depth - summary_a.depth)
+            depth_ratio = summary_b.depth / summary_a.depth
+            if (
+                abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+                and depth_delta >= _MIN_DEPTH_DELTA
+            ):
+                evidence["depth_change"] = _format_change(
+                    summary_a.depth, summary_b.depth
+                )
+
+        # Check 2Q gate count change (significant if > 20% AND abs delta >= 5)
+        if summary_a.gate_count_2q > 0:
+            gate_delta = abs(summary_b.gate_count_2q - summary_a.gate_count_2q)
+            gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
+            if (
+                abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+                and gate_delta >= _MIN_2Q_GATE_DELTA
+            ):
+                evidence["gate_2q_change"] = _format_change(
+                    summary_a.gate_count_2q, summary_b.gate_count_2q
+                )
+        elif summary_b.gate_count_2q >= _MIN_2Q_GATE_DELTA:
+            # Went from 0 to significant non-zero 2Q gates
             evidence["gate_2q_change"] = _format_change(
                 summary_a.gate_count_2q, summary_b.gate_count_2q
             )
-    elif summary_b.gate_count_2q >= _MIN_2Q_GATE_DELTA:
-        # Went from 0 to significant non-zero 2Q gates
-        evidence["gate_2q_change"] = _format_change(
-            summary_a.gate_count_2q, summary_b.gate_count_2q
-        )
 
     if evidence:
         logger.debug("Compiler change detected: %s", evidence)
+        return evidence
 
-    return evidence if evidence else None
+    return None
 
 
 def _detect_device_drift(result: ComparisonResult) -> dict[str, Any] | None:
@@ -296,7 +324,7 @@ def build_verdict_contexts(
     Factors are checked in priority order:
 
     1. Program change (highest priority) - only if structural_match is False
-    2. Compiler change (if program unchanged)
+    2. Compiler change (if program unchanged) - via executed_*_hash or circuit diff
     3. Device drift
     4. Shot noise (only if no other factors)
     """
@@ -311,8 +339,8 @@ def build_verdict_contexts(
 
     # Ensure circuit diff is populated using envelope-based extraction
     if result.circuit_diff is None:
-        summary_a = _extract_circuit_summary(ctx_a.envelope, ctx_a.store)
-        summary_b = _extract_circuit_summary(ctx_b.envelope, ctx_b.store)
+        summary_a = extract_circuit_summary(ctx_a.envelope, ctx_a.store)
+        summary_b = extract_circuit_summary(ctx_b.envelope, ctx_b.store)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
 
