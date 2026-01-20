@@ -13,11 +13,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from devqubit_engine.compare.results import DriftResult, MetricDrift
-from devqubit_engine.uec.models.calibration import DeviceCalibration
-from devqubit_engine.uec.models.device import DeviceSnapshot
+
+
+if TYPE_CHECKING:
+    from devqubit_engine.uec.models.calibration import DeviceCalibration
+    from devqubit_engine.uec.models.device import DeviceSnapshot
 
 
 logger = logging.getLogger(__name__)
@@ -32,6 +35,10 @@ class DriftThresholds:
     When a metric changes by more than its threshold, it is flagged as
     significant drift.
 
+    Minimum absolute thresholds (min_abs_*) provide protection against
+    false positives when baseline values are small. A change must exceed
+    BOTH the relative threshold AND the absolute minimum to be flagged.
+
     Attributes
     ----------
     t1_us : float
@@ -42,12 +49,18 @@ class DriftThresholds:
         Threshold for readout error rate. Default is 0.20 (20%).
     q2_error : float
         Threshold for two-qubit gate error. Default is 0.20 (20%).
+    min_abs_readout_error : float
+        Minimum absolute change for readout error. Default is 0.003.
+    min_abs_q2_error : float
+        Minimum absolute change for 2Q gate error. Default is 0.001.
     """
 
     t1_us: float = 0.10
     t2_us: float = 0.10
     readout_error: float = 0.20
     q2_error: float = 0.20
+    min_abs_readout_error: float = 0.003
+    min_abs_q2_error: float = 0.001
 
     def get_threshold(self, metric: str) -> float | None:
         """
@@ -63,9 +76,26 @@ class DriftThresholds:
         float or None
             Threshold value, or None if metric not recognized.
         """
-        # Strip common prefixes
         key = metric.replace("median_", "").replace("2q_", "q2_")
         return getattr(self, key, None)
+
+    def get_min_abs(self, metric: str) -> float | None:
+        """
+        Get minimum absolute threshold for a metric name.
+
+        Parameters
+        ----------
+        metric : str
+            Metric name (e.g., "median_readout_error").
+
+        Returns
+        -------
+        float or None
+            Minimum absolute threshold, or None if not applicable.
+        """
+        key = metric.replace("median_", "").replace("2q_", "q2_")
+        min_abs_key = f"min_abs_{key}"
+        return getattr(self, min_abs_key, None)
 
     def to_dict(self) -> dict[str, float]:
         """
@@ -81,6 +111,8 @@ class DriftThresholds:
             "median_t2_us": self.t2_us,
             "median_readout_error": self.readout_error,
             "median_2q_error": self.q2_error,
+            "min_abs_readout_error": self.min_abs_readout_error,
+            "min_abs_q2_error": self.min_abs_q2_error,
         }
 
 
@@ -101,6 +133,7 @@ def _compute_metric_drift(
     val_a: float | None,
     val_b: float | None,
     threshold: float | None,
+    min_abs: float | None = None,
 ) -> MetricDrift:
     """
     Compute drift for a single metric.
@@ -114,7 +147,9 @@ def _compute_metric_drift(
     val_b : float or None
         Candidate value.
     threshold : float or None
-        Significance threshold.
+        Significance threshold (relative change).
+    min_abs : float or None
+        Minimum absolute change required (for error rate metrics).
 
     Returns
     -------
@@ -132,16 +167,21 @@ def _compute_metric_drift(
         return drift
 
     drift.delta = val_b - val_a
+    abs_delta = abs(drift.delta)
 
     if val_a != 0.0:
-        frac_change = abs(drift.delta / val_a)
+        frac_change = abs_delta / abs(val_a)
         drift.percent_change = frac_change * 100.0
         if threshold is not None:
-            drift.significant = frac_change > threshold
+            exceeds_rel = frac_change > threshold
+            exceeds_abs = min_abs is None or abs_delta > min_abs
+            drift.significant = exceeds_rel and exceeds_abs
     elif val_b != 0.0:
-        # val_a is zero but val_b is not
         drift.percent_change = float("inf")
-        drift.significant = True
+        if min_abs is not None:
+            drift.significant = abs_delta > min_abs
+        else:
+            drift.significant = True
 
     return drift
 
@@ -191,8 +231,9 @@ def compute_drift(
         val_a = getattr(cal_a, metric, None) if cal_a else None
         val_b = getattr(cal_b, metric, None) if cal_b else None
         threshold = thresholds.get_threshold(metric)
+        min_abs = thresholds.get_min_abs(metric)
 
-        drift = _compute_metric_drift(metric, val_a, val_b, threshold)
+        drift = _compute_metric_drift(metric, val_a, val_b, threshold, min_abs)
         result.metrics.append(drift)
 
         if drift.significant:
@@ -238,6 +279,8 @@ def compare_calibrations(
     dict
         Drift analysis result as dictionary.
     """
+    from devqubit_engine.uec.models.device import DeviceSnapshot
+
     snapshot_a = DeviceSnapshot(
         captured_at="",
         backend_name="",

@@ -11,6 +11,7 @@ import pytest
 from devqubit_engine.compare.diff import diff_runs
 from devqubit_engine.compare.drift import DriftThresholds, compute_drift
 from devqubit_engine.compare.results import ProgramComparison, ProgramMatchMode
+from devqubit_engine.storage.types import ArtifactRef
 from devqubit_engine.uec.models.calibration import DeviceCalibration
 from devqubit_engine.utils.distributions import (
     compute_noise_context,
@@ -100,6 +101,63 @@ class TestDiffRuns:
         assert parsed["run_a"] == "A"
         assert parsed["run_b"] == "B"
         assert "noise_context" in parsed
+
+    def test_runs_without_programs_are_identical(self, store, run_factory):
+        """Two runs with no program artifacts should be identical."""
+        run = run_factory(
+            run_id="NO_PROGRAM",
+            params={"shots": 1000},
+            # No program artifacts
+        )
+
+        result = diff_runs(run, run, store_a=store, store_b=store)
+
+        assert result.identical
+        assert result.program.exact_match  # [] == [] is True
+        assert result.program.structural_match
+
+    def test_item_index_all_keeps_counts_consistent_with_tvd(self, store, run_factory):
+        """item_index='all' should keep counts_a/b from worst TVD item."""
+        # Create batch counts artifact with multiple experiments
+        batch_a = {
+            "experiments": [
+                {"counts": {"00": 500, "11": 500}},  # TVD=0 with itself
+                {"counts": {"00": 100, "11": 900}},  # Different
+            ]
+        }
+        batch_b = {
+            "experiments": [
+                {"counts": {"00": 500, "11": 500}},  # TVD=0 (same as A)
+                {"counts": {"00": 900, "11": 100}},  # TVD=0.8 with A (worst)
+            ]
+        }
+
+        digest_a = store.put_bytes(json.dumps(batch_a).encode())
+        digest_b = store.put_bytes(json.dumps(batch_b).encode())
+
+        art_a = ArtifactRef(
+            kind="result.counts.json",
+            digest=digest_a,
+            media_type="application/json",
+            role="results",
+        )
+        art_b = ArtifactRef(
+            kind="result.counts.json",
+            digest=digest_b,
+            media_type="application/json",
+            role="results",
+        )
+
+        run_a = run_factory(run_id="BATCH_A", artifacts=[art_a])
+        run_b = run_factory(run_id="BATCH_B", artifacts=[art_b])
+
+        result = diff_runs(run_a, run_b, store_a=store, store_b=store, item_index="all")
+
+        # Worst TVD should be from item 1 (0.8), not item 0 (0.0)
+        assert result.tvd == pytest.approx(0.8)
+        # Counts should be from item 1, not item 0
+        assert result.counts_a == {"00": 100, "11": 900}
+        assert result.counts_b == {"00": 900, "11": 100}
 
 
 class TestTVD:
@@ -272,3 +330,15 @@ class TestProgramMatching:
         assert not comp.matches(ProgramMatchMode.EXACT)
         assert not comp.matches(ProgramMatchMode.STRUCTURAL)
         assert not comp.matches(ProgramMatchMode.EITHER)
+
+    def test_empty_programs_match(self):
+        """Two runs with no programs should match."""
+        comp = ProgramComparison(
+            exact_match=True,  # [] == []
+            structural_match=True,
+            digests_a=[],
+            digests_b=[],
+        )
+
+        assert comp.matches(ProgramMatchMode.EXACT)
+        assert comp.matches(ProgramMatchMode.EITHER)

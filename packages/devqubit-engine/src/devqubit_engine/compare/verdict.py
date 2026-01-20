@@ -16,10 +16,12 @@ import logging
 from typing import Any
 
 from devqubit_engine.circuit.summary import diff_summaries
-from devqubit_engine.compare.diff import _extract_circuit_summary
-from devqubit_engine.compare.results import ComparisonResult, Verdict, VerdictCategory
+from devqubit_engine.compare.context import RunContext, extract_circuit_summary
+from devqubit_engine.compare.results import ComparisonResult, Verdict
+from devqubit_engine.compare.types import VerdictCategory
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.uec.api.resolve import resolve_envelope
 from devqubit_engine.utils.distributions import compute_noise_context
 
 
@@ -28,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 # Threshold for significant compiler change (20% in either direction)
 _COMPILER_CHANGE_THRESHOLD = 0.20
+
+# Minimum absolute change requirements to avoid false positives on small circuits
+_MIN_DEPTH_DELTA = 2
+_MIN_2Q_GATE_DELTA = 5
 
 
 def _detect_program_change(result: ComparisonResult) -> dict[str, Any] | None:
@@ -47,20 +53,16 @@ def _detect_program_change(result: ComparisonResult) -> dict[str, Any] | None:
     dict or None
         Evidence dict if programs structurally differ, None if they match.
     """
-    # Exact match -> no change
     if result.program.exact_match:
         return None
 
     # Structural match -> NOT a program change (just parameter variation)
-    # This is critical for VQE/QAOA workflows where parameters change
-    # but the circuit structure remains identical
     if result.program.structural_match:
         logger.debug(
             "Program artifacts differ but structure matches (parameter variation)"
         )
         return None
 
-    # Neither exact nor structural match -> true program change
     logger.debug(
         "Program change detected: exact=%s, structural=%s",
         result.program.exact_match,
@@ -92,44 +94,76 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
     """
     Check if compilation changed (same program, different decomposition).
 
-    Detects significant changes (>20%) in depth or 2Q gate count,
-    in either direction (increase or decrease).
+    Uses a two-tier detection approach:
+    1. Primary: executed_*_hash mismatch when structural_match is True
+       (definitive signal that transpilation changed)
+    2. Secondary: significant changes (>20%) in depth or 2Q gate count
+       (evidence/explanation for what changed)
 
     Returns
     -------
     dict or None
         Evidence dict if compiler change detected, None otherwise.
     """
-    if not result.circuit_diff or result.circuit_diff.match:
-        return None
-
-    summary_a = result.circuit_diff.summary_a
-    summary_b = result.circuit_diff.summary_b
     evidence: dict[str, Any] = {}
 
-    # Check depth change (significant if > 20% in either direction)
-    if summary_a.depth > 0:
-        depth_ratio = summary_b.depth / summary_a.depth
-        if abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD:
-            evidence["depth_change"] = _format_change(summary_a.depth, summary_b.depth)
+    # Primary detection: executed hashes differ while logical structure matches
+    if result.program.structural_match and not result.program.executed_structural_match:
+        evidence["executed_structural_hash_mismatch"] = True
+        evidence["logical_structural_hash_a"] = result.program.circuit_hash_a
+        evidence["logical_structural_hash_b"] = result.program.circuit_hash_b
+        evidence["executed_structural_hash_a"] = (
+            result.program.executed_structural_hash_a
+        )
+        evidence["executed_structural_hash_b"] = (
+            result.program.executed_structural_hash_b
+        )
 
-    # Check 2Q gate count change
-    if summary_a.gate_count_2q > 0:
-        gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
-        if abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD:
+        logger.debug(
+            "Compiler change detected via executed_structural_hash: "
+            "structural_match=%s, executed_structural_match=%s",
+            result.program.structural_match,
+            result.program.executed_structural_match,
+        )
+
+    # Secondary detection/evidence: circuit diff metrics
+    if result.circuit_diff and not result.circuit_diff.match:
+        summary_a = result.circuit_diff.summary_a
+        summary_b = result.circuit_diff.summary_b
+
+        # Check depth change
+        if summary_a.depth > 0:
+            depth_delta = abs(summary_b.depth - summary_a.depth)
+            depth_ratio = summary_b.depth / summary_a.depth
+            if (
+                abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+                and depth_delta >= _MIN_DEPTH_DELTA
+            ):
+                evidence["depth_change"] = _format_change(
+                    summary_a.depth, summary_b.depth
+                )
+
+        # Check 2Q gate count change
+        if summary_a.gate_count_2q > 0:
+            gate_delta = abs(summary_b.gate_count_2q - summary_a.gate_count_2q)
+            gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
+            if (
+                abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+                and gate_delta >= _MIN_2Q_GATE_DELTA
+            ):
+                evidence["gate_2q_change"] = _format_change(
+                    summary_a.gate_count_2q, summary_b.gate_count_2q
+                )
+        elif summary_b.gate_count_2q >= _MIN_2Q_GATE_DELTA:
             evidence["gate_2q_change"] = _format_change(
                 summary_a.gate_count_2q, summary_b.gate_count_2q
             )
-    elif summary_b.gate_count_2q > 0:
-        # Went from 0 to non-zero 2Q gates
-        evidence["gate_2q_change"] = _format_change(
-            summary_a.gate_count_2q, summary_b.gate_count_2q
-        )
 
     if evidence:
         logger.debug("Compiler change detected: %s", evidence)
+        return evidence
 
-    return evidence if evidence else None
+    return None
 
 
 def _detect_device_drift(result: ComparisonResult) -> dict[str, Any] | None:
@@ -182,7 +216,6 @@ def _detect_shot_noise(result: ComparisonResult) -> dict[str, Any] | None:
 
     # Primary path: use bootstrap-calibrated thresholds
     if ctx.p_value is not None and ctx.noise_p95 > 0:
-        # If TVD exceeds p95 threshold AND p-value is low -> NOT noise
         if result.tvd > ctx.noise_p95 and ctx.p_value < 0.05:
             logger.debug(
                 "Difference exceeds noise threshold: tvd=%.4f > p95=%.4f, p=%.4f",
@@ -192,25 +225,20 @@ def _detect_shot_noise(result: ComparisonResult) -> dict[str, Any] | None:
             )
             return None
 
-        # Otherwise, consistent with noise
         logger.debug(
             "Difference consistent with shot noise: tvd=%.4f, p95=%.4f, p=%.4f",
             result.tvd,
             ctx.noise_p95,
             ctx.p_value,
         )
-
         return {
             "tvd": result.tvd,
             "noise_p95": ctx.noise_p95,
             "p_value": ctx.p_value,
-            "method": ctx.method,
-            "alpha": ctx.alpha,
-            "n_boot": ctx.n_boot,
-            "interpretation": "Consistent with sampling noise (bootstrap-calibrated)",
+            "interpretation": ctx.interpretation(),
         }
 
-    # Fallback: use ratio heuristic
+    # Fallback: use noise_ratio heuristic
     if ctx.noise_ratio >= 2.0:
         logger.debug("Difference exceeds noise ratio threshold: %.2fx", ctx.noise_ratio)
         return None
@@ -246,31 +274,31 @@ _VERDICT_INFO: dict[VerdictCategory, tuple[str, str]] = {
 }
 
 
-def build_verdict(
+# =============================================================================
+# Core: Envelope-only verdict building
+# =============================================================================
+
+
+def build_verdict_contexts(
     result: ComparisonResult,
-    run_a: RunRecord,
-    run_b: RunRecord,
-    store_a: ObjectStoreProtocol,
-    store_b: ObjectStoreProtocol,
+    ctx_a: RunContext,
+    ctx_b: RunContext,
 ) -> Verdict:
     """
-    Build regression verdict from comparison result.
+    Build regression verdict from comparison result using envelope-only data.
 
-    Analyzes the comparison result to identify the most likely root cause
-    of any differences and provides actionable recommendations.
+    This is the core verdict function operating entirely on RunContext
+    (envelope + store). All analysis (program change, compiler change, drift,
+    noise) is performed here without any RunRecord dependencies.
 
     Parameters
     ----------
     result : ComparisonResult
         Comparison result to analyze.
-    run_a : RunRecord
-        Baseline run record.
-    run_b : RunRecord
-        Candidate run record.
-    store_a : ObjectStoreProtocol
-        Object store for baseline artifacts.
-    store_b : ObjectStoreProtocol
-        Object store for candidate artifacts.
+    ctx_a : RunContext
+        Baseline context with resolved envelope.
+    ctx_b : RunContext
+        Candidate context with resolved envelope.
 
     Returns
     -------
@@ -282,19 +310,23 @@ def build_verdict(
     Factors are checked in priority order:
 
     1. Program change (highest priority) - only if structural_match is False
-    2. Compiler change (if program unchanged)
+    2. Compiler change (if program unchanged) - via executed_*_hash or circuit diff
     3. Device drift
     4. Shot noise (only if no other factors)
     """
     factors: list[str] = []
     all_evidence: dict[str, Any] = {}
 
-    logger.debug("Building verdict for comparison %s vs %s", run_a.run_id, run_b.run_id)
+    logger.debug(
+        "Building verdict for comparison %s vs %s",
+        ctx_a.run_id,
+        ctx_b.run_id,
+    )
 
-    # Ensure circuit diff is populated
+    # Ensure circuit diff is populated using envelope-based extraction
     if result.circuit_diff is None:
-        summary_a = _extract_circuit_summary(run_a, store_a)
-        summary_b = _extract_circuit_summary(run_b, store_b)
+        summary_a = extract_circuit_summary(ctx_a.envelope, ctx_a.store)
+        summary_b = extract_circuit_summary(ctx_b.envelope, ctx_b.store)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
 
@@ -373,7 +405,7 @@ def build_verdict(
             contributing_factors=factors,
         )
 
-    # Multiple factors - list in priority order
+    # Multiple factors
     logger.info("Multiple factors detected: %s", factors)
 
     return Verdict(
@@ -383,3 +415,57 @@ def build_verdict(
         action="Address factors in order: program > compiler > device",
         contributing_factors=factors,
     )
+
+
+# =============================================================================
+# Adapters: RunRecord to RunContext conversion
+# =============================================================================
+
+
+def build_verdict(
+    result: ComparisonResult,
+    run_a: RunRecord,
+    run_b: RunRecord,
+    store_a: ObjectStoreProtocol,
+    store_b: ObjectStoreProtocol,
+) -> Verdict:
+    """
+    Build regression verdict from comparison result.
+
+    This is an adapter function that converts RunRecord inputs to RunContext
+    and delegates to build_verdict_contexts. Use this when you have RunRecord
+    objects.
+
+    Parameters
+    ----------
+    result : ComparisonResult
+        Comparison result to analyze.
+    run_a : RunRecord
+        Baseline run record.
+    run_b : RunRecord
+        Candidate run record.
+    store_a : ObjectStoreProtocol
+        Object store for baseline artifacts.
+    store_b : ObjectStoreProtocol
+        Object store for candidate artifacts.
+
+    Returns
+    -------
+    Verdict
+        Root-cause verdict with evidence and suggested action.
+    """
+    envelope_a = resolve_envelope(run_a, store_a)
+    envelope_b = resolve_envelope(run_b, store_b)
+
+    ctx_a = RunContext(
+        run_id=run_a.run_id,
+        envelope=envelope_a,
+        store=store_a,
+    )
+    ctx_b = RunContext(
+        run_id=run_b.run_id,
+        envelope=envelope_b,
+        store=store_b,
+    )
+
+    return build_verdict_contexts(result, ctx_a, ctx_b)

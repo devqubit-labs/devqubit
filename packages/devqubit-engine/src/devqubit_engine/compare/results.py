@@ -12,95 +12,25 @@ by comparison and verification operations.
 from __future__ import annotations
 
 import json
-import logging
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.circuit.summary import CircuitDiff
-from devqubit_engine.utils.distributions import NoiseContext
-
-
-logger = logging.getLogger(__name__)
-
-
-class ProgramMatchMode(str, Enum):
-    """
-    Program matching mode for verification.
-
-    Attributes
-    ----------
-    EXACT : str
-        Require artifact digest equality (strict reproducibility).
-        Use when you need byte-for-byte identical circuits.
-    STRUCTURAL : str
-        Require circuit_hash (structure) equality (variational-friendly).
-        Use for Variational Circuits where parameter values differ but structure is same.
-    EITHER : str
-        Pass if exact OR structural match (recommended default).
-        Detects true program changes without breaking variational workflows.
-    """
-
-    EXACT = "exact"
-    STRUCTURAL = "structural"
-    EITHER = "either"
+from devqubit_engine.compare.types import (
+    FormatOptions,
+    ProgramMatchMode,
+    ProgramMatchStatus,
+    VerdictCategory,
+)
 
 
-class VerdictCategory(str, Enum):
-    """
-    Root-cause categories for verification regression.
-
-    Attributes
-    ----------
-    PROGRAM_CHANGED : str
-        The quantum program (circuit) has changed.
-    COMPILER_CHANGED : str
-        Same circuit compiled differently (depth/2Q gates changed).
-    DEVICE_DRIFT : str
-        Device calibration has drifted significantly.
-    SHOT_NOISE : str
-        Difference is consistent with statistical sampling noise.
-    MIXED : str
-        Multiple contributing factors detected.
-    UNKNOWN : str
-        No clear root cause identified.
-    """
-
-    PROGRAM_CHANGED = "PROGRAM_CHANGED"
-    COMPILER_CHANGED = "COMPILER_CHANGED"
-    DEVICE_DRIFT = "DEVICE_DRIFT"
-    SHOT_NOISE = "SHOT_NOISE"
-    MIXED = "MIXED"
-    UNKNOWN = "UNKNOWN"
+if TYPE_CHECKING:
+    from devqubit_engine.circuit.summary import CircuitDiff
+    from devqubit_engine.utils.distributions import NoiseContext
 
 
-@dataclass
-class FormatOptions:
-    """
-    Formatting options for text reports.
-
-    Attributes
-    ----------
-    max_drifts : int
-        Maximum drift metrics to display. Default is 5.
-    max_circuit_changes : int
-        Maximum circuit changes to display. Default is 10.
-    max_param_changes : int
-        Maximum parameter changes to display. Default is 10.
-    max_metric_changes : int
-        Maximum metric changes to display. Default is 10.
-    show_evidence : bool
-        Show detailed evidence in verdicts. Default is True.
-    width : int
-        Line width for text output. Default is 70.
-    """
-
-    max_drifts: int = 5
-    max_circuit_changes: int = 10
-    max_param_changes: int = 10
-    max_metric_changes: int = 10
-    show_evidence: bool = True
-    width: int = 70
+# =============================================================================
+# Drift results
+# =============================================================================
 
 
 @dataclass
@@ -150,7 +80,6 @@ class MetricDrift:
         return d
 
     def __repr__(self) -> str:
-        """Return string representation."""
         sig = "!" if self.significant else ""
         return f"MetricDrift({self.metric}{sig}, {self.value_a} -> {self.value_b})"
 
@@ -217,11 +146,15 @@ class DriftResult:
         }
 
     def __repr__(self) -> str:
-        """Return string representation."""
         if not self.has_calibration_data:
             return "DriftResult(no_data)"
         status = "significant" if self.significant_drift else "within_threshold"
         return f"DriftResult({status}, {len(self.metrics)} metrics)"
+
+
+# =============================================================================
+# Verdict
+# =============================================================================
 
 
 @dataclass
@@ -260,33 +193,12 @@ class Verdict:
         }
 
     def __repr__(self) -> str:
-        """Return string representation."""
         return f"Verdict({self.category.value})"
 
 
-@dataclass
-class ProgramMatchStatus(str, Enum):
-    """
-    Detailed program match status.
-
-    Based on structural (structural_hash) and parametric (parametric_hash) comparison.
-
-    Attributes
-    ----------
-    FULL_MATCH : str
-        Both structural and parametric hashes match (identical execution).
-    STRUCTURAL_MATCH_PARAM_MISMATCH : str
-        Same circuit structure but different parameter values (VQE iteration).
-    STRUCTURAL_MISMATCH : str
-        Different circuit structure (different program).
-    HASH_UNAVAILABLE : str
-        Cannot determine - hashes not available (manual run).
-    """
-
-    FULL_MATCH = "FULL_MATCH"
-    STRUCTURAL_MATCH_PARAM_MISMATCH = "STRUCTURAL_MATCH_PARAM_MISMATCH"
-    STRUCTURAL_MISMATCH = "STRUCTURAL_MISMATCH"
-    HASH_UNAVAILABLE = "HASH_UNAVAILABLE"
+# =============================================================================
+# Program comparison
+# =============================================================================
 
 
 @dataclass
@@ -296,6 +208,7 @@ class ProgramComparison:
 
     Captures exact (digest), structural (structural_hash), and parametric
     (parametric_hash) matching to support different verification policies.
+    Also includes executed hashes for physical circuits (post-compilation).
 
     Attributes
     ----------
@@ -317,14 +230,28 @@ class ProgramComparison:
         Parametric hash from baseline.
     parametric_hash_b : str or None
         Parametric hash from candidate.
+    executed_structural_hash_a : str or None
+        Executed structural hash from baseline (physical circuit).
+    executed_structural_hash_b : str or None
+        Executed structural hash from candidate (physical circuit).
+    executed_parametric_hash_a : str or None
+        Executed parametric hash from baseline (physical circuit).
+    executed_parametric_hash_b : str or None
+        Executed parametric hash from candidate (physical circuit).
+    executed_structural_match : bool
+        True if executed structural hashes match.
+    executed_parametric_match : bool
+        True if executed parametric hashes match.
     hash_available : bool
         True if program hashes were available for comparison.
 
     Notes
     -----
     Hash semantics:
+
     - ``structural_hash``: Structure only. Same = same circuit template.
     - ``parametric_hash``: Structure + params. Same = identical execution.
+    - ``executed_*_hash``: Hashes for physical (compiled) circuits.
 
     For manual runs, hashes are unavailable and ``hash_available=False``.
     """
@@ -338,6 +265,12 @@ class ProgramComparison:
     circuit_hash_b: str | None = None
     parametric_hash_a: str | None = None
     parametric_hash_b: str | None = None
+    executed_structural_hash_a: str | None = None
+    executed_structural_hash_b: str | None = None
+    executed_parametric_hash_a: str | None = None
+    executed_parametric_hash_b: str | None = None
+    executed_structural_match: bool = False
+    executed_parametric_match: bool = False
     hash_available: bool = True
 
     @property
@@ -386,7 +319,7 @@ class ProgramComparison:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        d: dict[str, Any] = {
             "exact_match": self.exact_match,
             "structural_match": self.structural_match,
             "parametric_match": self.parametric_match,
@@ -400,31 +333,23 @@ class ProgramComparison:
             "parametric_hash_a": self.parametric_hash_a,
             "parametric_hash_b": self.parametric_hash_b,
         }
+        if self.executed_structural_hash_a or self.executed_structural_hash_b:
+            d["executed_structural_hash_a"] = self.executed_structural_hash_a
+            d["executed_structural_hash_b"] = self.executed_structural_hash_b
+            d["executed_structural_match"] = self.executed_structural_match
+        if self.executed_parametric_hash_a or self.executed_parametric_hash_b:
+            d["executed_parametric_hash_a"] = self.executed_parametric_hash_a
+            d["executed_parametric_hash_b"] = self.executed_parametric_hash_b
+            d["executed_parametric_match"] = self.executed_parametric_match
+        return d
 
     def __repr__(self) -> str:
-        """Return string representation."""
         return f"ProgramComparison({self.status.value})"
 
 
-def _format_header(title: str, width: int = 70, char: str = "=") -> list[str]:
-    """Format a section header."""
-    return [char * width, title, char * width]
-
-
-def _format_change(key: str, change: dict[str, Any]) -> str:
-    """Format a single parameter/metric change."""
-    val_a = change.get("a")
-    val_b = change.get("b")
-
-    # Calculate percentage change for numeric values
-    pct_str = ""
-    if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
-        if val_a != 0:
-            pct = ((val_b - val_a) / abs(val_a)) * 100
-            sign = "+" if pct > 0 else ""
-            pct_str = f" ({sign}{pct:.1f}%)"
-
-    return f"    {key}: {val_a} -> {val_b}{pct_str}"
+# =============================================================================
+# Comparison result
+# =============================================================================
 
 
 @dataclass
@@ -505,11 +430,9 @@ class ComparisonResult:
         return self.program.matches(mode)
 
     def __str__(self) -> str:
-        """Return formatted text report."""
         return self.format()
 
     def __repr__(self) -> str:
-        """Return string representation."""
         status = "identical" if self.identical else "differ"
         return f"<ComparisonResult {self.run_id_a} vs {self.run_id_b}: {status}>"
 
@@ -527,183 +450,9 @@ class ComparisonResult:
         str
             Formatted text report.
         """
-        if opts is None:
-            opts = FormatOptions()
+        from devqubit_engine.compare._formatting import format_comparison_result
 
-        lines = _format_header("RUN COMPARISON", opts.width)
-        lines.extend(
-            [
-                f"Baseline:  {self.run_id_a}",
-                f"Candidate: {self.run_id_b}",
-                "",
-                f"Overall: {'✓ IDENTICAL' if self.identical else '✗ DIFFER'}",
-            ]
-        )
-
-        # Metadata section
-        if self.metadata:
-            lines.extend(["", "-" * opts.width, "Metadata", "-" * opts.width])
-
-            project_match = self.metadata.get("project_match", True)
-            if project_match:
-                lines.append("  project: ✓")
-            else:
-                a = self.metadata.get("project_a", "?")
-                b = self.metadata.get("project_b", "?")
-                lines.append("  project: ✗")
-                lines.append(f"    {a} -> {b}")
-
-            backend_match = self.metadata.get("backend_match", True)
-            if backend_match:
-                lines.append("  backend: ✓")
-            else:
-                a = self.metadata.get("backend_a", "?")
-                b = self.metadata.get("backend_b", "?")
-                lines.append("  backend: ✗")
-                lines.append(f"    {a} -> {b}")
-
-        # Program section
-        lines.extend(["", "-" * opts.width, "Program", "-" * opts.width])
-        if self.program.exact_match:
-            prog_status = "✓ Match (exact)"
-        elif self.program.structural_match:
-            prog_status = "✓ Match (structural)"
-        else:
-            prog_status = "✗ Differ"
-        lines.append(f"  {prog_status}")
-
-        # Parameters section
-        if self.params:
-            lines.extend(["", "-" * opts.width, "Parameters", "-" * opts.width])
-            if self.params.get("match", False):
-                lines.append("  ✓ Match")
-            else:
-                changed = self.params.get("changed", {})
-                added = self.params.get("added", {})
-                removed = self.params.get("removed", {})
-                if changed:
-                    lines.append("  Changed:")
-                    for i, (k, v) in enumerate(changed.items()):
-                        if i >= opts.max_param_changes:
-                            lines.append(f"    ... and {len(changed) - i} more")
-                            break
-                        lines.append(_format_change(k, v))
-                if removed:
-                    lines.append("  Only in baseline:")
-                    for i, (k, v) in enumerate(removed.items()):
-                        if i >= opts.max_param_changes:
-                            lines.append(f"    ... and {len(removed) - i} more")
-                            break
-                        lines.append(f"    {k}: {v}")
-                if added:
-                    lines.append("  Only in candidate:")
-                    for i, (k, v) in enumerate(added.items()):
-                        if i >= opts.max_param_changes:
-                            lines.append(f"    ... and {len(added) - i} more")
-                            break
-                        lines.append(f"    {k}: {v}")
-
-        # Metrics section
-        if self.metrics:
-            lines.extend(["", "-" * opts.width, "Metrics", "-" * opts.width])
-            if self.metrics.get("match", True):
-                lines.append("  ✓ Match")
-            else:
-                changed = self.metrics.get("changed", {})
-                added = self.metrics.get("added", {})
-                removed = self.metrics.get("removed", {})
-                if changed:
-                    lines.append("  Changed:")
-                    for i, (k, v) in enumerate(changed.items()):
-                        if i >= opts.max_metric_changes:
-                            lines.append(f"    ... and {len(changed) - i} more")
-                            break
-                        lines.append(_format_change(k, v))
-                if removed:
-                    lines.append("  Only in baseline:")
-                    for i, (k, v) in enumerate(removed.items()):
-                        if i >= opts.max_metric_changes:
-                            lines.append(f"    ... and {len(removed) - i} more")
-                            break
-                        lines.append(f"    {k}: {v}")
-                if added:
-                    lines.append("  Only in candidate:")
-                    for i, (k, v) in enumerate(added.items()):
-                        if i >= opts.max_metric_changes:
-                            lines.append(f"    ... and {len(added) - i} more")
-                            break
-                        lines.append(f"    {k}: {v}")
-
-        # Device drift section
-        if self.device_drift and self.device_drift.has_calibration_data:
-            lines.extend(["", "-" * opts.width, "Device Calibration", "-" * opts.width])
-            if self.device_drift.calibration_time_changed:
-                lines.append("  Calibration times differ:")
-                lines.append(f"    Baseline:  {self.device_drift.calibration_time_a}")
-                lines.append(f"    Candidate: {self.device_drift.calibration_time_b}")
-            if self.device_drift.significant_drift:
-                lines.append("  ✗ Significant drift detected:")
-                for i, m in enumerate(self.device_drift.top_drifts):
-                    if i >= opts.max_drifts:
-                        lines.append(
-                            f"    ... and {len(self.device_drift.top_drifts) - i} more"
-                        )
-                        break
-                    pct = f"{m.percent_change:+.1f}%" if m.percent_change else "N/A"
-                    lines.append(f"    {m.metric}: {m.value_a} -> {m.value_b} ({pct})")
-            else:
-                lines.append("  ✓ Drift within thresholds")
-
-        # Results section (TVD + noise)
-        if self.tvd is not None or self.noise_context:
-            lines.extend(["", "-" * opts.width, "Results", "-" * opts.width])
-            if self.tvd is not None:
-                lines.append(f"  TVD: {self.tvd:.6f}")
-            if self.noise_context:
-                lines.append(
-                    f"  Expected noise: {self.noise_context.expected_noise:.6f}"
-                )
-                lines.append(f"  Noise ratio: {self.noise_context.noise_ratio:.2f}x")
-                lines.append(f"  Interpretation: {self.noise_context.interpretation()}")
-
-        # Circuit section
-        lines.extend(["", "-" * opts.width, "Circuit", "-" * opts.width])
-        if self.circuit_diff is None:
-            lines.append("  N/A (not captured)")
-        elif self.circuit_diff.match:
-            lines.append("  ✓ Match")
-        else:
-            lines.append("  ✗ Differ:")
-            if self.circuit_diff.changes:
-                if isinstance(self.circuit_diff.changes, dict):
-                    for i, (key, change) in enumerate(
-                        self.circuit_diff.changes.items()
-                    ):
-                        if i >= opts.max_circuit_changes:
-                            lines.append(
-                                f"    ... and {len(self.circuit_diff.changes) - i} more"
-                            )
-                            break
-                        lines.append(
-                            f"    {key}: {change.get('a')} -> {change.get('b')}"
-                        )
-                else:
-                    for i, change in enumerate(self.circuit_diff.changes):
-                        if i >= opts.max_circuit_changes:
-                            lines.append(
-                                f"    ... and {len(self.circuit_diff.changes) - i} more"
-                            )
-                            break
-                        lines.append(f"    {change}")
-
-        # Warnings section
-        if self.warnings:
-            lines.extend(["", "-" * opts.width, "Warnings", "-" * opts.width])
-            for w in self.warnings:
-                lines.append(f"  ! {w}")
-
-        lines.extend(["", "=" * opts.width])
-        return "\n".join(lines)
+        return format_comparison_result(self, opts)
 
     def format_json(self, indent: int = 2) -> str:
         """Format as JSON string."""
@@ -772,6 +521,11 @@ class ComparisonResult:
         return result
 
 
+# =============================================================================
+# Verification result
+# =============================================================================
+
+
 @dataclass
 class VerifyResult:
     """
@@ -804,11 +558,9 @@ class VerifyResult:
     verdict: Verdict | None = None
 
     def __str__(self) -> str:
-        """Return formatted text report."""
         return self.format()
 
     def __repr__(self) -> str:
-        """Return string representation."""
         status = "PASS" if self.ok else "FAIL"
         return f"<VerifyResult {self.candidate_run_id}: {status}>"
 
@@ -826,100 +578,9 @@ class VerifyResult:
         str
             Formatted text report.
         """
-        if opts is None:
-            opts = FormatOptions()
+        from devqubit_engine.compare._formatting import format_verify_result
 
-        lines = _format_header("VERIFICATION RESULT", opts.width)
-        lines.extend(
-            [
-                f"Baseline:  {self.baseline_run_id or 'N/A'}",
-                f"Candidate: {self.candidate_run_id}",
-                f"Duration:  {self.duration_ms:.1f}ms",
-                "",
-                f"Status: {'✓ PASSED' if self.ok else '✗ FAILED'}",
-            ]
-        )
-
-        # Failures section
-        if not self.ok and self.failures:
-            lines.extend(["", "-" * opts.width, "Failures", "-" * opts.width])
-            for failure in self.failures:
-                lines.append(f"  ✗ {failure}")
-
-        # Results section
-        if self.comparison:
-            comp = self.comparison
-            if comp.tvd is not None or comp.noise_context:
-                lines.extend(["", "-" * opts.width, "Results", "-" * opts.width])
-                if comp.tvd is not None:
-                    lines.append(f"  TVD: {comp.tvd:.6f}")
-                if comp.noise_context:
-                    lines.append(
-                        f"  Expected noise: {comp.noise_context.expected_noise:.6f}"
-                    )
-                    lines.append(
-                        f"  Noise ratio: {comp.noise_context.noise_ratio:.2f}x"
-                    )
-                    lines.append(
-                        f"  Interpretation: {comp.noise_context.interpretation()}"
-                    )
-
-            # Circuit section (only if differs)
-            if comp.circuit_diff and not comp.circuit_diff.match:
-                lines.extend(["", "-" * opts.width, "Circuit", "-" * opts.width])
-                lines.append("  ✗ Differ:")
-                if comp.circuit_diff.changes:
-                    if isinstance(comp.circuit_diff.changes, dict):
-                        for i, (key, change) in enumerate(
-                            comp.circuit_diff.changes.items()
-                        ):
-                            if i >= opts.max_circuit_changes:
-                                lines.append(
-                                    f"    ... and {len(comp.circuit_diff.changes) - i} more"
-                                )
-                                break
-                            lines.append(
-                                f"    {key}: {change.get('a')} -> {change.get('b')}"
-                            )
-                    else:
-                        for i, change in enumerate(comp.circuit_diff.changes):
-                            if i >= opts.max_circuit_changes:
-                                lines.append(
-                                    f"    ... and {len(comp.circuit_diff.changes) - i} more"
-                                )
-                                break
-                            lines.append(f"    {change}")
-
-            # Device drift section (only if significant)
-            if comp.device_drift and comp.device_drift.significant_drift:
-                lines.extend(
-                    ["", "-" * opts.width, "Device Calibration", "-" * opts.width]
-                )
-                lines.append("  ✗ Significant drift detected:")
-                for i, m in enumerate(comp.device_drift.top_drifts):
-                    if i >= opts.max_drifts:
-                        lines.append(
-                            f"    ... and {len(comp.device_drift.top_drifts) - i} more"
-                        )
-                        break
-                    pct = f"{m.percent_change:+.1f}%" if m.percent_change else "N/A"
-                    lines.append(f"    {m.metric}: {m.value_a} -> {m.value_b} ({pct})")
-
-        # Verdict section
-        if self.verdict:
-            lines.extend(
-                ["", "-" * opts.width, "Root Cause Analysis", "-" * opts.width]
-            )
-            lines.append(f"  Category: {self.verdict.category.value}")
-            lines.append(f"  Summary: {self.verdict.summary}")
-            lines.append(f"  Action: {self.verdict.action}")
-            if self.verdict.contributing_factors:
-                lines.append(
-                    f"  Factors: {', '.join(self.verdict.contributing_factors)}"
-                )
-
-        lines.extend(["", "=" * opts.width])
-        return "\n".join(lines)
+        return format_verify_result(self, opts)
 
     def format_json(self, indent: int = 2) -> str:
         """Format as JSON string."""

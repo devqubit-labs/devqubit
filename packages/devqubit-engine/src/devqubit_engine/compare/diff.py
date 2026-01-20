@@ -8,6 +8,16 @@ This module provides comprehensive comparison of quantum experiment runs,
 including parameter comparison, metrics comparison, program artifact comparison,
 device calibration drift analysis, result distribution comparison (TVD),
 sampling noise context, and circuit semantic comparison.
+
+The comparison logic operates entirely on ExecutionEnvelope (UEC) data.
+All run metadata (params, metrics, project, fingerprints) is extracted from
+envelope.metadata.devqubit namespace, ensuring consistent behavior across
+adapter and manual runs.
+
+Architecture
+------------
+- Core functions (diff_contexts) operate entirely on RunContext/envelope
+- Adapter functions (diff, diff_runs) handle RunRecord/registry/bundle IO
 """
 
 from __future__ import annotations
@@ -17,28 +27,30 @@ import math
 from contextlib import contextmanager
 from numbers import Real
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 from devqubit_engine.bundle.reader import Bundle, is_bundle_path
-from devqubit_engine.circuit.extractors import extract_circuit
-from devqubit_engine.circuit.summary import (
-    CircuitSummary,
-    diff_summaries,
-    summarize_circuit_data,
+from devqubit_engine.circuit.summary import diff_summaries
+from devqubit_engine.compare.context import (
+    RunContext,
+    extract_backend_name,
+    extract_circuit_summary,
+    extract_fingerprint,
+    extract_metrics,
+    extract_params,
+    extract_project,
+    get_all_counts_from_envelope,
+    get_counts_from_envelope,
+    get_device_snapshot,
 )
 from devqubit_engine.compare.drift import (
     DEFAULT_THRESHOLDS,
     DriftThresholds,
     compute_drift,
 )
-from devqubit_engine.compare.results import (
-    ComparisonResult,
-    ProgramComparison,
-    ProgramMatchMode,
-)
+from devqubit_engine.compare.results import ComparisonResult, ProgramComparison
+from devqubit_engine.compare.types import ProgramMatchMode
 from devqubit_engine.config import Config, get_config
-from devqubit_engine.storage.artifacts.counts import get_counts
-from devqubit_engine.storage.artifacts.lookup import get_artifact_digests
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import (
     ArtifactRef,
@@ -47,11 +59,9 @@ from devqubit_engine.storage.types import (
 )
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.api.resolve import resolve_envelope
-from devqubit_engine.uec.models.calibration import DeviceCalibration
-from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
-from devqubit_engine.uec.models.result import canonicalize_bitstrings
 from devqubit_engine.utils.distributions import (
+    NoiseContext,
     compute_noise_context,
     normalize_counts,
     total_variation_distance,
@@ -60,44 +70,30 @@ from devqubit_engine.utils.distributions import (
 
 logger = logging.getLogger(__name__)
 
+# Tolerance for TVD comparison (floating point precision)
+_TVD_TOLERANCE = 1e-12
+
+
+# =============================================================================
+# Internal comparison helpers
+# =============================================================================
+
 
 def _num_equal(a: Any, b: Any, tolerance: float) -> bool:
-    """
-    Compare two values with numeric tolerance.
+    """Compare two values with numeric tolerance."""
 
-    Handles bool, Real (including numpy types, Decimal), NaN, and Inf correctly.
-
-    Parameters
-    ----------
-    a : Any
-        First value.
-    b : Any
-        Second value.
-    tolerance : float
-        Tolerance for float comparison.
-
-    Returns
-    -------
-    bool
-        True if values are equal within tolerance.
-    """
-    # Booleans should not be compared as numbers
     if isinstance(a, bool) or isinstance(b, bool):
         return a == b
 
-    # Handle numeric types (including numpy.float64, Decimal, etc.)
     if isinstance(a, Real) and isinstance(b, Real):
         af, bf = float(a), float(b)
 
-        # NaN equals NaN for comparison purposes
         if math.isnan(af) and math.isnan(bf):
             return True
 
-        # Both NaN check failed, but one is NaN
         if math.isnan(af) or math.isnan(bf):
             return False
 
-        # Inf values must match exactly
         if math.isinf(af) or math.isinf(bf):
             return af == bf
 
@@ -113,15 +109,6 @@ def _diff_dict(
 ) -> dict[str, Any]:
     """
     Compute difference between two dictionaries.
-
-    Parameters
-    ----------
-    dict_a : dict
-        Baseline dictionary.
-    dict_b : dict
-        Candidate dictionary.
-    tolerance : float
-        Tolerance for float comparison.
 
     Returns
     -------
@@ -149,347 +136,88 @@ def _diff_dict(
     }
 
 
-def _extract_params(record: RunRecord) -> dict[str, Any]:
-    """Extract parameters from run record."""
-    data = record.record.get("data") or {}
-    if isinstance(data, dict):
-        return data.get("params", {}) or {}
-    return {}
-
-
-def _extract_metrics(record: RunRecord) -> dict[str, Any]:
-    """Extract metrics from run record."""
-    # Try direct metrics attribute
-    if hasattr(record, "metrics") and record.metrics:
-        return dict(record.metrics)
-
-    # Try record dict
-    record_data = record.record if hasattr(record, "record") else {}
-    if isinstance(record_data, dict):
-        if "metrics" in record_data and isinstance(record_data["metrics"], dict):
-            return dict(record_data["metrics"])
-        # Try data.metrics path
-        data = record_data.get("data", {})
-        if isinstance(data, dict) and "metrics" in data:
-            return dict(data["metrics"])
-
-    return {}
-
-
-def _extract_counts(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-    envelope: ExecutionEnvelope | None = None,
-    *,
-    canonicalize: bool = True,
-) -> dict[str, int] | None:
-    """
-    Extract counts from envelope or Run artifacts.
-
-    Uses UEC-first strategy: extracts counts from ExecutionEnvelope,
-    falling back to Run counts artifact only for synthesized (manual)
-    envelopes. For adapter envelopes, missing counts is reported as None.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record.
-    store : ObjectStoreProtocol
-        Object store.
-    envelope : ExecutionEnvelope, optional
-        Pre-resolved envelope. If None, will be resolved internally.
-    canonicalize : bool, default=True
-        Whether to canonicalize bitstrings to cbit0_right format.
-
-    Returns
-    -------
-    dict or None
-        Counts as {bitstring: count} in canonical format, or None if not available.
-    """
-    # Use provided envelope or resolve
-    if envelope is None:
-        envelope = resolve_envelope(record, store)
-
-    # Try to get counts from envelope (UEC-first)
-    if envelope.result.items:
-        item = envelope.result.items[0]
-        if item.counts:
-            raw_counts = item.counts.get("counts")
-            if isinstance(raw_counts, dict):
-                if canonicalize:
-                    format_info = item.counts.get("format", {})
-                    bit_order = format_info.get("bit_order", "cbit0_right")
-                    transformed = format_info.get("transformed", False)
-                    canonical = canonicalize_bitstrings(
-                        raw_counts,
-                        bit_order=bit_order,
-                        transformed=transformed,
-                    )
-                    return {k: int(v) for k, v in canonical.items()}
-                else:
-                    return {str(k): int(v) for k, v in raw_counts.items()}
-
-    # Fallback: Run counts artifact - ONLY for synthesized (manual) envelopes
-    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
-
-    if not is_synthesized:
-        # Adapter envelope without counts - this is an integration issue
-        logger.debug(
-            "Adapter envelope for run %s has no counts in result items",
-            record.run_id,
-        )
-        return None
-
-    # Manual/synthesized envelope - fallback to Run artifact is allowed
-    counts_info = get_counts(record, store)
-    if counts_info is None:
-        return None
-
-    # Canonicalize fallback counts (assume cbit0_right if not specified)
-    if canonicalize:
-        return canonicalize_bitstrings(
-            counts_info.counts,
-            bit_order="cbit0_right",
-            transformed=False,
-        )
-    return counts_info.counts
-
-
-def _load_device_snapshot(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-    envelope: ExecutionEnvelope | None = None,
-) -> DeviceSnapshot | None:
-    """
-    Load device snapshot from envelope or run record.
-
-    Uses UEC-first strategy: extracts device from ExecutionEnvelope,
-    falling back to Run record metadata only for synthesized (manual)
-    envelopes.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record to extract device snapshot from.
-    store : ObjectStoreProtocol
-        Object store for loading artifacts.
-    envelope : ExecutionEnvelope, optional
-        Pre-resolved envelope. If None, will be resolved internally.
-
-    Returns
-    -------
-    DeviceSnapshot or None
-        Device snapshot if available, None otherwise.
-
-    Notes
-    -----
-    Fallback to Run record metadata is only allowed for synthesized
-    (manual) envelopes. For adapter envelopes, if device is not present
-    in the envelope, None is returned.
-    """
-    # Use provided envelope or resolve
-    if envelope is None:
-        envelope = resolve_envelope(record, store)
-
-    # Get device from envelope (UEC-first)
-    if envelope.device is not None:
-        return envelope.device
-
-    # Fallback: construct from record metadata - ONLY for synthesized envelopes
-    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
-
-    if not is_synthesized:
-        # Adapter envelope without device - this may be intentional (no device info)
-        logger.debug(
-            "Adapter envelope for run %s has no device snapshot",
-            record.run_id,
-        )
-        return None
-
-    # Manual/synthesized envelope - fallback to Run record is allowed
-    backend = record.record.get("backend") or {}
-    if not isinstance(backend, dict):
-        return None
-
-    snapshot_summary = record.record.get("device_snapshot") or {}
-    if not isinstance(snapshot_summary, dict):
-        snapshot_summary = {}
-
-    calibration = None
-    cal_data = snapshot_summary.get("calibration")
-    if isinstance(cal_data, dict):
-        try:
-            calibration = DeviceCalibration.from_dict(cal_data)
-        except Exception as e:
-            logger.debug("Failed to parse calibration data: %s", e)
-
-    try:
-        return DeviceSnapshot(
-            captured_at=snapshot_summary.get("captured_at", record.created_at),
-            backend_name=backend.get("name", ""),
-            backend_type=backend.get("type", ""),
-            provider=backend.get("provider", ""),
-            num_qubits=snapshot_summary.get("num_qubits"),
-            connectivity=snapshot_summary.get("connectivity"),
-            native_gates=snapshot_summary.get("native_gates"),
-            calibration=calibration,
-        )
-    except Exception:
-        return None
-
-
-def _extract_circuit_summary(
-    record: RunRecord,
-    store: ObjectStoreProtocol,
-    envelope: ExecutionEnvelope | None = None,
-    *,
-    which: str = "logical",
-) -> CircuitSummary | None:
-    """
-    Extract circuit summary from envelope or run record.
-
-    Uses UEC-first strategy: extracts circuit from envelope refs, falling
-    back to run record artifacts only for synthesized (manual) envelopes.
-
-    Parameters
-    ----------
-    record : RunRecord
-        Run record for fallback extraction.
-    store : ObjectStoreProtocol
-        Object store for loading artifacts.
-    envelope : ExecutionEnvelope, optional
-        Pre-resolved envelope.
-    which : str, default="logical"
-        Which circuit to extract: "logical" or "physical".
-
-    Returns
-    -------
-    CircuitSummary or None
-        Extracted circuit summary, or None if not found.
-    """
-    from devqubit_engine.circuit.extractors import extract_circuit_from_envelope
-
-    circuit_data = None
-
-    # Try envelope first (UEC-first)
-    if envelope is not None:
-        circuit_data = extract_circuit_from_envelope(envelope, store, which=which)
-
-    # Fallback to Run artifacts - ONLY for synthesized (manual) envelopes
-    if circuit_data is None:
-        is_synthesized = envelope is not None and envelope.metadata.get(
-            "synthesized_from_run", False
-        )
-
-        if is_synthesized:
-            # Manual envelope - fallback is allowed
-            circuit_data = extract_circuit(record, store)
-        elif envelope is not None:
-            # Adapter envelope without circuit refs - log and return None
-            logger.debug(
-                "Adapter envelope for run %s has no circuit refs for '%s'",
-                record.run_id,
-                which,
-            )
-
-    if circuit_data is not None:
-        try:
-            return summarize_circuit_data(circuit_data)
-        except Exception as e:
-            logger.debug("Failed to summarize circuit: %s", e)
-
-    return None
-
-
 def _compare_programs(
-    run_a: RunRecord,
-    run_b: RunRecord,
-    envelope_a: ExecutionEnvelope | None = None,
-    envelope_b: ExecutionEnvelope | None = None,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
 ) -> ProgramComparison:
     """
-    Compare program artifacts between two runs.
+    Compare program artifacts between two envelopes.
 
-    Uses UEC-first strategy for structural and parametric hash comparison.
-    Computes exact (digest), structural (structural_hash), and parametric
-    (parametric_hash) matching.
-
-    Parameters
-    ----------
-    run_a : RunRecord
-        Baseline run.
-    run_b : RunRecord
-        Candidate run.
-    envelope_a : ExecutionEnvelope, optional
-        Pre-resolved envelope for run_a.
-    envelope_b : ExecutionEnvelope, optional
-        Pre-resolved envelope for run_b.
-
-    Returns
-    -------
-    ProgramComparison
-        Detailed comparison with status, exact_match, structural_match,
-        parametric_match, and hash availability.
+    Uses envelope program refs for exact matching and structural/parametric
+    hashes for semantic matching.
     """
-    # Exact match: prefer envelope refs if available (ignores auxiliary artifacts
-    # like diagrams), else fall back to all role=program artifacts
-    if envelope_a and envelope_a.program:
+    # Exact match: compare artifact digests from envelope refs
+    digests_a: list[str] = []
+    digests_b: list[str] = []
+
+    if envelope_a.program:
         logical_digests_a = [a.ref.digest for a in envelope_a.program.logical if a.ref]
         physical_digests_a = [
             a.ref.digest for a in envelope_a.program.physical if a.ref
         ]
         digests_a = sorted(set(logical_digests_a + physical_digests_a))
-    else:
-        digests_a = get_artifact_digests(run_a, role="program")
 
-    if envelope_b and envelope_b.program:
+    if envelope_b.program:
         logical_digests_b = [a.ref.digest for a in envelope_b.program.logical if a.ref]
         physical_digests_b = [
             a.ref.digest for a in envelope_b.program.physical if a.ref
         ]
         digests_b = sorted(set(logical_digests_b + physical_digests_b))
-    else:
-        digests_b = get_artifact_digests(run_b, role="program")
 
     exact_match = digests_a == digests_b
 
-    # Extract hashes from UEC (structural_hash and parametric_hash)
-    hash_a = None
-    hash_b = None
-    param_hash_a = None
-    param_hash_b = None
+    # Extract hashes from envelope program snapshot
+    hash_a: str | None = None
+    hash_b: str | None = None
+    param_hash_a: str | None = None
+    param_hash_b: str | None = None
+    exec_struct_hash_a: str | None = None
+    exec_struct_hash_b: str | None = None
+    exec_param_hash_a: str | None = None
+    exec_param_hash_b: str | None = None
     hash_available = True
 
-    if envelope_a and envelope_a.program:
+    if envelope_a.program:
         hash_a = envelope_a.program.structural_hash
         param_hash_a = envelope_a.program.parametric_hash
-    if envelope_b and envelope_b.program:
+        exec_struct_hash_a = envelope_a.program.executed_structural_hash
+        exec_param_hash_a = envelope_a.program.executed_parametric_hash
+
+    if envelope_b.program:
         hash_b = envelope_b.program.structural_hash
         param_hash_b = envelope_b.program.parametric_hash
+        exec_struct_hash_b = envelope_b.program.executed_structural_hash
+        exec_param_hash_b = envelope_b.program.executed_parametric_hash
 
     # Check if hashes are available (manual runs won't have them)
-    if (envelope_a and envelope_a.metadata.get("manual_run")) or (
-        envelope_b and envelope_b.metadata.get("manual_run")
-    ):
-        # At least one is manual run
+    is_manual_a = envelope_a.metadata.get("manual_run", False)
+    is_manual_b = envelope_b.metadata.get("manual_run", False)
+
+    if is_manual_a or is_manual_b:
         if not hash_a or not hash_b:
             hash_available = False
 
     # Structural match: same circuit structure (ignores parameter values)
-    structural_match = False
+    structural_match = exact_match
     if hash_a and hash_b:
         structural_match = hash_a == hash_b
-    elif exact_match:
-        # If exact match, structural also matches
-        structural_match = True
 
     # Parametric match: same structure AND same parameter values
     parametric_match = False
     if param_hash_a and param_hash_b:
         parametric_match = param_hash_a == param_hash_b
     elif exact_match:
-        # If exact match, parametric also matches
         parametric_match = True
+
+    # Executed hashes match (for physical circuits)
+    executed_structural_match = False
+    executed_parametric_match = False
+
+    if exec_struct_hash_a and exec_struct_hash_b:
+        executed_structural_match = exec_struct_hash_a == exec_struct_hash_b
+
+    if exec_param_hash_a and exec_param_hash_b:
+        executed_parametric_match = exec_param_hash_a == exec_param_hash_b
 
     if structural_match and not parametric_match:
         logger.debug(
@@ -510,48 +238,195 @@ def _compare_programs(
         circuit_hash_b=hash_b,
         parametric_hash_a=param_hash_a,
         parametric_hash_b=param_hash_b,
+        executed_structural_hash_a=exec_struct_hash_a,
+        executed_structural_hash_b=exec_struct_hash_b,
+        executed_parametric_hash_a=exec_param_hash_a,
+        executed_parametric_hash_b=exec_param_hash_b,
+        executed_structural_match=executed_structural_match,
+        executed_parametric_match=executed_parametric_match,
         hash_available=hash_available,
     )
 
 
-def diff_runs(
-    run_a: RunRecord,
-    run_b: RunRecord,
+def _compute_tvd_for_item_pair(
+    counts_a: dict[str, int],
+    counts_b: dict[str, int],
     *,
-    store_a: ObjectStoreProtocol,
-    store_b: ObjectStoreProtocol,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> tuple[float, NoiseContext | None]:
+    """
+    Compute TVD and optional noise context for a pair of counts.
+
+    Returns
+    -------
+    tuple
+        (tvd, noise_context) where noise_context may be None if not requested.
+    """
+    probs_a = normalize_counts(counts_a)
+    probs_b = normalize_counts(counts_b)
+    tvd = total_variation_distance(probs_a, probs_b)
+
+    noise_ctx = None
+    if include_noise_context:
+        noise_ctx = compute_noise_context(
+            counts_a,
+            counts_b,
+            tvd,
+            n_boot=noise_n_boot,
+            alpha=noise_alpha,
+            seed=noise_seed,
+        )
+
+    return tvd, noise_ctx
+
+
+def _compute_tvd_single_item(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    item_index: int,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """Compute TVD for a single item index."""
+    result.counts_a = get_counts_from_envelope(envelope_a, item_index)
+    result.counts_b = get_counts_from_envelope(envelope_b, item_index)
+
+    if result.counts_a is not None and result.counts_b is not None:
+        result.tvd, result.noise_context = _compute_tvd_for_item_pair(
+            result.counts_a,
+            result.counts_b,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
+        logger.debug("TVD: %.6f", result.tvd)
+
+
+def _compute_tvd_all_items(
+    result: ComparisonResult,
+    envelope_a: ExecutionEnvelope,
+    envelope_b: ExecutionEnvelope,
+    *,
+    include_noise_context: bool,
+    noise_alpha: float,
+    noise_n_boot: int,
+    noise_seed: int,
+) -> None:
+    """
+    Compute TVD across all items using worst-case (max TVD) approach.
+
+    Keeps counts_a/b consistent with the item that produced max TVD.
+    """
+    all_counts_a = get_all_counts_from_envelope(envelope_a)
+    all_counts_b = get_all_counts_from_envelope(envelope_b)
+
+    if not all_counts_a or not all_counts_b:
+        result.tvd = None
+        return
+
+    len_a, len_b = len(all_counts_a), len(all_counts_b)
+    if len_a != len_b:
+        result.warnings.append(
+            f"Batch size mismatch: baseline has {len_a} items, "
+            f"candidate has {len_b} items. TVD comparison skipped."
+        )
+        result.tvd = None
+        return
+
+    worst_tvd: float | None = None
+    worst_counts_a: dict[str, int] | None = None
+    worst_counts_b: dict[str, int] | None = None
+    worst_noise_ctx: NoiseContext | None = None
+    worst_item_idx: int | None = None
+
+    for i in range(len_a):
+        _, ca = all_counts_a[i]
+        _, cb = all_counts_b[i]
+
+        tvd, noise_ctx = _compute_tvd_for_item_pair(
+            ca,
+            cb,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed + i,
+        )
+
+        if worst_tvd is None or tvd >= worst_tvd:
+            worst_tvd = tvd
+            worst_counts_a = ca
+            worst_counts_b = cb
+            worst_noise_ctx = noise_ctx
+            worst_item_idx = i
+
+    result.tvd = worst_tvd
+    result.counts_a = worst_counts_a
+    result.counts_b = worst_counts_b
+    result.noise_context = worst_noise_ctx
+
+    if worst_item_idx is not None and len_a > 1:
+        logger.debug(
+            "Worst TVD %.6f found at item pair %d (of %d pairs)",
+            worst_tvd or 0.0,
+            worst_item_idx,
+            len_a,
+        )
+
+
+# =============================================================================
+# Core: Envelope-only comparison
+# =============================================================================
+
+
+def diff_contexts(
+    ctx_a: RunContext,
+    ctx_b: RunContext,
+    *,
     thresholds: DriftThresholds | None = None,
     include_circuit_diff: bool = True,
     include_noise_context: bool = True,
+    item_index: int | Literal["all"] = 0,
+    noise_alpha: float = 0.95,
+    noise_n_boot: int = 1000,
+    noise_seed: int = 12345,
 ) -> ComparisonResult:
     """
-    Compare two run records comprehensively.
+    Compare two run contexts comprehensively.
 
-    Uses UEC-first strategy: resolves ExecutionEnvelope for each run
-    and performs comparisons through the unified envelope structure.
-    This ensures consistent behavior whether runs were created with
-    adapters or manually.
-
-    Performs multi-dimensional comparison including metadata, parameters,
-    metrics, program artifacts, device calibration drift, and result
-    distributions.
+    This is the core comparison function operating entirely on envelope data.
+    All metadata (params, metrics, project, fingerprint) is extracted from
+    the envelope's metadata.devqubit namespace.
 
     Parameters
     ----------
-    run_a : RunRecord
-        Baseline run record.
-    run_b : RunRecord
-        Candidate run record.
-    store_a : ObjectStoreProtocol
-        Object store for baseline artifacts.
-    store_b : ObjectStoreProtocol
-        Object store for candidate artifacts.
+    ctx_a : RunContext
+        Baseline run context.
+    ctx_b : RunContext
+        Candidate run context.
     thresholds : DriftThresholds, optional
         Drift detection thresholds. Uses defaults if not provided.
     include_circuit_diff : bool, default=True
         Include semantic circuit comparison.
     include_noise_context : bool, default=True
         Include sampling noise context estimation.
+    item_index : int or "all", default=0
+        Which result item(s) to use for TVD computation:
+        - int: Use specific item index
+        - "all": Aggregate across all items (worst case: max TVD)
+    noise_alpha : float, default=0.95
+        Quantile level for noise_p95 threshold (0.99 for stricter CI).
+    noise_n_boot : int, default=1000
+        Number of bootstrap iterations for noise estimation.
+    noise_seed : int, default=12345
+        Random seed for reproducible noise estimation.
 
     Returns
     -------
@@ -561,27 +436,55 @@ def diff_runs(
     if thresholds is None:
         thresholds = DEFAULT_THRESHOLDS
 
-    logger.info("Comparing runs: %s vs %s", run_a.run_id, run_b.run_id)
+    envelope_a = ctx_a.envelope
+    envelope_b = ctx_b.envelope
 
-    # Resolve envelopes (UEC-first strategy, strict for adapters)
-    envelope_a = resolve_envelope(run_a, store_a)
-    envelope_b = resolve_envelope(run_b, store_b)
+    logger.info("Comparing runs: %s vs %s", ctx_a.run_id, ctx_b.run_id)
+
+    # Extract metadata from envelopes
+    project_a = extract_project(envelope_a)
+    project_b = extract_project(envelope_b)
+    backend_a = extract_backend_name(envelope_a)
+    backend_b = extract_backend_name(envelope_b)
+    fingerprint_a = extract_fingerprint(envelope_a)
+    fingerprint_b = extract_fingerprint(envelope_b)
 
     result = ComparisonResult(
-        run_id_a=run_a.run_id,
-        run_id_b=run_b.run_id,
-        fingerprint_a=run_a.run_fingerprint,
-        fingerprint_b=run_b.run_fingerprint,
+        run_id_a=ctx_a.run_id,
+        run_id_b=ctx_b.run_id,
+        fingerprint_a=fingerprint_a,
+        fingerprint_b=fingerprint_b,
     )
 
     # Metadata comparison
+    project_match: bool | None = None
+    backend_match: bool | None = None
+
+    if project_a and project_b:
+        project_match = project_a == project_b
+    elif project_a or project_b:
+        project_match = False
+        result.warnings.append(
+            f"Project metadata incomplete: baseline={project_a!r}, "
+            f"candidate={project_b!r}"
+        )
+
+    if backend_a and backend_b:
+        backend_match = backend_a == backend_b
+    elif backend_a or backend_b:
+        backend_match = False
+        result.warnings.append(
+            f"Backend metadata incomplete: baseline={backend_a!r}, "
+            f"candidate={backend_b!r}"
+        )
+
     result.metadata = {
-        "project_match": run_a.project == run_b.project,
-        "backend_match": run_a.backend_name == run_b.backend_name,
-        "project_a": run_a.project,
-        "project_b": run_b.project,
-        "backend_a": run_a.backend_name,
-        "backend_b": run_b.backend_name,
+        "project_match": project_match if project_match is not None else True,
+        "backend_match": backend_match if backend_match is not None else True,
+        "project_a": project_a,
+        "project_b": project_b,
+        "backend_a": backend_a,
+        "backend_b": backend_b,
         "envelope_a_synthesized": envelope_a.metadata.get(
             "synthesized_from_run", False
         ),
@@ -590,18 +493,29 @@ def diff_runs(
         ),
     }
 
+    # Batch result warning
+    num_items_a = len(envelope_a.result.items) if envelope_a.result else 0
+    num_items_b = len(envelope_b.result.items) if envelope_b.result else 0
+
+    if item_index != "all" and (num_items_a > 1 or num_items_b > 1):
+        result.warnings.append(
+            f"Batch results detected (items: a={num_items_a}, b={num_items_b}). "
+            f"Using item_index={item_index}. Consider using item_index='all' "
+            f"for comprehensive comparison."
+        )
+
     # Parameter comparison
-    params_a = _extract_params(run_a)
-    params_b = _extract_params(run_b)
+    params_a = extract_params(envelope_a)
+    params_b = extract_params(envelope_b)
     result.params = _diff_dict(params_a, params_b)
 
     # Metrics comparison
-    metrics_a = _extract_metrics(run_a)
-    metrics_b = _extract_metrics(run_b)
+    metrics_a = extract_metrics(envelope_a)
+    metrics_b = extract_metrics(envelope_b)
     result.metrics = _diff_dict(metrics_a, metrics_b)
 
-    # Program comparison (both exact and structural) - uses envelope
-    result.program = _compare_programs(run_a, run_b, envelope_a, envelope_b)
+    # Program comparison
+    result.program = _compare_programs(envelope_a, envelope_b)
 
     if result.program.structural_only_match:
         result.warnings.append(
@@ -610,16 +524,22 @@ def diff_runs(
         )
 
     logger.debug(
-        "Comparison: params_match=%s, metrics_match=%s, program_exact=%s, program_structural=%s",
+        "Comparison: params_match=%s, metrics_match=%s, "
+        "program_exact=%s, program_structural=%s",
         result.params.get("match"),
         result.metrics.get("match"),
         result.program.exact_match,
         result.program.structural_match,
     )
 
-    # Device drift analysis - uses envelope
-    snapshot_a = _load_device_snapshot(run_a, store_a, envelope_a)
-    snapshot_b = _load_device_snapshot(run_b, store_b, envelope_b)
+    # Device drift analysis
+    snapshot_a = get_device_snapshot(envelope_a)
+    snapshot_b = get_device_snapshot(envelope_b)
+
+    if snapshot_a is None:
+        result.warnings.append("Baseline envelope missing device snapshot")
+    if snapshot_b is None:
+        result.warnings.append("Candidate envelope missing device snapshot")
 
     if snapshot_a and snapshot_b:
         result.device_drift = compute_drift(snapshot_a, snapshot_b, thresholds)
@@ -629,35 +549,42 @@ def diff_runs(
                 "Results may not be directly comparable."
             )
 
-    # Results comparison (TVD) - uses envelope
-    result.counts_a = _extract_counts(run_a, store_a, envelope_a)
-    result.counts_b = _extract_counts(run_b, store_b, envelope_b)
-
-    if result.counts_a is not None and result.counts_b is not None:
-        probs_a = normalize_counts(result.counts_a)
-        probs_b = normalize_counts(result.counts_b)
-        result.tvd = total_variation_distance(probs_a, probs_b)
-
-        if include_noise_context:
-            result.noise_context = compute_noise_context(
-                result.counts_a, result.counts_b, result.tvd
-            )
-
-        logger.debug("TVD: %.6f", result.tvd)
+    # Results comparison (TVD)
+    if item_index == "all":
+        _compute_tvd_all_items(
+            result,
+            envelope_a,
+            envelope_b,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
+    else:
+        _compute_tvd_single_item(
+            result,
+            envelope_a,
+            envelope_b,
+            item_index=item_index,
+            include_noise_context=include_noise_context,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
+        )
 
     # Circuit diff
     if include_circuit_diff:
-        summary_a = _extract_circuit_summary(run_a, store_a, envelope_a)
-        summary_b = _extract_circuit_summary(run_b, store_b, envelope_b)
+        summary_a = extract_circuit_summary(envelope_a, ctx_a.store)
+        summary_b = extract_circuit_summary(envelope_b, ctx_b.store)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
         elif not result.program.matches(ProgramMatchMode.EITHER):
             result.warnings.append(
-                "Programs differ but circuit data not captured for comparison."
+                "Programs differ but circuit data not available for comparison."
             )
 
     # Determine overall identity
-    tvd_match = result.tvd == 0.0 if result.tvd is not None else True
+    tvd_match = result.tvd is None or result.tvd <= _TVD_TOLERANCE
     drift_ok = not (result.device_drift and result.device_drift.significant_drift)
 
     result.identical = (
@@ -676,6 +603,85 @@ def diff_runs(
     )
 
     return result
+
+
+# =============================================================================
+# Adapters: RunRecord to RunContext conversion
+# =============================================================================
+
+
+def diff_runs(
+    run_a: RunRecord,
+    run_b: RunRecord,
+    *,
+    store_a: ObjectStoreProtocol,
+    store_b: ObjectStoreProtocol,
+    thresholds: DriftThresholds | None = None,
+    include_circuit_diff: bool = True,
+    include_noise_context: bool = True,
+    item_index: int | Literal["all"] = 0,
+    noise_alpha: float = 0.95,
+    noise_n_boot: int = 1000,
+    noise_seed: int = 12345,
+) -> ComparisonResult:
+    """
+    Compare two run records comprehensively.
+
+    Resolves ExecutionEnvelope for each run and delegates to diff_contexts
+    for envelope-only comparison.
+
+    Parameters
+    ----------
+    run_a : RunRecord
+        Baseline run record.
+    run_b : RunRecord
+        Candidate run record.
+    store_a : ObjectStoreProtocol
+        Object store for baseline artifacts.
+    store_b : ObjectStoreProtocol
+        Object store for candidate artifacts.
+    thresholds : DriftThresholds, optional
+        Drift detection thresholds. Uses defaults if not provided.
+    include_circuit_diff : bool, default=True
+        Include semantic circuit comparison.
+    include_noise_context : bool, default=True
+        Include sampling noise context estimation.
+    item_index : int or "all", default=0
+        Which result item(s) to use for TVD computation.
+    noise_alpha : float, default=0.95
+        Quantile level for noise_p95 threshold.
+    noise_n_boot : int, default=1000
+        Number of bootstrap iterations.
+    noise_seed : int, default=12345
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    ComparisonResult
+        Complete comparison result with all analysis dimensions.
+    """
+    envelope_a = resolve_envelope(run_a, store_a)
+    envelope_b = resolve_envelope(run_b, store_b)
+
+    ctx_a = RunContext(run_id=run_a.run_id, envelope=envelope_a, store=store_a)
+    ctx_b = RunContext(run_id=run_b.run_id, envelope=envelope_b, store=store_b)
+
+    return diff_contexts(
+        ctx_a,
+        ctx_b,
+        thresholds=thresholds,
+        include_circuit_diff=include_circuit_diff,
+        include_noise_context=include_noise_context,
+        item_index=item_index,
+        noise_alpha=noise_alpha,
+        noise_n_boot=noise_n_boot,
+        noise_seed=noise_seed,
+    )
+
+
+# =============================================================================
+# Bundle loading helpers
+# =============================================================================
 
 
 class _BundleContext:
@@ -729,6 +735,11 @@ def load_from_bundle(path: Path) -> Iterator[tuple[RunRecord, ObjectStoreProtoco
         ctx.__exit__(None, None, None)
 
 
+# =============================================================================
+# High-level API: diff by reference (run_id, path, or bundle)
+# =============================================================================
+
+
 def diff(
     ref_a: str | Path,
     ref_b: str | Path,
@@ -738,6 +749,10 @@ def diff(
     thresholds: DriftThresholds | None = None,
     include_circuit_diff: bool = True,
     include_noise_context: bool = True,
+    item_index: int | Literal["all"] = 0,
+    noise_alpha: float = 0.95,
+    noise_n_boot: int = 1000,
+    noise_seed: int = 12345,
 ) -> ComparisonResult:
     """
     Compare two runs or bundles by reference.
@@ -761,6 +776,14 @@ def diff(
         Include semantic circuit comparison.
     include_noise_context : bool, default=True
         Include sampling noise context.
+    item_index : int or "all", default=0
+        Which result item(s) to use for TVD computation.
+    noise_alpha : float, default=0.95
+        Quantile level for noise_p95 threshold.
+    noise_n_boot : int, default=1000
+        Number of bootstrap iterations.
+    noise_seed : int, default=12345
+        Random seed for reproducibility.
 
     Returns
     -------
@@ -822,6 +845,10 @@ def diff(
             thresholds=thresholds,
             include_circuit_diff=include_circuit_diff,
             include_noise_context=include_noise_context,
+            item_index=item_index,
+            noise_alpha=noise_alpha,
+            noise_n_boot=noise_n_boot,
+            noise_seed=noise_seed,
         )
     finally:
         for ctx in bundle_contexts:
