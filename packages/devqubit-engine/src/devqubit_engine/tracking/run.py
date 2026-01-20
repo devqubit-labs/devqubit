@@ -126,6 +126,7 @@ def _synthesize_envelope_for_manual_run(
 
     - metadata.auto_generated=True
     - metadata.manual_run=True (set by synthesize_envelope)
+    - metadata.devqubit namespace with params, metrics, project, fingerprints
     - program.structural_hash computed from artifact digests (not circuit structure)
     - program.parametric_hash is None (engine cannot compute)
     """
@@ -136,11 +137,65 @@ def _synthesize_envelope_for_manual_run(
         temp_record = RunRecord(record=record, artifacts=artifacts)
         envelope = synthesize_envelope(temp_record, store)
         envelope.metadata["auto_generated"] = True
+
+        # Enrich with devqubit namespace
+        _enrich_envelope_devqubit_metadata(envelope, record)
+
         return envelope
 
     except Exception as e:
         logger.warning("Failed to synthesize envelope: %s", e)
         return None
+
+
+def _enrich_envelope_devqubit_metadata(
+    envelope: Any,
+    record: dict[str, Any],
+    fingerprints: dict[str, str] | None = None,
+) -> None:
+    """
+    Enrich envelope metadata with devqubit namespace.
+
+    Adds project, params, metrics, and fingerprints to envelope.metadata.devqubit
+    so that compare module can extract this data uniformly from envelopes.
+
+    Parameters
+    ----------
+    envelope : ExecutionEnvelope
+        Envelope to enrich.
+    record : dict
+        Run record dictionary containing project, params, metrics.
+    fingerprints : dict, optional
+        Pre-computed fingerprints. If None, will not be included.
+    """
+    # Extract data from record
+    project_data = record.get("project", {})
+    project_name = project_data.get("name") if isinstance(project_data, dict) else None
+
+    data = record.get("data", {}) or {}
+    params = data.get("params", {}) or {}
+    metrics = data.get("metrics", {}) or {}
+
+    # Build devqubit namespace
+    devqubit: dict[str, Any] = {}
+
+    if project_name:
+        devqubit["project"] = project_name
+
+    if params:
+        devqubit["params"] = dict(params)
+
+    if metrics:
+        devqubit["metrics"] = dict(metrics)
+
+    if fingerprints:
+        devqubit["fingerprints"] = dict(fingerprints)
+
+    # Only add if we have content
+    if devqubit:
+        if "devqubit" not in envelope.metadata:
+            envelope.metadata["devqubit"] = {}
+        envelope.metadata["devqubit"].update(devqubit)
 
 
 class Run:
@@ -1130,6 +1185,125 @@ class Run:
 
         self._pending_tracked_jobs.clear()
 
+    def _enrich_envelopes_with_devqubit(
+        self, fingerprints: dict[str, str] | None = None
+    ) -> None:
+        """
+        Enrich existing envelope artifacts with devqubit metadata.
+
+        For adapter runs, the envelope is created by the adapter without
+        devqubit namespace. This method loads existing envelopes, adds
+        the devqubit namespace (params, metrics, project, fingerprints),
+        and re-logs them.
+
+        For manual runs, the envelope was synthesized earlier without fingerprints
+        (since they're computed later in _finalize). This method adds the
+        fingerprints to the devqubit namespace.
+
+        Parameters
+        ----------
+        fingerprints : dict, optional
+            Pre-computed fingerprints to include in devqubit namespace.
+        """
+        from devqubit_engine.storage.artifacts.io import load_artifact_json
+        from devqubit_engine.uec.models.envelope import ExecutionEnvelope
+        from devqubit_engine.utils.common import is_manual_run_record
+
+        is_manual = is_manual_run_record(self.record)
+
+        # Find envelope artifacts
+        envelope_artifacts = []
+        with self._lock:
+            for idx, artifact in enumerate(self._artifacts):
+                if (
+                    artifact.role == "envelope"
+                    and artifact.kind == "devqubit.envelope.json"
+                ):
+                    envelope_artifacts.append((idx, artifact))
+
+        if not envelope_artifacts:
+            return
+
+        # Track indices to remove (in descending order for safe removal)
+        indices_to_remove = []
+
+        # Process each envelope
+        for orig_idx, artifact in envelope_artifacts:
+            try:
+                # Load envelope
+                envelope_data = load_artifact_json(artifact, self._store)
+                if not isinstance(envelope_data, dict):
+                    continue
+
+                envelope = ExecutionEnvelope.from_dict(envelope_data)
+
+                # Check current state
+                has_devqubit = "devqubit" in envelope.metadata
+                devqubit_ns = envelope.metadata.get("devqubit", {})
+                has_fingerprints = (
+                    isinstance(devqubit_ns, dict) and "fingerprints" in devqubit_ns
+                )
+
+                if is_manual:
+                    # Manual run: envelope already has devqubit namespace from synthesis
+                    # Just need to add fingerprints if not present
+                    if has_fingerprints or not fingerprints:
+                        continue  # Already has fingerprints or none to add
+                    if has_devqubit and isinstance(devqubit_ns, dict):
+                        envelope.metadata["devqubit"]["fingerprints"] = dict(
+                            fingerprints
+                        )
+                    else:
+                        # Shouldn't happen, but handle gracefully
+                        _enrich_envelope_devqubit_metadata(
+                            envelope, self.record, fingerprints
+                        )
+                else:
+                    # Adapter run: need full enrichment
+                    if has_devqubit and has_fingerprints:
+                        continue  # Already fully enriched
+                    if has_devqubit and fingerprints and not has_fingerprints:
+                        # Just add fingerprints
+                        envelope.metadata["devqubit"]["fingerprints"] = dict(
+                            fingerprints
+                        )
+                    else:
+                        # Full enrichment
+                        _enrich_envelope_devqubit_metadata(
+                            envelope, self.record, fingerprints
+                        )
+
+                # Re-log the enriched envelope
+                self.log_json(
+                    name="execution_envelope",
+                    obj=envelope.to_dict(),
+                    role="envelope",
+                    kind="devqubit.envelope.json",
+                )
+
+                # Mark old artifact for removal
+                indices_to_remove.append(orig_idx)
+
+                logger.debug(
+                    "Enriched envelope with devqubit metadata: run=%s, envelope_id=%s",
+                    self._run_id,
+                    envelope.envelope_id,
+                )
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to enrich envelope for run '%s': %s",
+                    self._run_id,
+                    e,
+                )
+
+        # Remove old artifacts in descending order to preserve indices
+        if indices_to_remove:
+            with self._lock:
+                for idx in sorted(indices_to_remove, reverse=True):
+                    if idx < len(self._artifacts):
+                        self._artifacts.pop(idx)
+
     def _finalize(self, success: bool = True) -> None:
         """
         Finalize the run record and persist it.
@@ -1159,6 +1333,15 @@ class Run:
         fingerprints = self._compute_fingerprints(run_record)
         with self._lock:
             self.record["fingerprints"] = fingerprints
+
+        # Enrich existing envelope with devqubit metadata (for adapter runs)
+        # Manual runs are enriched during synthesis
+        self._enrich_envelopes_with_devqubit(fingerprints)
+
+        # Re-serialize artifacts after enrichment
+        with self._lock:
+            self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
+            run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
 
         # Validate if enabled
         if self._config.validate:

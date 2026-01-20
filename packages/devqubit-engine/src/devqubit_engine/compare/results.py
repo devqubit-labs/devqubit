@@ -296,6 +296,7 @@ class ProgramComparison:
 
     Captures exact (digest), structural (structural_hash), and parametric
     (parametric_hash) matching to support different verification policies.
+    Also includes executed hashes for physical circuits (post-compilation).
 
     Attributes
     ----------
@@ -317,6 +318,18 @@ class ProgramComparison:
         Parametric hash from baseline.
     parametric_hash_b : str or None
         Parametric hash from candidate.
+    executed_structural_hash_a : str or None
+        Executed structural hash from baseline (physical circuit).
+    executed_structural_hash_b : str or None
+        Executed structural hash from candidate (physical circuit).
+    executed_parametric_hash_a : str or None
+        Executed parametric hash from baseline (physical circuit).
+    executed_parametric_hash_b : str or None
+        Executed parametric hash from candidate (physical circuit).
+    executed_structural_match : bool
+        True if executed structural hashes match.
+    executed_parametric_match : bool
+        True if executed parametric hashes match.
     hash_available : bool
         True if program hashes were available for comparison.
 
@@ -325,6 +338,7 @@ class ProgramComparison:
     Hash semantics:
     - ``structural_hash``: Structure only. Same = same circuit template.
     - ``parametric_hash``: Structure + params. Same = identical execution.
+    - ``executed_*_hash``: Hashes for physical (compiled) circuits.
 
     For manual runs, hashes are unavailable and ``hash_available=False``.
     """
@@ -338,6 +352,12 @@ class ProgramComparison:
     circuit_hash_b: str | None = None
     parametric_hash_a: str | None = None
     parametric_hash_b: str | None = None
+    executed_structural_hash_a: str | None = None
+    executed_structural_hash_b: str | None = None
+    executed_parametric_hash_a: str | None = None
+    executed_parametric_hash_b: str | None = None
+    executed_structural_match: bool = False
+    executed_parametric_match: bool = False
     hash_available: bool = True
 
     @property
@@ -386,7 +406,7 @@ class ProgramComparison:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        d: dict[str, Any] = {
             "exact_match": self.exact_match,
             "structural_match": self.structural_match,
             "parametric_match": self.parametric_match,
@@ -400,6 +420,16 @@ class ProgramComparison:
             "parametric_hash_a": self.parametric_hash_a,
             "parametric_hash_b": self.parametric_hash_b,
         }
+        # Include executed hashes if available
+        if self.executed_structural_hash_a or self.executed_structural_hash_b:
+            d["executed_structural_hash_a"] = self.executed_structural_hash_a
+            d["executed_structural_hash_b"] = self.executed_structural_hash_b
+            d["executed_structural_match"] = self.executed_structural_match
+        if self.executed_parametric_hash_a or self.executed_parametric_hash_b:
+            d["executed_parametric_hash_a"] = self.executed_parametric_hash_a
+            d["executed_parametric_hash_b"] = self.executed_parametric_hash_b
+            d["executed_parametric_match"] = self.executed_parametric_match
+        return d
 
     def __repr__(self) -> str:
         """Return string representation."""

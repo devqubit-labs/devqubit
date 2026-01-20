@@ -16,10 +16,11 @@ import logging
 from typing import Any
 
 from devqubit_engine.circuit.summary import diff_summaries
-from devqubit_engine.compare.diff import _extract_circuit_summary
+from devqubit_engine.compare.diff import RunContext, _extract_circuit_summary
 from devqubit_engine.compare.results import ComparisonResult, Verdict, VerdictCategory
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.uec.api.resolve import resolve_envelope
 from devqubit_engine.utils.distributions import compute_noise_context
 
 
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 
 # Threshold for significant compiler change (20% in either direction)
 _COMPILER_CHANGE_THRESHOLD = 0.20
+
+# Minimum absolute change requirements to avoid false positives on small circuits
+_MIN_DEPTH_DELTA = 2
+_MIN_2Q_GATE_DELTA = 5
 
 
 def _detect_program_change(result: ComparisonResult) -> dict[str, Any] | None:
@@ -93,7 +98,8 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
     Check if compilation changed (same program, different decomposition).
 
     Detects significant changes (>20%) in depth or 2Q gate count,
-    in either direction (increase or decrease).
+    in either direction (increase or decrease). Requires minimum
+    absolute change to avoid false positives on small circuits.
 
     Returns
     -------
@@ -107,21 +113,29 @@ def _detect_compiler_change(result: ComparisonResult) -> dict[str, Any] | None:
     summary_b = result.circuit_diff.summary_b
     evidence: dict[str, Any] = {}
 
-    # Check depth change (significant if > 20% in either direction)
+    # Check depth change (significant if > 20% AND abs delta >= 2)
     if summary_a.depth > 0:
+        depth_delta = abs(summary_b.depth - summary_a.depth)
         depth_ratio = summary_b.depth / summary_a.depth
-        if abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD:
+        if (
+            abs(depth_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+            and depth_delta >= _MIN_DEPTH_DELTA
+        ):
             evidence["depth_change"] = _format_change(summary_a.depth, summary_b.depth)
 
-    # Check 2Q gate count change
+    # Check 2Q gate count change (significant if > 20% AND abs delta >= 5)
     if summary_a.gate_count_2q > 0:
+        gate_delta = abs(summary_b.gate_count_2q - summary_a.gate_count_2q)
         gate_ratio = summary_b.gate_count_2q / summary_a.gate_count_2q
-        if abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD:
+        if (
+            abs(gate_ratio - 1.0) > _COMPILER_CHANGE_THRESHOLD
+            and gate_delta >= _MIN_2Q_GATE_DELTA
+        ):
             evidence["gate_2q_change"] = _format_change(
                 summary_a.gate_count_2q, summary_b.gate_count_2q
             )
-    elif summary_b.gate_count_2q > 0:
-        # Went from 0 to non-zero 2Q gates
+    elif summary_b.gate_count_2q >= _MIN_2Q_GATE_DELTA:
+        # Went from 0 to significant non-zero 2Q gates
         evidence["gate_2q_change"] = _format_change(
             summary_a.gate_count_2q, summary_b.gate_count_2q
         )
@@ -246,31 +260,31 @@ _VERDICT_INFO: dict[VerdictCategory, tuple[str, str]] = {
 }
 
 
-def build_verdict(
+# =============================================================================
+# Core: Envelope-only verdict building
+# =============================================================================
+
+
+def build_verdict_contexts(
     result: ComparisonResult,
-    run_a: RunRecord,
-    run_b: RunRecord,
-    store_a: ObjectStoreProtocol,
-    store_b: ObjectStoreProtocol,
+    ctx_a: RunContext,
+    ctx_b: RunContext,
 ) -> Verdict:
     """
-    Build regression verdict from comparison result.
+    Build regression verdict from comparison result using envelope-only data.
 
-    Analyzes the comparison result to identify the most likely root cause
-    of any differences and provides actionable recommendations.
+    This is the core verdict function operating entirely on RunContext
+    (envelope + store). All analysis (program change, compiler change, drift,
+    noise) is performed here without any RunRecord dependencies.
 
     Parameters
     ----------
     result : ComparisonResult
         Comparison result to analyze.
-    run_a : RunRecord
-        Baseline run record.
-    run_b : RunRecord
-        Candidate run record.
-    store_a : ObjectStoreProtocol
-        Object store for baseline artifacts.
-    store_b : ObjectStoreProtocol
-        Object store for candidate artifacts.
+    ctx_a : RunContext
+        Baseline context with resolved envelope.
+    ctx_b : RunContext
+        Candidate context with resolved envelope.
 
     Returns
     -------
@@ -289,12 +303,16 @@ def build_verdict(
     factors: list[str] = []
     all_evidence: dict[str, Any] = {}
 
-    logger.debug("Building verdict for comparison %s vs %s", run_a.run_id, run_b.run_id)
+    logger.debug(
+        "Building verdict for comparison %s vs %s",
+        ctx_a.run_id,
+        ctx_b.run_id,
+    )
 
-    # Ensure circuit diff is populated
+    # Ensure circuit diff is populated using envelope-based extraction
     if result.circuit_diff is None:
-        summary_a = _extract_circuit_summary(run_a, store_a)
-        summary_b = _extract_circuit_summary(run_b, store_b)
+        summary_a = _extract_circuit_summary(ctx_a.envelope, ctx_a.store)
+        summary_b = _extract_circuit_summary(ctx_b.envelope, ctx_b.store)
         if summary_a and summary_b:
             result.circuit_diff = diff_summaries(summary_a, summary_b)
 
@@ -383,3 +401,59 @@ def build_verdict(
         action="Address factors in order: program > compiler > device",
         contributing_factors=factors,
     )
+
+
+# =============================================================================
+# Adapters: RunRecord to RunContext conversion
+# =============================================================================
+
+
+def build_verdict(
+    result: ComparisonResult,
+    run_a: RunRecord,
+    run_b: RunRecord,
+    store_a: ObjectStoreProtocol,
+    store_b: ObjectStoreProtocol,
+) -> Verdict:
+    """
+    Build regression verdict from comparison result.
+
+    This is an adapter function that converts RunRecord inputs to RunContext
+    and delegates to build_verdict_contexts. Use this when you have RunRecord objects.
+
+    Parameters
+    ----------
+    result : ComparisonResult
+        Comparison result to analyze.
+    run_a : RunRecord
+        Baseline run record.
+    run_b : RunRecord
+        Candidate run record.
+    store_a : ObjectStoreProtocol
+        Object store for baseline artifacts.
+    store_b : ObjectStoreProtocol
+        Object store for candidate artifacts.
+
+    Returns
+    -------
+    Verdict
+        Root-cause verdict with evidence and suggested action.
+    """
+    # Resolve envelopes
+    envelope_a = resolve_envelope(run_a, store_a)
+    envelope_b = resolve_envelope(run_b, store_b)
+
+    # Create contexts
+    ctx_a = RunContext(
+        run_id=run_a.run_id,
+        envelope=envelope_a,
+        store=store_a,
+    )
+    ctx_b = RunContext(
+        run_id=run_b.run_id,
+        envelope=envelope_b,
+        store=store_b,
+    )
+
+    # Delegate to core
+    return build_verdict_contexts(result, ctx_a, ctx_b)
