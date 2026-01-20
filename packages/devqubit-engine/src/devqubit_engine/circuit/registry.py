@@ -18,6 +18,7 @@ Entry Point Groups
 from __future__ import annotations
 
 import logging
+import threading
 import traceback
 from dataclasses import dataclass
 from importlib.metadata import entry_points
@@ -158,7 +159,7 @@ class _Registry:
     Internal registry for circuit handlers.
 
     Provides lazy-loading of handlers from entry points with
-    caching and error tracking.
+    caching, error tracking, and thread safety.
     """
 
     def __init__(self) -> None:
@@ -167,6 +168,7 @@ class _Registry:
         self._summarizers: dict[SDK, CircuitSummarizerFunc] = {}
         self._errors: list[HandlerLoadError] = []
         self._loaded = False
+        self._lock = threading.RLock()
 
     def _get_entry_points(self, group: str) -> list[Any]:
         """Get entry points for a group, handling API differences."""
@@ -182,41 +184,51 @@ class _Registry:
         if self._loaded:
             return
 
-        self._loaded = True
-        self._errors.clear()
+        with self._lock:
+            # Double-check after acquiring lock
+            if self._loaded:
+                return
 
-        # Load loaders
-        for ep in self._get_entry_points("devqubit.circuit.loaders"):
-            self._load_handler(ep, self._loaders, "loader")
+            logger.debug("Loading handlers from entry points")
 
-        # Load serializers
-        for ep in self._get_entry_points("devqubit.circuit.serializers"):
-            self._load_handler(ep, self._serializers, "serializer")
+            self._errors.clear()
 
-        # Load summarizers
-        for ep in self._get_entry_points("devqubit.circuit.summarizers"):
-            try:
-                func = ep.load()
-                sdk = SDK(ep.name)
-                self._summarizers[sdk] = func
-                logger.debug("Loaded summarizer for %s", sdk.value)
-            except Exception as e:
-                error = HandlerLoadError(
-                    entry_point=f"{ep.name}={ep.value}",
-                    exc_type=type(e).__name__,
-                    message=str(e),
-                    traceback=traceback.format_exc(),
-                )
-                self._errors.append(error)
-                logger.warning("Failed to load summarizer %s: %s", ep.name, e)
+            # Load loaders
+            for ep in self._get_entry_points("devqubit.circuit.loaders"):
+                self._load_handler(ep, self._loaders, "loader")
 
-        logger.debug(
-            "Registry loaded: %d loaders, %d serializers, %d summarizers, %d errors",
-            len(self._loaders),
-            len(self._serializers),
-            len(self._summarizers),
-            len(self._errors),
-        )
+            # Load serializers
+            for ep in self._get_entry_points("devqubit.circuit.serializers"):
+                self._load_handler(ep, self._serializers, "serializer")
+
+            # Load summarizers
+            for ep in self._get_entry_points("devqubit.circuit.summarizers"):
+                try:
+                    func = ep.load()
+                    sdk = SDK(ep.name)
+                    self._summarizers[sdk] = func
+                    logger.debug("Loaded summarizer for %s", sdk.value)
+                except Exception as e:
+                    error = HandlerLoadError(
+                        entry_point=f"{ep.name}={ep.value}",
+                        exc_type=type(e).__name__,
+                        message=str(e),
+                        traceback=traceback.format_exc(),
+                    )
+                    self._errors.append(error)
+                    logger.warning(
+                        "Failed to load summarizer %s: %s", ep.name, e, exc_info=True
+                    )
+
+            self._loaded = True
+
+            logger.debug(
+                "Registry loaded: %d loaders, %d serializers, %d summarizers, %d errors",
+                len(self._loaders),
+                len(self._serializers),
+                len(self._summarizers),
+                len(self._errors),
+            )
 
     def _load_handler(
         self,
@@ -258,15 +270,18 @@ class _Registry:
                 traceback=traceback.format_exc(),
             )
             self._errors.append(error)
-            logger.warning("Failed to load %s %s: %s", handler_type, ep.name, e)
+            logger.warning(
+                "Failed to load %s %s: %s", handler_type, ep.name, e, exc_info=True
+            )
 
     def clear(self) -> None:
         """Clear all cached handlers and errors."""
-        self._loaders.clear()
-        self._serializers.clear()
-        self._summarizers.clear()
-        self._errors.clear()
-        self._loaded = False
+        with self._lock:
+            self._loaders.clear()
+            self._serializers.clear()
+            self._summarizers.clear()
+            self._errors.clear()
+            self._loaded = False
 
     def reload(self) -> None:
         """Force reload of all handlers from entry points."""
@@ -303,7 +318,7 @@ class _Registry:
         if loader := self._loaders.get(sdk):
             return loader
 
-        available = ", ".join(s.value for s in self._loaders) or "(none)"
+        available = ", ".join(sorted(s.value for s in self._loaders)) or "(none)"
         raise LoaderError(
             f"No loader for SDK '{sdk.value}'. Available: {available}. "
             f"Install the adapter package (e.g., pip install devqubit-{sdk.value})."
@@ -333,7 +348,7 @@ class _Registry:
         if serializer := self._serializers.get(sdk):
             return serializer
 
-        available = ", ".join(s.value for s in self._serializers) or "(none)"
+        available = ", ".join(sorted(s.value for s in self._serializers)) or "(none)"
         raise SerializerError(
             f"No serializer for SDK '{sdk.value}'. Available: {available}."
         )
@@ -396,13 +411,13 @@ class _Registry:
         -------
         dict
             Dictionary with 'loaders', 'serializers', and 'summarizers' keys,
-            each containing a list of available SDK values.
+            each containing a sorted list of available SDK values.
         """
         self._ensure_loaded()
         return {
-            "loaders": [s.value for s in self._loaders],
-            "serializers": [s.value for s in self._serializers],
-            "summarizers": [s.value for s in self._summarizers],
+            "loaders": sorted(s.value for s in self._loaders),
+            "serializers": sorted(s.value for s in self._serializers),
+            "summarizers": sorted(s.value for s in self._summarizers),
         }
 
 

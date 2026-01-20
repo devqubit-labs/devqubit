@@ -22,7 +22,9 @@ For circuits without parameters: ``parametric_hash == structural_hash``
 
 Encoding
 --------
+- Integers: "i:<decimal>" prefix preserves arbitrary precision
 - Floats: IEEE-754 binary64 big-endian hex
+- Booleans: "b:true" or "b:false"
 - Negative zero: normalized to positive zero
 - NaN: encoded as "nan"
 - Infinity: encoded as "inf" or "-inf"
@@ -85,10 +87,12 @@ def _encode_value(value: Any) -> str:
     """
     if value is None:
         return "__unbound__"
+    if isinstance(value, bool):
+        return f"b:{str(value).lower()}"
+    if isinstance(value, int):
+        return f"i:{value}"
     if isinstance(value, float):
         return _float_to_hex(value)
-    if isinstance(value, int):
-        return _float_to_hex(float(value))
     return str(value)
 
 
