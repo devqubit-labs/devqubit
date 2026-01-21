@@ -1,3 +1,4 @@
+\
 @ECHO OFF
 
 REM Minimal make.bat for Sphinx documentation

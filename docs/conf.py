@@ -1,63 +1,75 @@
 # Configuration file for Sphinx.
+# See Sphinx docs for details:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 from __future__ import annotations
 
-import json
 import tomllib
 from datetime import date
 from pathlib import Path
 
 
-# -- Project information -----------------------------------------------------
-
 project = "devqubit"
 author = "devqubit"
 copyright = f"{date.today().year}, {author}"
 
-# Try to read version from pyproject.toml (optional)
-ROOT = Path(__file__).resolve().parents[1]
-_pyproject = ROOT / "pyproject.toml"
-release = ""
-version = ""
-if _pyproject.exists():
-    try:
-        data = tomllib.loads(_pyproject.read_text(encoding="utf-8"))
-        release = str(data.get("project", {}).get("version", "")) or ""
-        version = release
-    except Exception:
-        release = ""
-        version = ""
+
+def _version_from_pyproject() -> str | None:
+    """Reads version from repository's pyproject.toml."""
+
+    repo_root = Path(__file__).resolve().parents[1]
+    pyproject_path = repo_root / "pyproject.toml"
+    if not pyproject_path.exists():
+        return None
+
+    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+
+    # PEP 621
+    proj = data.get("project", {})
+    v = proj.get("version")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+
+    # Poetry fallback (optional)
+    poetry = data.get("tool", {}).get("poetry", {})
+    v = poetry.get("version")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+
+    return None
 
 
-# -- General configuration ---------------------------------------------------
+# Read package version (robust fallback)
+release = _version_from_pyproject() or "0.0.0"
+version = release.split("+")[0]
 
 extensions = [
-    "sphinx.ext.intersphinx",
     "myst_parser",
     "sphinxcontrib.mermaid",
+    "sphinx.ext.intersphinx",
+    "sphinx.ext.autosectionlabel",
 ]
 
-templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+# Make section labels unique across pages
+autosectionlabel_prefix_document = True
 
-
-# -- MyST (Markdown) ---------------------------------------------------------
-
+# MyST (Markdown) configuration
 myst_enable_extensions = [
     "colon_fence",
+    "deflist",
+    "tasklist",
 ]
-myst_fence_as_directive = {
-    "mermaid",
-}
+myst_heading_anchors = 3  # auto-generate anchors for h1-h3
 
+# Treat ```mermaid fences as Sphinx directives
+myst_fence_as_directive = ["mermaid"]
 
-# -- Options for HTML output -------------------------------------------------
+templates_path: list[str] = []
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
-html_static_path = ["_static"]
-html_css_files = [
-    "css/mermaid.css",
-]
+# HTML output
+html_theme = "sphinx_rtd_theme"
+html_static_path: list[str] = []
 
 # Show "Edit on GitHub"
 html_context = {
@@ -68,44 +80,6 @@ html_context = {
     "conf_py_path": "/docs/",
 }
 
-
-# -- Intersphinx -------------------------------------------------------------
-
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
-
-
-# -- Mermaid (sphinxcontrib-mermaid) ----------------------------------------
-
-mermaid_output_format = "raw"  # keep diagrams interactive in HTML
-
-# Nice UX on ReadTheDocs
-mermaid_d3_zoom = True
-mermaid_fullscreen = True
-mermaid_fullscreen_button_opacity = 35
-
-# Global Mermaid "house style" (applies to all diagrams)
-_mermaid_config = {
-    "startOnLoad": True,
-    "securityLevel": "loose",
-    "theme": "base",
-    "flowchart": {
-        "curve": "basis",
-        "nodeSpacing": 36,
-        "rankSpacing": 44,
-        "htmlLabels": True,
-    },
-    "themeVariables": {
-        "fontFamily": "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif",
-        "fontSize": "14px",
-        "background": "#ffffff",
-        "textColor": "#0f172a",
-        "lineColor": "#94a3b8",
-        "clusterBkg": "#f8fafc",
-        "clusterBorder": "#cbd5e1",
-        "edgeLabelBackground": "#ffffff",
-    },
-}
-
-mermaid_init_js = f"mermaid.initialize({json.dumps(_mermaid_config)});"
