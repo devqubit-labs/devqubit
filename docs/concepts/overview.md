@@ -17,6 +17,21 @@ devqubit treats each execution as a **run** — a complete, tracked experiment w
 When you wrap a backend with `run.wrap()`, devqubit intercepts executions and automatically captures circuits, device state, and results. Manual logging (`log_param`, `log_metric`) is stored alongside. Everything flows into a content-addressed store for deduplication and integrity, with queryable metadata in a registry.
 
 ```mermaid
+%%{init:{
+  "theme":"base",
+  "flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":44,"htmlLabels":true},
+  "themeVariables":{
+    "fontFamily":"ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif",
+    "fontSize":"14px",
+    "background":"#ffffff",
+    "textColor":"#0f172a",
+    "lineColor":"#94a3b8",
+    "clusterBkg":"#f8fafc",
+    "clusterBorder":"#cbd5e1",
+    "edgeLabelBackground":"#ffffff"
+  }
+}}%%
+
 flowchart TB
   subgraph USER["User Code"]
     direction TB
@@ -62,10 +77,19 @@ flowchart TB
   REG --> TOOLS
   STORE --> TOOLS
 
-  style USER fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
-  style CAPTURE fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
-  style PERSIST fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
-  style TOOLS fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#5b21b6
+  linkStyle default stroke:#94a3b8,stroke-width:1.4
+
+  %% Subgraphy jako “sekcje” + białe karty w środku
+  style USER fill:#eff6ff,stroke:#2563eb,stroke-width:1.6,color:#0f172a
+  style CAPTURE fill:#fffbeb,stroke:#d97706,stroke-width:1.6,color:#0f172a
+  style PERSIST fill:#ecfdf5,stroke:#059669,stroke-width:1.6,color:#064e3b
+  style TOOLS fill:#f5f3ff,stroke:#7c3aed,stroke-width:1.6,color:#3b0764
+
+  classDef card fill:#ffffff,stroke:#cbd5e1,stroke-width:1.2,color:#0f172a;
+  class TRACK,LOG,WRAP,EXEC,CAP_PRG,CAP_DEV,CAP_RES,ENV,RR,DIFF,VERIFY card
+  classDef pill fill:#ffffff,stroke:#cbd5e1,stroke-width:1.2,color:#0f172a;
+  class STORE,REG pill
+
 ```
 
 ## What Is Persisted Where?
@@ -93,6 +117,21 @@ A run captures everything about a single experiment execution. Run records follo
 ## Run Lifecycle
 
 ```mermaid
+%%{init:{
+  "theme":"base",
+  "flowchart":{"curve":"basis","nodeSpacing":34,"rankSpacing":40,"htmlLabels":true},
+  "themeVariables":{
+    "fontFamily":"ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif",
+    "fontSize":"14px",
+    "background":"#ffffff",
+    "textColor":"#0f172a",
+    "lineColor":"#94a3b8",
+    "clusterBkg":"#f8fafc",
+    "clusterBorder":"#cbd5e1",
+    "edgeLabelBackground":"#ffffff"
+  }
+}}%%
+
 flowchart LR
   S((" ")) --> R[RUNNING]
   R -->|success| F[FINISHED]
@@ -102,12 +141,19 @@ flowchart LR
   X --> E
   K --> E
 
-  style S fill:#334155,stroke:#334155
-  style E fill:#334155,stroke:#334155
-  style R fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
-  style F fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
-  style X fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
-  style K fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
+  linkStyle default stroke:#94a3b8,stroke-width:1.4
+
+  classDef ghost fill:#334155,stroke:#334155,color:#334155;
+  classDef running fill:#eff6ff,stroke:#2563eb,stroke-width:1.6,color:#0f172a;
+  classDef finished fill:#ecfdf5,stroke:#059669,stroke-width:1.6,color:#064e3b;
+  classDef failed fill:#fee2e2,stroke:#dc2626,stroke-width:1.6,color:#7f1d1d;
+  classDef killed fill:#fffbeb,stroke:#d97706,stroke-width:1.6,color:#7c2d12;
+
+  class S,E ghost
+  class R running
+  class F finished
+  class X failed
+  class K killed
 ```
 
 **Robustness guarantees:**

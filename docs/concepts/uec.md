@@ -10,6 +10,21 @@ Quantum experiments depend on **programs**, **devices**, **execution settings**,
 ## Envelope at a Glance
 
 ```mermaid
+%%{init:{
+  "theme":"base",
+  "flowchart":{"curve":"basis","nodeSpacing":36,"rankSpacing":44,"htmlLabels":true},
+  "themeVariables":{
+    "fontFamily":"ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial, sans-serif",
+    "fontSize":"14px",
+    "background":"#ffffff",
+    "textColor":"#0f172a",
+    "lineColor":"#94a3b8",
+    "clusterBkg":"#f8fafc",
+    "clusterBorder":"#cbd5e1",
+    "edgeLabelBackground":"#ffffff"
+  }
+}}%%
+
 flowchart TB
   subgraph ENV["ExecutionEnvelope"]
     direction TB
@@ -44,18 +59,21 @@ flowchart TB
   DEV -.->|raw_properties_ref| A3
   RES -.->|raw_result_ref| A4
 
-  style ENV fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
-  style STORE fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
-  style META fill:#bfdbfe,stroke:#3b82f6,color:#1e40af
-  style PROD fill:#d1fae5,stroke:#10b981,color:#065f46
-  style PROG fill:#d1fae5,stroke:#10b981,color:#065f46
-  style DEV fill:#d1fae5,stroke:#10b981,color:#065f46
-  style EXEC fill:#d1fae5,stroke:#10b981,color:#065f46
-  style RES fill:#d1fae5,stroke:#10b981,color:#065f46
-  style A1 fill:#fef9c3,stroke:#eab308,color:#713f12
-  style A2 fill:#fef9c3,stroke:#eab308,color:#713f12
-  style A3 fill:#fef9c3,stroke:#eab308,color:#713f12
-  style A4 fill:#fef9c3,stroke:#eab308,color:#713f12
+  %% Linki: delikatniejsze i równe
+  linkStyle default stroke:#94a3b8,stroke-width:1.4
+
+  %% Klasy zamiast wielu style-line
+  classDef grpBlue fill:#eff6ff,stroke:#2563eb,stroke-width:1.6,color:#0f172a;
+  classDef grpAmber fill:#fffbeb,stroke:#d97706,stroke-width:1.6,color:#0f172a;
+  classDef cardBlue fill:#dbeafe,stroke:#3b82f6,stroke-width:1.4,color:#0f172a;
+  classDef cardGreen fill:#ecfdf5,stroke:#10b981,stroke-width:1.4,color:#064e3b;
+  classDef artifact fill:#fff7ed,stroke:#f59e0b,stroke-width:1.4,color:#7c2d12;
+
+  class ENV grpBlue
+  class STORE grpAmber
+  class META cardBlue
+  class PROD,PROG,DEV,EXEC,RES cardGreen
+  class A1,A2,A3,A4 artifact
 ```
 
 **Required fields**: `schema`, `envelope_id`, `created_at`, `producer`, `result`.
