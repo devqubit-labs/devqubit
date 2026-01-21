@@ -38,16 +38,23 @@ with track(project="my-experiment") as run:
 
 ## Uniform Execution Contract (UEC)
 
-All adapters produce a standardized **ExecutionEnvelope** containing four canonical snapshots:
+All adapters produce a standardized **ExecutionEnvelope** (`devqubit.envelope/1.0` schema) containing four canonical snapshots:
 
-| Snapshot | Description |
-|----------|-------------|
-| `DeviceSnapshot` | Backend state, calibration, topology, and provider properties |
-| `ProgramSnapshot` | Logical and physical circuit artifacts with hashes |
-| `ExecutionSnapshot` | Submission metadata, transpilation info, job IDs |
-| `ResultSnapshot` | Normalized measurement counts or expectation values |
+| Snapshot | Schema | Description |
+|----------|--------|-------------|
+| `producer` | — | Adapter and SDK version info (name, adapter, sdk_version, frontends) |
+| `program` | `devqubit.program_snapshot/1.0` | Logical and physical circuit artifacts with structural/parametric hashes |
+| `device` | `devqubit.device_snapshot/1.0` | Backend state, calibration, topology, and provider properties |
+| `execution` | `devqubit.execution_snapshot/1.0` | Submission metadata, transpilation info, shots, job IDs |
+| `result` | `devqubit.result_snapshot/1.0` | Normalized measurement counts, quasi-probabilities, or expectation values |
 
-The envelope is automatically logged as `devqubit.envelope.json` with role `envelope`. This provides a complete, self-contained record of each execution that can be used for reproducibility and analysis.
+The envelope is automatically logged as `devqubit.envelope.json` with role `envelope`. This provides a complete, self-contained record of each execution that can be used for reproducibility, comparison (`diff`), and verification (`verify_baseline`).
+
+**Adapter contract:**
+1. Emit a schema-valid envelope for every execution (success or failure).
+2. On failure, set `result.success=false` with structured `result.error`.
+3. Store large payloads (raw results, backend properties) as artifacts via `ArtifactRef`.
+4. Normalize bitstrings to canonical `cbit0_right` format for cross-SDK comparison.
 
 ```python
 # Access envelope data after execution
@@ -94,7 +101,7 @@ with track(project="bell-state") as run:
 | Circuit diagram | `qiskit.circuits.diagram` | `program` |
 | Counts | `result.counts.json` | `result` |
 | Full result | `result.qiskit.result_json` | `result_raw` |
-| Raw backend properties | `device.qiskit.raw_properties.json` | `device_snapshot` |
+| Raw backend properties | `device.qiskit.raw_properties.json` | `device_raw` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -151,7 +158,7 @@ job = sampler.run([qc],
 | PUB structure | `qiskit_runtime.pubs.json` | `program` |
 | Sampler counts | `result.counts.json` | `result` |
 | Estimator values | `result.qiskit_runtime.estimator.json` | `result` |
-| Raw runtime properties | `device.qiskit_runtime.raw_properties.json` | `device_snapshot` |
+| Raw runtime properties | `device.qiskit_runtime.raw_properties.json` | `device_raw` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -179,7 +186,7 @@ with track(project="braket-experiment") as run:
 | Circuit diagram | `braket.circuits.diagram` | `program` |
 | Counts | `result.counts.json` | `result` |
 | Raw result | `result.braket.raw.json` | `result_raw` |
-| Raw device properties | `device.braket.raw_properties.json` | `device_snapshot` |
+| Raw device properties | `device.braket.raw_properties.json` | `device_raw` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -226,7 +233,7 @@ with track(project="sweep") as run:
 | Cirq JSON | `cirq.circuit.json` | `program` |
 | Circuit diagram | `cirq.circuits.txt` | `program` |
 | Counts | `result.counts.json` | `result` |
-| Raw device properties | `device.cirq.raw_properties.json` | `device_snapshot` |
+| Raw device properties | `device.cirq.raw_properties.json` | `device_raw` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
@@ -262,7 +269,7 @@ with track(project="vqe") as run:
 | Tape JSON | `pennylane.tapes.json` | `program` |
 | Tape diagram | `pennylane.tapes.txt` | `program` |
 | Results | `result.pennylane.output.json` | `result` |
-| Raw device properties | `device.pennylane.raw_properties.json` | `device_snapshot` |
+| Raw device properties | `device.pennylane.raw_properties.json` | `device_raw` |
 | Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ### Multi-Layer Stack
@@ -407,18 +414,21 @@ with track(project="custom-sdk") as run:
 
 ### Creating Custom Envelopes
 
-For full UEC compliance, create an ExecutionEnvelope:
+For full UEC compliance, create an ExecutionEnvelope manually. The envelope will be validated against `devqubit.envelope/1.0` schema:
 
 ```python
 from devqubit.uec import (
-    ProducerInfo,
-    DeviceSnapshot,
     ExecutionEnvelope,
     ExecutionSnapshot,
+    DeviceSnapshot,
     ProgramSnapshot,
     ResultSnapshot,
+    ResultItem,
+    ProducerInfo,
 )
+from devqubit.utils import utc_now_iso
 
+# Producer identifies your adapter
 producer = ProducerInfo.create(
     adapter="devqubit-custom",
     adapter_version="0.1.0",
@@ -427,37 +437,65 @@ producer = ProducerInfo.create(
     frontends=["custom-sdk"],
 )
 
-# Build snapshots
+# Device snapshot (devqubit.device_snapshot/1.0)
 device = DeviceSnapshot(
+    captured_at=utc_now_iso(),
     backend_name="custom_device",
     backend_type="simulator",
     provider="local",
-    captured_at=utc_now_iso(),
 )
 
+# Program snapshot (devqubit.program_snapshot/1.0)
+# For adapter runs, structural_hash and parametric_hash are required
 program = ProgramSnapshot(
-    logical=[],  # Add ProgramArtifact refs
+    logical=[],  # Add ProgramArtifact refs here
     physical=[],
+    structural_hash="sha256:...",
+    parametric_hash="sha256:...",
     num_circuits=1,
 )
 
+# Execution snapshot (devqubit.execution_snapshot/1.0)
 execution = ExecutionSnapshot(
     submitted_at=utc_now_iso(),
     shots=1000,
 )
 
-# Create and log envelope
-envelope = ExecutionEnvelope(
-    schema_version="devqubit.envelope/1.0",
-    envelope_id="01J0EXAMPLEENVELOPEID0000",
-    created_at=utc_now_iso(),
+# Result snapshot (devqubit.result_snapshot/1.0)
+result = ResultSnapshot.create_success(
+    items=[
+        ResultItem(
+            item_index=0,
+            success=True,
+            counts={
+                "counts": {"00": 500, "11": 500},
+                "shots": 1000,
+                "format": {
+                    "source_sdk": "custom-sdk",
+                    "source_key_format": "little_endian",
+                    "bit_order": "cbit0_right",
+                    "transformed": False,
+                },
+            },
+        )
+    ],
+)
+
+# Create envelope using factory method (auto-generates envelope_id and created_at)
+envelope = ExecutionEnvelope.create(
     producer=producer,
     device=device,
     program=program,
     execution=execution,
-    result=result_snapshot,
+    result=result,
 )
 
+# Validate before logging (optional but recommended)
+validation = envelope.validate_schema()
+if not validation.ok:
+    print(f"Validation errors: {validation.errors}")
+
+# Log the envelope
 run.log_json(
     name="execution_envelope",
     obj=envelope.to_dict(),
@@ -465,6 +503,11 @@ run.log_json(
     kind="devqubit.envelope.json",
 )
 ```
+
+**Schema requirements for adapter runs** (`producer.adapter != "manual"`):
+- `program` and `execution` must exist
+- `program.structural_hash` and `program.parametric_hash` are required
+- If `program.physical` exists, `executed_structural_hash` and `executed_parametric_hash` are also required
 
 ---
 

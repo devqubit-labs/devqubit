@@ -1,26 +1,15 @@
-# Comparison and verification
+# Comparison and Verification
 
 Use comparison to answer: **did my result change?** and **why?**
 
-devqubit compares two runs (or two portable bundles) across:
-- metadata (project, adapter, backend)
-- parameters, metrics
-- program/circuit artifacts (exact + structural matching)
-- results (counts/expectations) with noise-aware context
-- device drift (when device snapshots are available)
-
-Most users start with the CLI: {doc}`../reference/cli` → `devqubit diff` and `devqubit verify`.
-
+devqubit compares two runs (or bundles) across: metadata, parameters, metrics, program artifacts (exact + structural matching), results with noise-aware context, and device calibration drift.
 
 ## Comparing Runs
-
-Compare two runs to detect differences in parameters, programs, metrics, and results:
 
 ```python
 from devqubit import diff
 
 result = diff("RUN_BASELINE", "RUN_CANDIDATE")
-
 print(result)
 ```
 
@@ -39,8 +28,7 @@ Overall: ✗ DIFFER
 Metadata
 ----------------------------------------------------------------------
   project: ✓
-  backend: ✗
-    fake_manila -> aer_simulator
+  backend: ✗  fake_manila -> aer_simulator
 
 ----------------------------------------------------------------------
 Program
@@ -48,43 +36,27 @@ Program
   ✓ Match (structural)
 
 ----------------------------------------------------------------------
-Parameters
-----------------------------------------------------------------------
-  ✓ Match
-
-----------------------------------------------------------------------
 Results
 ----------------------------------------------------------------------
   TVD: 0.037598
   Noise threshold (p95): 0.068421
   p-value: 0.234
-  Interpretation: Difference is consistent with sampling noise (p >= 0.10)
+  Interpretation: Consistent with sampling noise
 
 ======================================================================
 ```
 
-## Compare Anything
-
 `diff` accepts run IDs or bundle files:
 
 ```python
-from devqubit import diff
-
-# Two run IDs
-result = diff("RUN_A", "RUN_B")
-
-# Bundle vs run
-result = diff("baseline.zip", "RUN_B")
-
-# Two bundles
-result = diff("baseline.zip", "candidate.zip")
+result = diff("RUN_A", "RUN_B")                   # Two run IDs
+result = diff("baseline.zip", "RUN_B")            # Bundle vs run
+result = diff("baseline.zip", "candidate.zip")    # Two bundles
 ```
 
-## Comparison Result
+## ComparisonResult
 
 ```python
-from devqubit import diff
-
 result = diff("RUN_A", "RUN_B")
 
 # Overall
@@ -94,94 +66,54 @@ result.run_id_b           # Candidate run ID
 
 # Metadata
 result.metadata["project_match"]
-result.metadata["adapter_match"]
 result.metadata["backend_match"]
 
-# Parameters
+# Parameters and metrics
 result.params["match"]    # True if all params match
 result.params["changed"]  # {"shots": {"a": 1000, "b": 2000}}
-result.params["added"]    # Params only in candidate
-result.params["removed"]  # Params only in baseline
+result.metrics["match"]
 
-# Metrics
-result.metrics["match"]   # True if all metrics match
-result.metrics["changed"] # Changed metrics with values
-
-# Program
-result.program.exact_match       # True if artifact digests identical
-result.program.structural_match  # True if circuit structure matches
-result.program_match             # True if either matches
+# Program comparison
+result.program.exact_match       # Artifact digests identical
+result.program.structural_match  # Circuit structure matches
+result.program.parametric_match  # Structure + params match
+result.program.matches("either") # Check with specific mode
 
 # Results
-result.tvd                # Total variation distance (or None)
+result.tvd                # Total variation distance
 result.counts_a           # {"00": 500, "11": 500}
-result.counts_b
-result.noise_context      # Bootstrap-calibrated noise analysis
+result.noise_context      # Bootstrap noise analysis
 
-# Circuit
+# Device and circuit
+result.device_drift       # Calibration drift analysis
 result.circuit_diff       # Semantic circuit comparison
 
-# Device
-result.device_drift       # Calibration drift analysis
-
-# Serialize
-result.to_dict()          # Dict representation
-result.format_json()      # JSON string
-result.format_summary()   # One-line summary
+# Output
+result.to_dict()
+result.format_json()
+result.format_summary()
 ```
 
-## Total Variation Distance (TVD)
+## TVD and Noise Context
 
-TVD measures the difference between two probability distributions:
-
-| TVD | Interpretation |
-|-----|----------------|
-| 0.0 | Identical distributions |
-| 0.01–0.05 | Typical shot noise |
-| 0.05–0.15 | Possible drift or change |
-| > 0.15 | Significant difference |
-
-## Bootstrap-Calibrated Noise Context
+TVD measures distribution difference: 0.0 = identical, 0.01–0.05 = typical shot noise, >0.15 = significant difference.
 
 The `noise_context` uses parametric bootstrap to estimate shot noise thresholds:
 
 ```python
 if result.noise_context:
     ctx = result.noise_context
-
-    # Bootstrap-calibrated threshold (primary)
     print(f"Noise p95: {ctx.noise_p95:.4f}")     # 95th percentile threshold
     print(f"p-value: {ctx.p_value:.4f}")         # Empirical p-value
     print(f"Exceeds noise: {ctx.exceeds_noise}") # tvd > noise_p95?
-
-    # Legacy fields (backward compatibility)
-    print(f"Expected noise: {ctx.expected_noise:.4f}")
-    print(f"Noise ratio: {ctx.noise_ratio:.2f}x")
-
-    # Human-readable interpretation
     print(f"Interpretation: {ctx.interpretation()}")
 ```
-
-### Interpretation Guidelines
 
 | p-value | Interpretation |
 |---------|----------------|
 | ≥ 0.10 | Consistent with sampling noise |
 | 0.05–0.10 | Borderline; consider increasing shots |
-| 0.01–0.05 | Likely exceeds sampling noise |
-| < 0.01 | Significantly exceeds sampling noise |
-
-### Why Bootstrap?
-
-The bootstrap approach:
-1. Pools both distributions under H0 (null hypothesis: same distribution)
-2. Simulates many measurement pairs from pooled distribution
-3. Computes TVD for each simulated pair
-4. Uses quantiles as calibrated thresholds
-
-This is more robust than simple O(√k/n) heuristics, especially for non-uniform distributions.
-
----
+| < 0.05 | Likely exceeds sampling noise |
 
 ## Baseline Verification
 
@@ -194,7 +126,7 @@ from devqubit.compare import VerifyPolicy
 policy = VerifyPolicy(
     params_must_match=True,
     program_must_match=True,
-    noise_factor=1.0,  # Use bootstrap-calibrated threshold
+    noise_factor=1.0,
 )
 
 result = verify_baseline(
@@ -203,90 +135,51 @@ result = verify_baseline(
     policy=policy,
 )
 
-print(result)
 print(f"Passed: {result.ok}")
+if not result.ok:
+    print(result.failures)
+    print(result.verdict.summary)
 ```
 
-## Verification Policy
-
-```python
-from devqubit.compare import VerifyPolicy
-
-policy = VerifyPolicy(
-    # Structural checks
-    params_must_match=True,       # Parameters must be identical
-    program_must_match=True,      # Program must match
-    program_match_mode="either",  # exact, structural, or either
-    fingerprint_must_match=False, # Full run fingerprint must match
-
-    # Result checks
-    tvd_max=0.1,                  # Fixed TVD threshold
-    noise_factor=1.0,             # Dynamic: fail if TVD > N × noise_p95
-
-    # Baseline handling
-    allow_missing_baseline=False, # Pass when no baseline exists
-)
-```
-
-### Program Match Modes
-
-| Mode | Behavior | Best For |
-|------|----------|----------|
-| `EXACT` | Require identical artifact digests | Reproducibility checks |
-| `STRUCTURAL` | Require same circuit structure | VQE/QAOA (different params OK) |
-| `EITHER` | Pass if exact OR structural matches | General use (default) |
+## VerifyPolicy
 
 ```python
 from devqubit.compare import VerifyPolicy, ProgramMatchMode
 
-# Strict reproducibility
-policy = VerifyPolicy(program_match_mode=ProgramMatchMode.EXACT)
+policy = VerifyPolicy(
+    # Structural checks
+    params_must_match=True,
+    program_must_match=True,
+    program_match_mode=ProgramMatchMode.EITHER,  # exact, structural, or either
+    fingerprint_must_match=False,
 
-# VQE-friendly (ignore parameter values)
-policy = VerifyPolicy(program_match_mode=ProgramMatchMode.STRUCTURAL)
+    # TVD checks
+    tvd_max=0.1,          # Hard limit
+    noise_factor=1.0,     # Dynamic: fail if TVD > N × noise_p95
+
+    # Bootstrap settings
+    noise_alpha=0.95,
+    noise_n_boot=1000,
+    noise_seed=12345,
+
+    # Behavior
+    allow_missing_baseline=False,
+)
 ```
 
-### TVD Thresholds
+When both `tvd_max` and `noise_factor` are set, the **stricter** (minimum) threshold is used.
 
-```python
-from devqubit.compare import VerifyPolicy
+**Program match modes:** `EXACT` (identical digests), `STRUCTURAL` (same circuit structure, VQE-friendly), `EITHER` (default).
 
-# Fixed threshold
-policy = VerifyPolicy(tvd_max=0.1)
-
-# Bootstrap-calibrated threshold (recommended for CI)
-# Fails if TVD > noise_factor × noise_p95
-policy = VerifyPolicy(noise_factor=1.0)  # Use raw p95 threshold
-
-# More lenient (for noisy hardware)
-policy = VerifyPolicy(noise_factor=1.5)  # 1.5× p95 threshold
-
-# Combined (uses the larger threshold)
-policy = VerifyPolicy(tvd_max=0.05, noise_factor=1.2)
-```
-
-**Recommended `noise_factor` values:**
-
-| Value | Use Case |
-|-------|----------|
-| 1.0 | Strict CI gating (5% false positive rate under H0) |
-| 1.2 | Standard CI (recommended default) |
-| 1.5 | Lenient (noisy hardware, exploratory runs) |
+**Recommended noise_factor:** 1.0 for strict CI, 1.2 for standard CI (recommended), 1.5 for noisy hardware.
 
 ## Setting Baselines
 
 ```python
 from devqubit.runs import get_baseline, set_baseline, clear_baseline
 
-# Set baseline
 set_baseline("vqe-h2", "RUN_PRODUCTION_V1")
-
-# Get current baseline
 baseline = get_baseline("vqe-h2")
-if baseline:
-    print(baseline["run_id"])
-
-# Clear baseline
 clear_baseline("vqe-h2")
 ```
 
@@ -298,56 +191,38 @@ devqubit baseline get vqe-h2
 devqubit baseline clear vqe-h2
 ```
 
-## Auto-Promote on Pass
+Auto-promote on pass:
 
 ```python
-from devqubit import verify_baseline
-
 result = verify_baseline(
     "RUN_CANDIDATE",
     project="vqe-h2",
     policy=policy,
-    promote_on_pass=True,  # Update baseline if verification passes
+    promote_on_pass=True,
 )
 ```
-
----
 
 ## Device Drift Detection
 
 Calibration drift is automatically detected during comparison:
 
 ```python
-from devqubit import diff
-
-result = diff("RUN_A", "RUN_B")
-
 if result.device_drift and result.device_drift.significant_drift:
-    print("! Significant calibration drift detected")
+    print("Significant calibration drift detected")
     for metric in result.device_drift.top_drifts[:3]:
         print(f"  {metric.metric}: {metric.percent_change:+.1f}%")
 ```
 
----
-
 ## CI Integration
 
-### GitHub Actions
-
 ```yaml
-- name: Run experiment
-  run: python run_experiment.py
-
+# GitHub Actions
 - name: Verify against baseline
   run: |
     devqubit verify --project vqe-h2 $RUN_ID \
-      --params-must-match \
-      --program-match-mode either \
       --noise-factor 1.0 \
       --junit results.xml
 ```
-
-### JUnit Output
 
 ```python
 from devqubit import verify_baseline
@@ -357,38 +232,11 @@ result = verify_baseline("RUN_CANDIDATE", project="vqe-h2")
 write_junit(result, "results.xml")
 ```
 
-### GitHub Annotations
-
-```python
-from devqubit.ci import result_to_github_annotations
-
-print(result_to_github_annotations(result))
-# ::notice title=Verification Passed::Candidate RUN_ID matches baseline
-```
-
----
-
 ## CLI
 
 ```bash
-# Compare two runs
 devqubit diff RUN_A RUN_B
-
-# Compare bundles
-devqubit diff baseline.zip candidate.zip
-
-# Output as JSON
 devqubit diff RUN_A RUN_B --format json
-
-# Verify against baseline
 devqubit verify --project vqe-h2 RUN_CANDIDATE
-
-# Verify with bootstrap-calibrated threshold
-devqubit verify --project vqe-h2 RUN_CANDIDATE \
-  --program-match-mode structural \
-  --noise-factor 1.0 \
-  --promote
-
-# Replay experiment (experimental)
-devqubit replay experiment.zip --experimental --seed 42
+devqubit verify --project vqe-h2 RUN_CANDIDATE --noise-factor 1.0 --promote
 ```

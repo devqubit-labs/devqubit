@@ -7,20 +7,6 @@ For workspace layout and storage concepts, see {doc}`../concepts/workspace`.
 
 devqubit uses environment variables for configuration with sensible defaults.
 
-## Workspace Structure
-
-devqubit stores all data in a workspace directory (default `~/.devqubit`):
-
-```
-~/.devqubit/
-├── objects/                 # Content-addressable artifact store
-│   └── sha256/
-│       └── a1/
-│           └── a1b2c3...    # Artifacts stored by digest
-├── registry.db              # SQLite database for run metadata
-└── baselines.json           # Project baseline mappings
-```
-
 ## Environment Variables
 
 | Variable | Description | Default |

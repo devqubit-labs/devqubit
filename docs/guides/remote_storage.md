@@ -66,30 +66,6 @@ export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
 export AWS_DEFAULT_REGION="us-east-1"
 ```
 
-### Required IAM Permissions
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject",
-        "s3:ListBucket",
-        "s3:HeadObject"
-      ],
-      "Resource": [
-        "arn:aws:s3:::my-bucket",
-        "arn:aws:s3:::my-bucket/*"
-      ]
-    }
-  ]
-}
-```
-
 ### S3-Compatible Storage (MinIO, LocalStack)
 
 Use the `endpoint_url` parameter for S3-compatible services:
@@ -166,21 +142,6 @@ Example with service account:
 ```bash
 export GOOGLE_APPLICATION_CREDENTIALS="/path/to/service-account-key.json"
 ```
-
-### Required IAM Roles
-
-Assign one of these roles to your service account or user:
-
-- `roles/storage.objectAdmin` – Full control of objects
-- `roles/storage.objectCreator` + `roles/storage.objectViewer` – Create and read objects
-
-Or create a custom role with these permissions:
-- `storage.objects.create`
-- `storage.objects.get`
-- `storage.objects.delete`
-- `storage.objects.list`
-
----
 
 ## Storage Layout
 

@@ -1,11 +1,8 @@
-# CLI reference
+# CLI Reference
 
 The `devqubit` CLI helps you inspect runs, compare results, manage baselines, and export portable bundles.
 
-If you’re new, start with {doc}`../getting-started/quickstart`.
-
-
-The `devqubit` command-line interface provides tools for managing quantum experiment runs, comparing results, and maintaining your workspace.
+If you're new, start with {doc}`../getting-started/quickstart`.
 
 ## Quick Start
 
@@ -45,7 +42,7 @@ devqubit list [OPTIONS]
 | `--limit` | `-n` | Number of runs to show (default: 20) |
 | `--project` | `-p` | Filter by project name |
 | `--adapter` | `-a` | Filter by adapter (qiskit, braket, cirq, pennylane) |
-| `--status` | `-s` | Filter by status (COMPLETED, FAILED, RUNNING) |
+| `--status` | `-s` | Filter by status (FINISHED, FAILED, RUNNING, KILLED) |
 | `--backend` | `-b` | Filter by backend name |
 | `--group` | `-g` | Filter by group ID |
 | `--tag` | `-t` | Filter by tag (repeatable) |
@@ -58,13 +55,12 @@ devqubit list [OPTIONS]
 devqubit list --limit 50
 
 # Filter by project and status
-devqubit list --project bell-state --status COMPLETED
+devqubit list --project bell-state --status FINISHED
 
 # Filter by backend
 devqubit list --backend ibm_brisbane
 
 # Filter by tags (can combine multiple)
-devqubit tag add abc123 experiment=bell validated
 devqubit list --tag experiment=bell --tag validated
 
 # Output as JSON for scripting
@@ -101,7 +97,7 @@ field operator value [and field operator value ...]
 
 | Operator | Meaning | Example |
 |----------|---------|---------|
-| `=` | Equals | `status = COMPLETED` |
+| `=` | Equals | `status = FINISHED` |
 | `!=` | Not equals | `status != FAILED` |
 | `>` | Greater than | `metric.fidelity > 0.9` |
 | `>=` | Greater or equal | `params.shots >= 1000` |
@@ -131,10 +127,10 @@ devqubit search "metric.fidelity > 0.95"
 devqubit search "params.shots >= 1000 and metric.fidelity > 0.9"
 
 # Sort by metric
-devqubit search "status = COMPLETED" --sort metric.fidelity
+devqubit search "status = FINISHED" --sort metric.fidelity
 
 # Find runs on IBM backends
-devqubit search "backend ~ ibm and status = COMPLETED"
+devqubit search "backend ~ ibm and status = FINISHED"
 ```
 
 ---
@@ -206,8 +202,14 @@ devqubit delete abc123 --yes
 List all projects in the workspace.
 
 ```bash
-devqubit projects
+devqubit projects [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `table` (default) or `json` |
 
 Shows project name, run count, and baseline status.
 
@@ -266,8 +268,9 @@ devqubit artifacts list RUN_ID [OPTIONS]
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--role` | `-r` | Filter by role (program, results, device_snapshot) |
-| `--format` | | Output format: `table` or `json` |
+| `--role` | `-r` | Filter by role (program, result, device_raw, envelope) |
+| `--kind` | `-k` | Filter by kind substring |
+| `--format` | | Output format: `table` (default) or `json` |
 
 **Example:**
 
@@ -276,7 +279,10 @@ devqubit artifacts list RUN_ID [OPTIONS]
 devqubit artifacts list abc123
 
 # Filter by role
-devqubit artifacts list abc123 --role results
+devqubit artifacts list abc123 --role program
+
+# Filter by kind
+devqubit artifacts list abc123 --kind openqasm
 ```
 
 ---
@@ -292,13 +298,14 @@ devqubit artifacts show RUN_ID SELECTOR [OPTIONS]
 **Selector formats:**
 - Index number: `0`, `1`, `2`
 - Kind substring: `counts`, `openqasm3`
-- Role:kind pattern: `program:openqasm3`, `results:counts`
+- Role:kind pattern: `program:openqasm3`, `result:counts`
 
 **Options:**
 
 | Option | Description |
 |--------|-------------|
 | `--raw` | Output raw bytes to stdout (for piping) |
+| `--format` | Output format: `pretty` (default) or `json` |
 
 **Examples:**
 
@@ -331,13 +338,17 @@ devqubit artifacts counts RUN_ID [OPTIONS]
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--top` | `-k` | Show top K outcomes (default: 10) |
-| `--format` | | Output format: `table` or `json` |
+| `--experiment` | `-e` | Experiment index for batch jobs |
+| `--format` | | Output format: `table` (default) or `json` |
 
 **Example:**
 
 ```bash
 # Show top 5 outcomes
 devqubit artifacts counts abc123 --top 5
+
+# Show counts for second circuit in batch
+devqubit artifacts counts abc123 --experiment 1
 ```
 
 ---
@@ -389,8 +400,14 @@ devqubit tag remove abc123 temp debug
 List all tags on a run.
 
 ```bash
-devqubit tag list RUN_ID
+devqubit tag list RUN_ID [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `pretty` (default) or `json` |
 
 ---
 
@@ -411,13 +428,15 @@ REF can be a run ID or bundle file path.
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--output` | `-o` | Save report to file |
-| `--format` | | Output: `text` (default), `json`, or `summary` |
+| `--format` | | Output: `pretty` (default), `json`, or `summary` |
 | `--no-circuit-diff` | | Skip circuit semantic comparison |
+| `--no-noise-context` | | Skip bootstrap noise estimation (faster) |
+| `--item-index` | | Result item index for TVD (default: 0, use -1 for all) |
 
 **Comparison includes:**
 - Parameter differences
-- Circuit/program changes
-- Device drift analysis
+- Circuit/program changes (structural and parametric hashes)
+- Device drift analysis (calibration deltas)
 - Total Variation Distance (TVD) with bootstrap-calibrated noise context
 
 **Examples:**
@@ -427,20 +446,23 @@ REF can be a run ID or bundle file path.
 devqubit diff abc123 def456
 
 # Compare bundles
-devqubit diff baseline.zip candidate.zip
+devqubit diff experiment1.zip experiment2.zip
 
-# Save JSON report
+# Save report as JSON
 devqubit diff abc123 def456 --format json -o report.json
 
-# Quick summary
-devqubit diff abc123 def456 --format summary
+# Quick comparison (skip noise estimation)
+devqubit diff abc123 def456 --no-noise-context
+
+# Compare all result items in batch
+devqubit diff abc123 def456 --item-index -1
 ```
 
 ---
 
 ### verify
 
-Verify a run against a baseline with policy checks.
+Verify a run against baseline with full root-cause analysis.
 
 ```bash
 devqubit verify CANDIDATE_ID [OPTIONS]
@@ -454,43 +476,28 @@ devqubit verify CANDIDATE_ID [OPTIONS]
 | `--project` | `-p` | Project for baseline lookup |
 | `--tvd-max` | | Maximum allowed TVD |
 | `--noise-factor` | | Fail if TVD > noise_factor × noise_p95 (recommended: 1.0-1.5) |
-| `--program-match-mode` | | Program matching: `exact`, `structural`, or `either` (default) |
+| `--program-match-mode` | | `exact`, `structural`, or `either` (default) |
 | `--no-params-match` | | Don't require parameters to match |
 | `--no-program-match` | | Don't require program to match |
 | `--strict` | | Require fingerprint match |
 | `--promote` | | Promote to baseline on pass |
 | `--allow-missing` | | Pass if no baseline exists |
 | `--junit` | | Write JUnit XML report |
-| `--format` | | Output: `text`, `json`, `github`, or `summary` |
+| `--format` | | Output: `pretty` (default), `json`, `github`, or `summary` |
 
 **Program Match Modes:**
-
-| Mode | Description |
-|------|-------------|
-| `exact` | Require identical artifact digests (strict reproducibility) |
-| `structural` | Require same circuit structure (VQE/QAOA friendly) |
-| `either` | Pass if exact OR structural matches (default) |
-
-**Noise Factor Values:**
-
-The `--noise-factor` option uses bootstrap-calibrated thresholds:
-
-| Value | Use Case |
-|-------|----------|
-| 1.0 | Strict CI (5% false positive rate under H0) |
-| 1.2 | Standard CI (recommended default) |
-| 1.5 | Lenient (noisy hardware) |
-
-**Exit codes:** 0 = pass, 1 = fail
+- `exact`: require identical artifact digests
+- `structural`: require same circuit structure (VQE/QAOA friendly)
+- `either`: pass if exact OR structural matches (default)
 
 **Examples:**
 
 ```bash
-# Verify against project baseline
-devqubit verify abc123 --project bell-state
-
 # Verify against explicit baseline
 devqubit verify abc123 --baseline def456
+
+# Verify against project baseline
+devqubit verify abc123 --project bell-state
 
 # With TVD threshold
 devqubit verify abc123 --project bell-state --tvd-max 0.05
@@ -504,8 +511,11 @@ devqubit verify abc123 --project vqe-h2 --program-match-mode structural
 # Strict mode (fingerprint must match)
 devqubit verify abc123 --project bell-state --strict
 
-# CI integration
+# CI integration with JUnit output
 devqubit verify abc123 --project bell-state --junit results.xml
+
+# GitHub Actions format
+devqubit verify abc123 --project bell-state --format github
 
 # Promote on success
 devqubit verify abc123 --project bell-state --promote
@@ -538,7 +548,7 @@ devqubit replay [REF] [OPTIONS]
 | `--project` | `-p` | Project name for saved run |
 | `--experimental` | | Acknowledge experimental status (required) |
 | `--list-backends` | | List available simulator backends |
-| `--format` | | Output format: `text` or `json` |
+| `--format` | | Output format: `pretty` or `json` |
 
 **Supported Formats:**
 
@@ -587,6 +597,7 @@ devqubit pack RUN_ID [OPTIONS]
 |--------|-------|-------------|
 | `--out` | `-o` | Output file path (default: `<run_id>.devqubit.zip`) |
 | `--force` | `-f` | Overwrite existing file |
+| `--format` | | Output format: `pretty` (default) or `json` |
 
 **Examples:**
 
@@ -618,6 +629,7 @@ devqubit unpack BUNDLE [OPTIONS]
 | `--to` | `-t` | Destination workspace |
 | `--force` | `-f` | Overwrite existing run |
 | `--verify/--no-verify` | | Verify digests (default: verify) |
+| `--format` | | Output format: `pretty` (default) or `json` |
 
 **Examples:**
 
@@ -646,7 +658,22 @@ devqubit info BUNDLE [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--format` | Output format: `pretty` or `json` |
+| `--format` | Output format: `pretty` (default) or `json` |
+| `--objects` | List all object digests |
+| `--artifacts` | List artifact details |
+
+**Examples:**
+
+```bash
+# Show basic info
+devqubit info experiment.zip
+
+# Show with artifact list
+devqubit info experiment.zip --artifacts
+
+# Full details as JSON
+devqubit info experiment.zip --format json --objects --artifacts
+```
 
 ---
 
@@ -676,7 +703,7 @@ devqubit baseline get PROJECT [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
-| `--format` | Output format: `pretty` or `json` |
+| `--format` | Output format: `pretty` (default) or `json` |
 
 ---
 
@@ -701,8 +728,14 @@ devqubit baseline clear PROJECT [OPTIONS]
 List all project baselines.
 
 ```bash
-devqubit baseline list
+devqubit baseline list [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `pretty` (default) or `json` |
 
 ---
 
@@ -722,7 +755,8 @@ devqubit storage gc [OPTIONS]
 |--------|-------|-------------|
 | `--dry-run` | `-n` | Preview without deleting |
 | `--yes` | `-y` | Skip confirmation |
-| `--format` | | Output format: `pretty` or `json` |
+| `--project` | `-p` | Limit to specific project |
+| `--format` | | Output format: `pretty` (default) or `json` |
 
 **Examples:**
 
@@ -732,6 +766,9 @@ devqubit storage gc --dry-run
 
 # Delete orphaned objects
 devqubit storage gc --yes
+
+# Limit to specific project
+devqubit storage gc --project myproject --dry-run
 ```
 
 ---
@@ -751,8 +788,10 @@ devqubit storage prune [OPTIONS]
 | `--status` | `-s` | FAILED | Status to prune |
 | `--older-than` | | 30 | Days old threshold |
 | `--keep-latest` | | 5 | Keep N most recent matching runs |
+| `--project` | `-p` | | Limit to specific project |
 | `--dry-run` | `-n` | | Preview without deleting |
 | `--yes` | `-y` | | Skip confirmation |
+| `--format` | | | Output format: `pretty` (default) or `json` |
 
 **Examples:**
 
@@ -762,6 +801,9 @@ devqubit storage prune --status FAILED --dry-run
 
 # Prune runs older than 7 days, keep latest 3
 devqubit storage prune --older-than 7 --keep-latest 3 --yes
+
+# Prune only in specific project
+devqubit storage prune --project old-experiments --yes
 ```
 
 ---
@@ -771,8 +813,14 @@ devqubit storage prune --older-than 7 --keep-latest 3 --yes
 Check workspace health and integrity.
 
 ```bash
-devqubit storage health
+devqubit storage health [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `pretty` (default) or `json` |
 
 Reports:
 - Total runs and objects
@@ -788,8 +836,14 @@ Reports:
 Display current configuration.
 
 ```bash
-devqubit config
+devqubit config [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format: `pretty` (default) or `json` |
 
 Shows:
 - Workspace path
@@ -817,6 +871,8 @@ devqubit ui [OPTIONS]
 | `--port` | `-p` | 8080 | Port to listen on |
 | `--workspace` | `-w` | | Workspace directory |
 | `--debug` | | | Enable debug mode |
+
+**Note:** Requires the `devqubit-ui` package (`pip install devqubit[ui]`).
 
 **Examples:**
 

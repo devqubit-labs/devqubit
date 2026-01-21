@@ -1,137 +1,166 @@
 # Uniform Execution Contract (UEC)
 
-Quantum experiments depend on more than code: they depend on *circuits/programs*, the *device/backend*, compilation/execution settings, and hardware calibration.
+> **You don't need to create envelopes manually.** SDK adapters (`devqubit-qiskit`, `devqubit-braket`, etc.) automatically capture and validate ExecutionEnvelopes during `run.wrap()` executions. For runs without an adapter (manual tracking), the engine synthesizes a minimal envelope at finalization. This document describes the internal structure for contributors and advanced debugging.
 
-To keep runs reproducible and comparable, adapters produce a standardized **ExecutionEnvelope** containing four snapshots that capture the complete execution context.
+Quantum experiments depend on **programs**, **devices**, **execution settings**, and (on hardware) **calibration** that drift over time. To keep runs reproducible and comparable, adapters produce a standardized **ExecutionEnvelope** that captures execution context and results.
 
-## ExecutionEnvelope structure
+- A **Run Record** stays small and queryable.
+- The **ExecutionEnvelope** is the canonical, schema-validated "evidence pack" used by diff/verify tooling.
 
+## Envelope at a Glance
+
+```mermaid
+flowchart TB
+  subgraph ENV["<b>ExecutionEnvelope</b> · <code>devqubit.envelope/1.0</code>"]
+    direction TB
+
+    META["<b>envelope_id</b><br/><b>created_at</b><br/><b>schema</b>"]
+
+    subgraph SNAPSHOTS[" "]
+      direction TB
+      PROD["<b>producer</b><br/>name: devqubit<br/>adapter: qiskit<br/>sdk_version: 1.2.0"]
+
+      PROG["<b>program</b><br/>logical[]<br/>physical[]<br/>structural_hash<br/>parametric_hash"]
+
+      DEV["<b>device</b><br/>backend_name: ibm_kyoto<br/>num_qubits: 127<br/>calibration"]
+
+      EXEC["<b>execution</b><br/>shots: 1000<br/>job_ids[]<br/>submitted_at<br/>completed_at"]
+
+      RES["<b>result</b><br/>success: true<br/>status: completed<br/>items[]<br/>raw_result_ref"]
+    end
+  end
+
+  subgraph STORE["<b>Artifact Store</b>"]
+    direction TB
+    A1["circuit.qasm<br/><i>sha256:a1b2c3...</i>"]
+    A2["circuit.qpy<br/><i>sha256:d4e5f6...</i>"]
+    A3["backend_properties.json<br/><i>sha256:789abc...</i>"]
+    A4["raw_result.json<br/><i>sha256:def012...</i>"]
+  end
+
+  META ~~~ SNAPSHOTS
+  PROG -.->|logical_ref| A1
+  PROG -.->|physical_ref| A2
+  DEV -.->|raw_properties_ref| A3
+  RES -.->|raw_result_ref| A4
+
+  classDef envMeta fill:#e3f2fd,stroke:#1976d2,color:#0d47a1
+  classDef snapshot fill:#e8f5e9,stroke:#43a047,color:#1b5e20
+  classDef artifact fill:#fff8e1,stroke:#f9a825,color:#f57f17
+
+  class META envMeta
+  class PROD,PROG,DEV,EXEC,RES snapshot
+  class A1,A2,A3,A4 artifact
 ```
-ExecutionEnvelope
-├── schema: "devqubit.envelope/1.0"
-├── envelope_id, created_at       # Envelope metadata
-├── producer: ProducerInfo        # SDK stack + versions
-├── device: DeviceSnapshot        # Backend state and calibration
-├── program: ProgramSnapshot      # Circuit artifacts and hashes
-├── execution: ExecutionSnapshot  # Job metadata and settings
-└── result: ResultSnapshot        # Normalized results (items[])
-```
 
-The envelope is stored as an artifact with role `envelope` (typically kind `devqubit.envelope.json`).
+**Required fields**: `schema`, `envelope_id`, `created_at`, `producer`, `result`.
 
-The envelope schema is `devqubit.envelope/1.0` and requires `envelope_id`, `created_at`, `producer`, and `result`.
+## Schema Contract
 
+All envelopes are validated against `devqubit.envelope/1.0` (JSON Schema Draft 2020-12). Top-level is strict (`additionalProperties: false`). Extra data belongs in `metadata`.
 
-## Snapshots
+**Conditional requirements:**
 
-### ProducerInfo
+1. If `producer.adapter != "manual"`:
+   - `program` and `execution` must exist
+   - `program.structural_hash` and `program.parametric_hash` must exist
 
-Captures the complete SDK/toolchain stack that produced the envelope:
+2. If `program.physical` exists and is non-empty:
+   - `program.executed_structural_hash` and `program.executed_parametric_hash` must exist
+
+## Snapshot Reference
+
+Each snapshot has its own schema identifier for independent versioning.
+
+### `producer` — ProducerInfo
+
+Required: `name`, `adapter`, `frontends`.
+
+Optional: `engine_version`, `adapter_version`, `sdk`, `sdk_version`.
+
+### `program` — ProgramSnapshot
+
+Schema: `devqubit.program_snapshot/1.0`
 
 | Field | Description |
 |-------|-------------|
-| `name` | Producer name (always `"devqubit"`) |
-| `engine_version` | devqubit-engine version |
-| `adapter` | Adapter package name (e.g., `devqubit-qiskit`) |
-| `adapter_version` | Adapter version |
-| `sdk` | Lowest/primary SDK (e.g., `qiskit`, `braket-sdk`, `cirq`) |
-| `sdk_version` | Primary SDK version |
-| `frontends` | Ordered SDK stack from highest to lowest layer |
-| `build` | Optional build identifier (commit/dirty flag) |
+| `logical[]` | Pre-transpilation circuit artifacts |
+| `physical[]` | Post-transpilation circuit artifacts |
+| `structural_hash` | Hash of circuit structure (ignores parameter values) |
+| `parametric_hash` | Hash of structure + bound parameter values |
+| `executed_structural_hash` | Structural hash of transpiled circuits (when physical exists) |
+| `executed_parametric_hash` | Parametric hash of transpiled circuits |
+| `num_circuits` | Number of circuits |
+| `transpilation` | Adapter-specific transpilation details |
 
+### `device` — DeviceSnapshot
 
-### DeviceSnapshot
-
-Captures backend state at execution time:
+Schema: `devqubit.device_snapshot/1.0`
 
 | Field | Description |
 |-------|-------------|
-| `backend_name` | Backend identifier (e.g., "ibm_brisbane", "aer_simulator") |
-| `backend_type` | Backend type (e.g., `"hardware"`, `"simulator"`, `"emulator"`, `"unknown"`) |
-| `provider` | Physical provider (e.g., `"ibm_quantum"`, `"aws_braket"`, `"local"`) |
-| `num_qubits` | Number of qubits |
-| `connectivity` | Qubit coupling map as edge list |
+| `captured_at` | Snapshot timestamp |
+| `backend_name` | Backend identifier |
+| `backend_type` | `hardware`, `simulator`, or `emulator` |
+| `provider` | Provider identifier |
+| `num_qubits` | Qubit count |
+| `connectivity` | Edge list `[[i,j], ...]` |
 | `native_gates` | Supported gate set |
-| `calibration` | Extracted calibration metrics (T1, T2, gate errors, readout errors) |
-| `sdk_versions` | SDK version information |
-| `raw_properties_ref` | Reference to full raw properties artifact (for lossless capture) |
+| `calibration` | Aggregated calibration metrics |
+| `raw_properties_ref` | ArtifactRef to full raw backend properties |
 
-The `calibration` field contains aggregated statistics (median T1/T2, median gate errors) useful for drift detection without needing the full calibration data.
+### `execution` — ExecutionSnapshot
 
-### ProgramSnapshot
-
-Captures circuit/program artifacts:
+Schema: `devqubit.execution_snapshot/1.0`
 
 | Field | Description |
 |-------|-------------|
-| `logical` | Logical program artifacts (before transpilation) |
-| `physical` | Physical program artifacts (after transpilation, if captured) |
-| `program_hash` | Structural hash for deduplication |
-| `num_circuits` | Number of circuits in this execution |
-| `transpilation` | Transpilation metadata (mode, settings) |
-
-Each artifact in `logical`/`physical` includes:
-- `format`: Circuit format (QPY, QASM3, etc.)
-- `ref`: Reference to stored artifact
-- `index`: Index in multi-circuit batch
-- `name`: Circuit name (if available)
-
-### ExecutionSnapshot
-
-Captures submission and job metadata:
-
-| Field | Description |
-|-------|-------------|
-| `submitted_at` | ISO timestamp of submission |
-| `shots` | Number of shots requested |
+| `submitted_at` | Submission timestamp |
+| `completed_at` | Completion timestamp |
+| `shots` | Number of shots |
+| `execution_count` | Number of executions |
 | `job_ids` | Provider job IDs |
-| `execution_count` | Execution counter within run |
-| `transpilation` | Transpilation info (mode, transpiled_by) |
-| `options` | Raw execution options (args, kwargs) |
-| `sdk` | Optional legacy field (prefer `producer.sdk` / `producer.frontends`) |
+| `transpilation` | Transpilation metadata |
+| `options` | Raw execution options |
+| `sdk` | SDK identifier |
 
-### ResultSnapshot
+### `result` — ResultSnapshot
 
-Captures normalized execution results (always as a list of per-item results):
+Schema: `devqubit.result_snapshot/1.0`
+
+Required: `success`, `status`, `items`.
 
 | Field | Description |
 |-------|-------------|
 | `success` | Overall execution success |
-| `status` | `"completed"`, `"failed"`, `"cancelled"`, or `"partial"` |
-| `items` | List of `ResultItem` (one per circuit/parameter-set) |
-| `error` | Structured error info when failed |
-| `raw_result_ref` | Reference to the full serialized SDK result (optional) |
-| `metadata` | Additional result metadata |
+| `status` | `completed`, `failed`, `cancelled`, `partial`, `pending`, `running` |
+| `error` | Structured error info (`type`, `message`) when failed |
+| `items[]` | Per-circuit results (counts, quasi_probability, or expectation) |
+| `raw_result_ref` | ArtifactRef to full raw SDK result |
 
-Each `ResultItem` may contain one primary payload, e.g. `counts`, `quasi_probability`, or `expectation`. If `counts` are present, they include `format` metadata (source SDK + bit ordering) to make results comparable across SDKs.
+**Bitstring normalization:** `counts.format.bit_order` is canonical `cbit0_right` (LSB on right). If the source SDK uses a different convention, adapters set `format.transformed = true` and record `format.source_key_format`. This prevents silent mismatches when comparing distributions across SDKs.
 
-## Why UEC matters
+## ArtifactRef
 
-The Uniform Execution Contract makes it easier to:
+Content-addressed references used throughout:
 
-- **Compare runs across devices and SDKs** — normalized structure enables apples-to-apples comparison
-- **Detect device drift** — calibration data in DeviceSnapshot enables drift analysis between runs
-- **Share self-contained bundles** — envelope contains everything needed to analyze results
-- **Debug failures** — complete context captured even for failed runs
+| Field | Description |
+|-------|-------------|
+| `digest` | Required, format: `sha256:<64 hex>` |
+| `kind` | Artifact type (e.g., `source.openqasm3`, `sdk.result`) |
+| `media_type` | MIME type |
+| `role` | Logical role (`program`, `results_raw`, `device_raw`) |
+| `meta` | Optional small metadata (sizes, versions) |
 
-## Data flow
+## Adapter Contract
 
-```
-+---------------------+     +---------------------+     +---------------------+
-|       Adapter       |---->|   Envelope (UEC)    |---->|   Artifact Store    |
-| (qiskit, pennylane) |     |                     |     |                     |
-+---------------------+     +---------------------+     +---------------------+
-          |                           |
-          |                           v
-          |                 +---------------------+
-          +---------------->|     Run Record      |
-                            |     (summary)       |
-                            +---------------------+
-```
+1. **Emit a schema-valid envelope** for every successful execution.
+2. **On failure**, emit an envelope with `result.success=false` and structured `result.error`.
+3. **Validate envelopes in adapters** (fail fast on integration bugs).
+4. Store large payloads as artifacts via `ArtifactRef` instead of embedding inline.
+5. Exclude volatile IDs (job IDs, timestamps) from stability-critical fingerprints.
 
-The adapter creates the ExecutionEnvelope and logs it as an artifact. Summary information is also written to the run record for efficient querying without loading full artifacts.
-
-## Accessing envelope data
+## Accessing Envelope Data
 
 ```python
 import json
@@ -140,35 +169,19 @@ from devqubit.storage import create_store, create_registry
 store = create_store()
 registry = create_registry()
 
-# Load run record
 record = registry.load(run_id)
-
-# Find envelope artifact
 envelope_artifact = next(
-    (a for a in record.artifacts if a.role == "envelope"),
-    None
+    (a for a in record.artifacts if a.role == "envelope"), None
 )
 
 if envelope_artifact:
-    # Load envelope JSON
-    envelope_bytes = store.get_bytes(envelope_artifact.digest)
-    envelope = json.loads(envelope_bytes)
+    envelope = json.loads(store.get_bytes(envelope_artifact.digest))
 
-    # Access device snapshot
-    device = envelope["device"]
-    print(f"Backend: {device['backend_name']}")
-    print(f"Qubits: {device['num_qubits']}")
-    # Access results (per-item)
+    # Device info
+    print(f"Backend: {envelope['device']['backend_name']}")
+
+    # Results
     for item in envelope["result"]["items"]:
         if "counts" in item:
-            counts = item["counts"]["counts"]
-            print(f"Item {item['item_index']}: {counts}")
-        elif "quasi_probability" in item:
-            dist = item["quasi_probability"]["distribution"]
-            print(f"Item {item['item_index']} quasi: {dist}")
-        elif "expectation" in item:
-            value = item["expectation"]["value"]
-            print(f"Item {item['item_index']} expval: {value}")
+            print(f"Counts: {item['counts']['counts']}")
 ```
-
-See `../guides/adapters` for what each SDK adapter captures.

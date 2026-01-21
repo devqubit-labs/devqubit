@@ -1,95 +1,161 @@
-# Core concepts
+# Core Concepts
 
-devqubit treats each execution as a **run** with a complete context.
+devqubit treats each execution as a **run** — a complete, tracked experiment with enough context to:
+
+- reproduce what happened,
+- compare results across time / devices / SDKs,
+- debug failures (even partial ones),
+- gate changes in CI via verification policies.
+
+> **Terminology**
+> - **Run Record**: lightweight metadata + user logs + pointers to artifacts (`devqubit.run/1.0` schema).
+> - **Artifacts**: content-addressed blobs (SHA-256) stored in an object store.
+> - **UEC / ExecutionEnvelope**: canonical, structured execution context produced by adapters (`devqubit.envelope/1.0` schema).
+
+## How It Works
+
+When you wrap a backend with `run.wrap()`, devqubit intercepts executions and automatically captures circuits, device state, and results. Manual logging (`log_param`, `log_metric`) is stored alongside. Everything flows into a content-addressed store for deduplication and integrity, with queryable metadata in a registry.
+
+```mermaid
+flowchart TB
+  subgraph USER["<b>User Code</b>"]
+    direction TB
+    TRACK["with track(project) as run"]
+    LOG["log_param()<br/>log_metric()<br/>set_tag()"]
+    WRAP["backend = run.wrap(device)"]
+    EXEC["backend.run(circuit, shots=1000)"]
+    TRACK --> LOG
+    TRACK --> WRAP
+    WRAP --> EXEC
+  end
+
+  subgraph CAPTURE["<b>Adapter</b> automatic capture"]
+    direction LR
+    CAP_PRG["📄 Circuit"]
+    CAP_DEV["⚙️ Device"]
+    CAP_RES["📊 Results"]
+  end
+
+  subgraph PERSIST["<b>Storage</b>"]
+    direction TB
+    ENV["ExecutionEnvelope"]
+    RR["Run Record"]
+    STORE[("Object Store<br/>content-addressed")]
+    REG[("Registry<br/>queryable index")]
+    ENV -->|artifact| STORE
+    RR --> REG
+    STORE -.->|refs| RR
+  end
+
+  subgraph TOOLS["<b>Analysis</b>"]
+    direction LR
+    DIFF["diff()"]
+    VERIFY["verify()"]
+    DIFF ~~~ VERIFY
+  end
+
+  EXEC --> CAPTURE
+  CAP_PRG --> ENV
+  CAP_DEV --> ENV
+  CAP_RES --> ENV
+  LOG --> RR
+  REG --> TOOLS
+  STORE --> TOOLS
+
+  classDef userNode fill:#e8f4fd,stroke:#1e88e5,color:#0d47a1
+  classDef captureNode fill:#fff3e0,stroke:#fb8c00,color:#e65100
+  classDef storageNode fill:#e8f5e9,stroke:#43a047,color:#1b5e20
+  classDef toolNode fill:#f3e5f5,stroke:#8e24aa,color:#4a148c
+
+  class TRACK,LOG,WRAP,EXEC userNode
+  class CAP_PRG,CAP_DEV,CAP_RES captureNode
+  class ENV,RR,STORE,REG storageNode
+  class DIFF,VERIFY toolNode
+```
+
+## What Is Persisted Where?
+
+| Store | Content | Purpose |
+|-------|---------|---------|
+| **Object store** | Immutable blobs by SHA-256 digest | Deduplication, integrity, offline bundles |
+| **Registry** | Run records (run_id, project, timestamps, fingerprints, artifact pointers) | Queries, listing, baseline management |
 
 ## Run
 
-A run is a single tracked experiment execution. A run has:
+A run captures everything about a single experiment execution. Run records follow the `devqubit.run/1.0` schema:
 
-- **metadata**: project, timestamps, status, run name
-- **parameters**: experiment configuration values (`log_param`)
-- **metrics**: numeric results (`log_metric`), including time series with steps
-- **tags**: string key-value pairs for categorization (`set_tag`)
-- **artifacts**: program/circuit, results, device snapshot, config, etc.
-- **fingerprints**: hashes for reproducibility checks
-- **environment**: Python version, installed packages (optional)
-- **provenance**: git commit, branch, dirty state (optional)
+| Category | Description |
+|----------|-------------|
+| **Metadata** | Project, timestamps, status, run name, adapter |
+| **Parameters** | Configuration values via `log_param()` |
+| **Metrics** | Numeric results via `log_metric()` (scalar or time series) |
+| **Tags** | String key-value pairs via `set_tag()` |
+| **Artifacts** | Programs (QASM/QPY), results, device snapshots, envelopes, notes |
+| **Fingerprints** | Stable hashes for reproducibility and comparison |
+| **Environment** | Python + packages (optional capture) |
+| **Provenance** | Git commit/branch/dirty state (optional capture) |
 
-## Run lifecycle
+## Run Lifecycle
 
-A run transitions through these statuses:
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> RUNNING
+  RUNNING --> FINISHED: success
+  RUNNING --> FAILED: exception
+  RUNNING --> KILLED: interrupt
+  FINISHED --> [*]
+  FAILED --> [*]
+  KILLED --> [*]
+```
 
-- `RUNNING` — run is active
-- `FINISHED` — run completed successfully
-- `FAILED` — run encountered an error (exception captured)
-- `KILLED` — run was interrupted (e.g., KeyboardInterrupt)
+**Robustness guarantees:**
+- Best-effort finalization — failures during finalization are recorded; the system still attempts to persist.
+- Content integrity — artifacts are addressed by digest; corruption is detectable.
+- Schema evolution — explicit `schema` field enables backwards-compatible readers.
 
-## Artifact and role
+## Artifacts
 
-Artifacts are any captured files/blobs (QPY, OpenQASM, counts JSON, device snapshot, …). Each artifact is content-addressed using SHA-256 digests, enabling deduplication and integrity verification.
-
-Each artifact has a **role** that tells devqubit how it should be interpreted:
+Artifacts are immutable blobs stored by digest, enabling deduplication, caching, and integrity verification.
 
 | Role | Description |
 |------|-------------|
 | `program` | Circuit/program artifacts (QPY, QASM) — used for fingerprinting |
-| `results` | Measurement counts, expectation values |
-| `device_raw` | Raw backend properties from provider (lossless capture) |
-| `envelope` | ExecutionEnvelope — the Uniform Execution Contract record |
-| `config` | Compile/execute options, environment capture |
+| `results_raw` | Raw SDK result payloads |
+| `device_raw` | Raw backend properties (lossless capture) |
+| `envelope` | ExecutionEnvelope (UEC JSON) |
+| `config` | Compile/execute options, environment snapshots |
 | `documentation` | Notes, attachments |
+
+Artifact ingestion enforces a maximum size (~20 MB default). For larger blobs, store a URI pointer or truncate with `meta.original_digest` marker.
 
 ## Fingerprints
 
-Fingerprints are SHA-256 hashes computed from run contents:
+Fingerprints are stable hashes computed from run contents, excluding volatile fields (timestamps, job IDs).
 
 | Fingerprint | Based on |
 |-------------|----------|
-| `program` | All program artifacts (role="program") |
-| `canonical_program` | Canonical OpenQASM3 artifacts (cross-SDK comparable) |
-| `device` | Backend identity + device snapshot artifacts |
-| `intent` | Adapter + compile + execute configuration |
-| `run` | Combined hash of program + device + intent |
+| `program` | Program hashes (from UEC program snapshot) |
+| `device` | Device identity + stable snapshots |
+| `intent` | Adapter + SDK + compile/execute config |
+| `run` | Combined fingerprint of program + device + intent |
 
-Use fingerprints to detect drift/regressions and to enforce reproducibility in CI.
+Use fingerprints to detect what changed between runs — same `program` fingerprint means same circuit structure, even if run at different times.
 
-## Metric series
+## Comparison and Verification
 
-For iterative experiments (e.g., VQE optimization), metrics can be logged with a `step` parameter to create time series:
+**diff** compares two runs across multiple dimensions: parameter/metric changes, program match (digest/structural/parametric), device drift (calibration deltas), and result distribution distance (TVD with optional bootstrap noise context).
 
-```python
-for step in range(100):
-    loss = optimizer.step()
-    run.log_metric("loss", loss, step=step)
-```
-
-The final metric value (without step) is stored in `data.metrics`, while the full series is stored in `data.metric_series`.
-
-## Run grouping and lineage
-
-Runs can be organized using:
-
-- **group_id** / **group_name** — group related runs together (parameter sweeps, benchmark suites, nightly calibration checks)
-- **parent_run_id** — track run lineage (rerun from baseline, experiment iterations)
+**verify** checks a candidate run against a baseline with a policy: required equality constraints (params/program), TVD thresholds (hard limit or noise-calibrated), and produces a human-readable verdict with root-cause analysis.
 
 ```python
-# Parameter sweep with grouping
-for shots in [100, 1000, 10000]:
-    with track(project="bell", group_id="shots_sweep_001") as run:
-        run.log_param("shots", shots)
-        # ...
+from devqubit import diff, verify_baseline
 
-# Rerun from baseline
-with track(project="bell", parent_run_id=baseline_run_id) as run:
-    # ...
+# Compare two runs
+result = diff("run_a", "run_b")
+print(result.tvd, result.program.structural_match)
+
+# CI verification
+result = verify_baseline("candidate", project="bell")
+assert result.ok, result.verdict.summary
 ```
-
-## Comparison and baseline verification
-
-- **diff** compares two runs (or bundles) and reports what changed:
-  - parameter/metric differences
-  - program artifacts (exact and structural match)
-  - device calibration drift
-  - result distribution distance (TVD)
-- **baseline** is a reference run per project
-- **verify** checks a candidate run against the baseline using policy thresholds

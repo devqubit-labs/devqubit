@@ -39,12 +39,13 @@ def _version_from_pyproject() -> str | None:
     return None
 
 
-# Read package version
-release = _version_from_pyproject()
+# Read package version (robust fallback)
+release = _version_from_pyproject() or "0.0.0"
 version = release.split("+")[0]
 
 extensions = [
     "myst_parser",
+    "sphinxcontrib.mermaid",
     "sphinx.ext.intersphinx",
     "sphinx.ext.autosectionlabel",
 ]
@@ -59,6 +60,9 @@ myst_enable_extensions = [
     "tasklist",
 ]
 myst_heading_anchors = 3  # auto-generate anchors for h1-h3
+
+# Treat ```mermaid fences as Sphinx directives
+myst_fence_as_directive = ["mermaid"]
 
 templates_path: list[str] = []
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

@@ -1,13 +1,13 @@
-# Workspace and storage
+# Workspace and Storage
 
-devqubit is local-first: everything is stored in a **workspace directory** by default, but remote cloud storage is also supported.
+devqubit is local-first: everything is stored in a **workspace directory** by default, with optional cloud storage for teams and CI/CD.
 
-## Default location
+## Default Location
 
-By default:
-
-- macOS/Linux: `~/.devqubit`
-- Windows: your home directory equivalent
+| Platform | Default path |
+|----------|-------------|
+| macOS/Linux | `~/.devqubit` |
+| Windows | `%USERPROFILE%\.devqubit` |
 
 Override with:
 
@@ -15,45 +15,57 @@ Override with:
 export DEVQUBIT_HOME=/path/to/workspace
 ```
 
-## Layout
+## Workspace Layout
 
-A typical local workspace:
-
-```text
+```
 ~/.devqubit/
-├── objects/                 # content-addressed store (by digest)
+├── objects/                 # Content-addressed artifact store
 │   └── sha256/
 │       └── a1/
-│           └── a1b2c3...    # artifacts stored by digest
-├── registry.db              # run metadata index (SQLite)
-└── baselines.json           # project baseline mappings
+│           └── a1b2c3...    # Artifacts stored by digest
+├── registry.db              # Run metadata index (SQLite)
+└── baselines.json           # Project baseline mappings
 ```
 
-## Why content-addressing?
+## Content-Addressing
 
-Artifacts are stored by digest, so devqubit can:
+Artifacts are stored by SHA-256 digest, enabling:
+- Deduplication of identical blobs
+- Integrity verification
+- Portable bundles
 
-- deduplicate identical blobs,
-- validate integrity,
-- pack/unpack portable bundles reliably.
+## Remote Storage
 
-## Remote storage
-
-For team collaboration or CI/CD pipelines, devqubit supports cloud storage:
+For team collaboration or CI/CD, devqubit supports cloud storage:
 
 | Backend | URL Scheme | Installation |
 |---------|------------|--------------|
-| Amazon S3 | `s3://bucket/prefix` | `pip install 'devqubit[s3]'` |
-| Google Cloud Storage | `gs://bucket/prefix` | `pip install 'devqubit[gcs]'` |
+| Amazon S3 | `s3://bucket/prefix` | `pip install 'devqubit-engine[s3]'` |
+| Google Cloud Storage | `gs://bucket/prefix` | `pip install 'devqubit-engine[gcs]'` |
 
-Example:
+Configure via environment variables:
+
 ```bash
 export DEVQUBIT_STORAGE_URL="s3://my-bucket/devqubit/objects"
 export DEVQUBIT_REGISTRY_URL="s3://my-bucket/devqubit"
 ```
 
-See {doc}`remote-storage` for detailed configuration, authentication, and CI/CD integration.
+Or programmatically:
 
-## Configuration
+```python
+from devqubit.storage import create_store, create_registry
 
-See {doc}`../guides/configuration` for environment variables and programmatic configuration.
+store = create_store("s3://my-bucket/devqubit/objects")
+registry = create_registry("s3://my-bucket/devqubit")
+```
+
+## Custom Backends
+
+Register custom backends via entry points:
+
+```python
+from devqubit.storage.factory import register_store_backend
+
+register_store_backend("myscheme", MyCustomStore)
+store = create_store("myscheme://location")
+```
