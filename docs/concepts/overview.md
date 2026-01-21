@@ -18,7 +18,7 @@ When you wrap a backend with `run.wrap()`, devqubit intercepts executions and au
 
 ```mermaid
 flowchart TB
-  subgraph USER["<b>User Code</b>"]
+  subgraph USER["User Code"]
     direction TB
     TRACK["with track(project) as run"]
     LOG["log_param()<br/>log_metric()<br/>set_tag()"]
@@ -29,14 +29,14 @@ flowchart TB
     WRAP --> EXEC
   end
 
-  subgraph CAPTURE["<b>Adapter</b> automatic capture"]
+  subgraph CAPTURE["Adapter automatic capture"]
     direction LR
     CAP_PRG["📄 Circuit"]
-    CAP_DEV["⚙️ Device"]
+    CAP_DEV["🔧 Device"]
     CAP_RES["📊 Results"]
   end
 
-  subgraph PERSIST["<b>Storage</b>"]
+  subgraph PERSIST["Storage"]
     direction TB
     ENV["ExecutionEnvelope"]
     RR["Run Record"]
@@ -47,7 +47,7 @@ flowchart TB
     STORE -.->|refs| RR
   end
 
-  subgraph TOOLS["<b>Analysis</b>"]
+  subgraph TOOLS["Analysis"]
     direction LR
     DIFF["diff()"]
     VERIFY["verify()"]
@@ -62,15 +62,10 @@ flowchart TB
   REG --> TOOLS
   STORE --> TOOLS
 
-  classDef userNode fill:#e8f4fd,stroke:#1e88e5,color:#0d47a1
-  classDef captureNode fill:#fff3e0,stroke:#fb8c00,color:#e65100
-  classDef storageNode fill:#e8f5e9,stroke:#43a047,color:#1b5e20
-  classDef toolNode fill:#f3e5f5,stroke:#8e24aa,color:#4a148c
-
-  class TRACK,LOG,WRAP,EXEC userNode
-  class CAP_PRG,CAP_DEV,CAP_RES captureNode
-  class ENV,RR,STORE,REG storageNode
-  class DIFF,VERIFY toolNode
+  style USER fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
+  style CAPTURE fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
+  style PERSIST fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
+  style TOOLS fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#5b21b6
 ```
 
 ## What Is Persisted Where?
@@ -98,15 +93,21 @@ A run captures everything about a single experiment execution. Run records follo
 ## Run Lifecycle
 
 ```mermaid
-stateDiagram-v2
-  direction LR
-  [*] --> RUNNING
-  RUNNING --> FINISHED: success
-  RUNNING --> FAILED: exception
-  RUNNING --> KILLED: interrupt
-  FINISHED --> [*]
-  FAILED --> [*]
-  KILLED --> [*]
+flowchart LR
+  S((" ")) --> R[RUNNING]
+  R -->|success| F[FINISHED]
+  R -->|exception| X[FAILED]
+  R -->|interrupted| K[KILLED]
+  F --> E((" "))
+  X --> E
+  K --> E
+
+  style S fill:#334155,stroke:#334155
+  style E fill:#334155,stroke:#334155
+  style R fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
+  style F fill:#d1fae5,stroke:#059669,stroke-width:2px,color:#065f46
+  style X fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b
+  style K fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
 ```
 
 **Robustness guarantees:**

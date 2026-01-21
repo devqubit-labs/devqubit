@@ -11,10 +11,10 @@ Quantum experiments depend on **programs**, **devices**, **execution settings**,
 
 ```mermaid
 flowchart TB
-  subgraph ENV["<b>ExecutionEnvelope</b> · <code>devqubit.envelope/1.0</code>"]
+  subgraph ENV["ExecutionEnvelope"]
     direction TB
 
-    META["<b>envelope_id</b><br/><b>created_at</b><br/><b>schema</b>"]
+    META["envelope_id<br/> created_at<br/> schema<br/>"]
 
     subgraph SNAPSHOTS[" "]
       direction TB
@@ -30,7 +30,7 @@ flowchart TB
     end
   end
 
-  subgraph STORE["<b>Artifact Store</b>"]
+  subgraph STORE["Artifact Store"]
     direction TB
     A1["circuit.qasm<br/><i>sha256:a1b2c3...</i>"]
     A2["circuit.qpy<br/><i>sha256:d4e5f6...</i>"]
@@ -44,13 +44,18 @@ flowchart TB
   DEV -.->|raw_properties_ref| A3
   RES -.->|raw_result_ref| A4
 
-  classDef envMeta fill:#e3f2fd,stroke:#1976d2,color:#0d47a1
-  classDef snapshot fill:#e8f5e9,stroke:#43a047,color:#1b5e20
-  classDef artifact fill:#fff8e1,stroke:#f9a825,color:#f57f17
-
-  class META envMeta
-  class PROD,PROG,DEV,EXEC,RES snapshot
-  class A1,A2,A3,A4 artifact
+  style ENV fill:#dbeafe,stroke:#2563eb,stroke-width:2px,color:#1e40af
+  style STORE fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#92400e
+  style META fill:#bfdbfe,stroke:#3b82f6,color:#1e40af
+  style PROD fill:#d1fae5,stroke:#10b981,color:#065f46
+  style PROG fill:#d1fae5,stroke:#10b981,color:#065f46
+  style DEV fill:#d1fae5,stroke:#10b981,color:#065f46
+  style EXEC fill:#d1fae5,stroke:#10b981,color:#065f46
+  style RES fill:#d1fae5,stroke:#10b981,color:#065f46
+  style A1 fill:#fef9c3,stroke:#eab308,color:#713f12
+  style A2 fill:#fef9c3,stroke:#eab308,color:#713f12
+  style A3 fill:#fef9c3,stroke:#eab308,color:#713f12
+  style A4 fill:#fef9c3,stroke:#eab308,color:#713f12
 ```
 
 **Required fields**: `schema`, `envelope_id`, `created_at`, `producer`, `result`.
