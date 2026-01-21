@@ -37,6 +37,9 @@ Examples
     # Compare two runs
     devqubit diff abc123 def456
 
+    # Verify against baseline
+    devqubit verify abc123 --project myproject
+
     # Pack a run for sharing
     devqubit pack abc123 -o experiment.zip
 
@@ -46,14 +49,15 @@ Examples
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import click
-import devqubit_engine.cli.admin as admin
-import devqubit_engine.cli.artifacts as artifacts
-import devqubit_engine.cli.bundle as bundle
-import devqubit_engine.cli.compare as compare
-import devqubit_engine.cli.runs as runs
+
+
+def _get_default_root() -> Path:
+    """Get default workspace root directory."""
+    return Path.home() / ".devqubit"
 
 
 @click.group()
@@ -66,26 +70,65 @@ import devqubit_engine.cli.runs as runs
     help="Workspace root directory (default: ~/.devqubit).",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Less output.")
+@click.option("--debug", is_flag=True, hidden=True, help="Enable debug logging.")
 @click.version_option(package_name="devqubit", prog_name="devqubit")
 @click.pass_context
-def cli(ctx: click.Context, root: Path | None, quiet: bool) -> None:
+def cli(ctx: click.Context, root: Path | None, quiet: bool, debug: bool) -> None:
     """devqubit - Quantum experiment tracking."""
+    import logging
+
+    # Initialize context object
     ctx.ensure_object(dict)
-    ctx.obj["root"] = root or (Path.home() / ".devqubit")
+    ctx.obj["root"] = root or _get_default_root()
     ctx.obj["quiet"] = quiet
+    ctx.obj["debug"] = debug
+
+    # Configure logging
+    if debug:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+    elif not quiet:
+        logging.basicConfig(
+            level=logging.WARNING,
+            format="%(levelname)s: %(message)s",
+        )
 
 
-# Register all command modules
-runs.register(cli)
-artifacts.register(cli)
-compare.register(cli)
-bundle.register(cli)
-admin.register(cli)
+def _register_commands() -> None:
+    """Register all command modules with CLI."""
+    # Import here to avoid circular imports and speed up --help
+    import devqubit_engine.cli.admin as admin
+    import devqubit_engine.cli.artifacts as artifacts
+    import devqubit_engine.cli.bundle as bundle
+    import devqubit_engine.cli.compare as compare
+    import devqubit_engine.cli.runs as runs
+
+    runs.register(cli)
+    artifacts.register(cli)
+    compare.register(cli)
+    bundle.register(cli)
+    admin.register(cli)
+
+
+# Register commands
+_register_commands()
 
 
 def main() -> None:
     """Entry point for the CLI."""
-    cli()
+    try:
+        cli()
+    except KeyboardInterrupt:
+        click.echo("\nInterrupted.", err=True)
+        sys.exit(130)
+    except Exception as e:
+        # Only show full traceback in debug mode
+        if "--debug" in sys.argv:
+            raise
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

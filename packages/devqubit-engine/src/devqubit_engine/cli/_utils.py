@@ -33,7 +33,19 @@ def echo(msg: str, *, err: bool = False) -> None:
     click.echo(msg, err=err)
 
 
-def print_json(obj: Any) -> None:
+def echo_err(msg: str) -> None:
+    """
+    Print error message to stderr.
+
+    Parameters
+    ----------
+    msg : str
+        Error message to print.
+    """
+    click.echo(msg, err=True)
+
+
+def print_json(obj: Any, indent: int = 2) -> None:
     """
     Print object as formatted JSON.
 
@@ -42,8 +54,10 @@ def print_json(obj: Any) -> None:
     obj : Any
         Object to serialize and print. Non-serializable objects
         are converted to strings.
+    indent : int, default=2
+        Indentation level for JSON formatting.
     """
-    click.echo(json.dumps(obj, indent=2, default=str))
+    click.echo(json.dumps(obj, indent=indent, default=str))
 
 
 def print_table(
@@ -86,7 +100,9 @@ def print_table(
 
     # Print rows
     for row in rows:
-        echo(fmt.format(*[str(c) for c in row]))
+        # Pad row if shorter than headers
+        padded_row = list(row) + [""] * (len(headers) - len(row))
+        echo(fmt.format(*[str(c) for c in padded_row[: len(headers)]]))
 
 
 def root_from_ctx(ctx: click.Context) -> Path:
@@ -104,14 +120,62 @@ def root_from_ctx(ctx: click.Context) -> Path:
     -------
     Path
         Workspace root directory path.
+
+    Raises
+    ------
+    click.ClickException
+        If context is not properly initialized.
     """
-    root: Path = ctx.obj["root"]
+    if ctx.obj is None:
+        raise click.ClickException(
+            "CLI context not initialized. This is a bug - please report it."
+        )
+
+    root = ctx.obj.get("root")
+    if root is None:
+        # Fallback to default
+        root = Path.home() / ".devqubit"
+
+    root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
+def is_quiet(ctx: click.Context) -> bool:
+    """
+    Check if quiet mode is enabled in context.
+
+    Parameters
+    ----------
+    ctx : click.Context
+        Click context.
+
+    Returns
+    -------
+    bool
+        True if quiet mode is enabled.
+    """
+    if ctx.obj is None:
+        return False
+    return bool(ctx.obj.get("quiet", False))
+
+
 def format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:
-    """Format measurement counts as ASCII table."""
+    """
+    Format measurement counts as ASCII table.
+
+    Parameters
+    ----------
+    counts : CountsInfo
+        Counts information object.
+    top_k : int, default=10
+        Number of top outcomes to display.
+
+    Returns
+    -------
+    str
+        Formatted table string.
+    """
     lines = [
         f"Total shots: {counts.total_shots:,}",
         f"Unique outcomes: {counts.num_outcomes}",
@@ -130,7 +194,19 @@ def format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:
 
 
 def format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:
-    """Format artifact list as ASCII table."""
+    """
+    Format artifact list as ASCII table.
+
+    Parameters
+    ----------
+    artifacts : list of ArtifactInfo
+        List of artifact info objects.
+
+    Returns
+    -------
+    str
+        Formatted table string.
+    """
     if not artifacts:
         return "No artifacts found."
 
@@ -148,3 +224,58 @@ def format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:
     lines.append(f"Total: {len(artifacts)} artifact(s)")
 
     return "\n".join(lines)
+
+
+def truncate_id(run_id: str, length: int = 12) -> str:
+    """
+    Truncate a run ID for display.
+
+    Parameters
+    ----------
+    run_id : str
+        Full run ID.
+    length : int, default=12
+        Maximum length before truncation.
+
+    Returns
+    -------
+    str
+        Truncated ID with "..." suffix if needed.
+    """
+    if not run_id:
+        return ""
+    if len(run_id) <= length:
+        return run_id
+    return run_id[:length] + "..."
+
+
+def safe_get(d: dict[str, Any] | None, *keys: str, default: Any = None) -> Any:
+    """
+    Safely get a nested value from a dictionary.
+
+    Parameters
+    ----------
+    d : dict or None
+        Dictionary to traverse.
+    *keys : str
+        Keys to follow in sequence.
+    default : Any, default=None
+        Value to return if any key is missing.
+
+    Returns
+    -------
+    Any
+        The value at the nested key path, or default.
+    """
+    if d is None:
+        return default
+
+    current = d
+    for key in keys:
+        if not isinstance(current, dict):
+            return default
+        current = current.get(key)
+        if current is None:
+            return default
+
+    return current

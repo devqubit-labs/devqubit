@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Test fixtures for devqubit public API and CLI tests."""
+"""Test fixtures for devqubit CLI tests."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import pytest
-from click.testing import CliRunner
+from click.testing import CliRunner, Result
 from devqubit_engine.cli import cli
 from devqubit_engine.config import Config
 from devqubit_engine.storage.backends.local import LocalRegistry, LocalStore
@@ -54,20 +54,28 @@ def registry(workspace: Path) -> LocalRegistry:
 
 
 @pytest.fixture
-def invoke(cli_runner: CliRunner, workspace: Path) -> Callable[..., Any]:
+def invoke(cli_runner: CliRunner, workspace: Path) -> Callable[..., Result]:
     """
     Invoke CLI commands in isolated workspace.
+
+    Returns Result with exit_code, output, etc.
+    Exceptions are caught so tests can verify error handling.
 
     Usage:
         result = invoke("list")
         result = invoke("show", "run123", "--format", "json")
+        result = invoke("delete", "run123", input="y\\n")
     """
 
-    def _invoke(*args: str, input: str | None = None):
+    def _invoke(
+        *args: str,
+        input: str | None = None,
+        catch_exceptions: bool = True,
+    ) -> Result:
         return cli_runner.invoke(
             cli,
             ["--root", str(workspace), *args],
-            catch_exceptions=False,
+            catch_exceptions=catch_exceptions,
             input=input,
         )
 
@@ -94,6 +102,7 @@ def make_run(registry: LocalRegistry, store: LocalStore) -> Callable[..., RunRec
         tags: dict[str, Any] | None = None,
         counts: dict[str, int] | None = None,
         group_id: str | None = None,
+        group_name: str | None = None,
     ) -> RunRecord:
         counter[0] += 1
         if run_id is None:
@@ -140,6 +149,8 @@ def make_run(registry: LocalRegistry, store: LocalStore) -> Callable[..., RunRec
 
         if group_id:
             record["group_id"] = group_id
+        if group_name:
+            record["group_name"] = group_name
 
         registry.save(record)
         return RunRecord(record=record, artifacts=artifacts)
@@ -149,13 +160,13 @@ def make_run(registry: LocalRegistry, store: LocalStore) -> Callable[..., RunRec
 
 @pytest.fixture
 def sample_run(make_run: Callable[..., RunRecord]) -> RunRecord:
-    """Single sample run with counts."""
+    """Single sample run with counts and tags."""
     return make_run(
         run_id="sample_run_001",
         project="sample_project",
-        params={"shots": 1000},
-        metrics={"fidelity": 0.95},
-        tags={"experiment": "bell"},
+        params={"shots": 1000, "optimization_level": 2},
+        metrics={"fidelity": 0.95, "success_rate": 0.98},
+        tags={"experiment": "bell", "validated": "true"},
         counts={"00": 500, "11": 500},
     )
 

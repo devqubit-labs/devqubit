@@ -9,6 +9,8 @@ Commands for browsing run artifacts, viewing their contents, and managing tags.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import click
 from devqubit_engine.cli._utils import (
     echo,
@@ -19,29 +21,72 @@ from devqubit_engine.cli._utils import (
 )
 
 
+if TYPE_CHECKING:
+    from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
+    from devqubit_engine.tracking.record import RunRecord
+
+
 def register(cli: click.Group) -> None:
     """Register artifact commands with CLI."""
     cli.add_command(artifacts_group)
     cli.add_command(tag_group)
 
 
-def _load_run(ctx: click.Context, run_id: str):
-    """Load run record and storage components."""
+def _get_storage(
+    ctx: click.Context,
+) -> tuple[RegistryProtocol, ObjectStoreProtocol]:
+    """
+    Create registry and store from CLI context.
+
+    Parameters
+    ----------
+    ctx : click.Context
+        CLI context with root directory.
+
+    Returns
+    -------
+    tuple
+        (registry, store) instances.
+    """
     from devqubit_engine.config import Config
-    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
     store = create_store(config=config)
+    return registry, store
+
+
+def _load_run(ctx: click.Context, run_id: str) -> RunRecord:
+    """
+    Load run record by ID.
+
+    Parameters
+    ----------
+    ctx : click.Context
+        CLI context.
+    run_id : str
+        Run identifier.
+
+    Returns
+    -------
+    RunRecord
+        Loaded run record.
+
+    Raises
+    ------
+    click.ClickException
+        If run is not found.
+    """
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    registry, _ = _get_storage(ctx)
 
     try:
-        run_record = registry.load(run_id)
+        return registry.load(run_id)
     except RunNotFoundError as e:
         raise click.ClickException(f"Run not found: {run_id}") from e
-
-    return run_record, registry, store
 
 
 def _parse_selector(selector: str) -> str | int:
@@ -65,43 +110,74 @@ def artifacts_group() -> None:
 @artifacts_group.command("list")
 @click.argument("run_id")
 @click.option("--role", "-r", help="Filter by role (program, results, etc).")
-@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.option("--kind", "-k", help="Filter by kind substring.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["table", "json"]),
+    default="table",
+)
 @click.pass_context
 def artifacts_list(
     ctx: click.Context,
     run_id: str,
     role: str | None,
+    kind: str | None,
     fmt: str,
 ) -> None:
     """List artifacts in a run."""
     from devqubit_engine.storage.artifacts.lookup import list_artifacts
 
-    run_record, _, store = _load_run(ctx, run_id)
-    artifacts = list_artifacts(run_record, role=role, store=store)
+    registry, store = _get_storage(ctx)
+
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    try:
+        run_record = registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
+    artifacts = list_artifacts(
+        run_record,
+        role=role,
+        kind_contains=kind,
+        store=store,
+    )
 
     if fmt == "json":
         print_json([a.to_dict() for a in artifacts])
-    else:
-        echo(format_artifacts_table(artifacts))
+        return
+
+    if not artifacts:
+        echo("No artifacts found.")
+        return
+
+    echo(format_artifacts_table(artifacts))
 
 
 @artifacts_group.command("show")
 @click.argument("run_id")
 @click.argument("selector")
 @click.option("--raw", is_flag=True, help="Output raw bytes to stdout.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
 @click.pass_context
 def artifacts_show(
     ctx: click.Context,
     run_id: str,
     selector: str,
     raw: bool,
+    fmt: str,
 ) -> None:
     """
     Show artifact content.
 
     SELECTOR can be: index (0, 1, ...), kind substring, or role:kind pattern.
 
-    \b
     Examples:
         devqubit artifacts show abc123 0
         devqubit artifacts show abc123 counts
@@ -114,13 +190,22 @@ def artifacts_show(
         get_artifact_text,
     )
 
-    run_record, _, store = _load_run(ctx, run_id)
+    registry, store = _get_storage(ctx)
+
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    try:
+        run_record = registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
     selector_val = _parse_selector(selector)
 
     art = get_artifact(run_record, selector_val)
     if not art:
         raise click.ClickException(f"Artifact not found: {selector}")
 
+    # Raw binary output (bypasses format)
     if raw:
         data = get_artifact_bytes(run_record, selector_val, store)
         if data:
@@ -128,6 +213,22 @@ def artifacts_show(
         return
 
     text = get_artifact_text(run_record, selector_val, store)
+
+    if fmt == "json":
+        result = {
+            "role": art.role,
+            "kind": art.kind,
+            "digest": art.digest,
+            "media_type": art.media_type,
+            "content": text,
+            "is_binary": text is None,
+        }
+        if art.meta:
+            result["meta"] = art.meta
+        print_json(result)
+        return
+
+    # Pretty format
     if text:
         echo(f"# {art.role}/{art.kind} ({art.digest[:20]}...)\n")
         echo(text)
@@ -135,25 +236,46 @@ def artifacts_show(
         echo(f"Binary artifact: {art.role}/{art.kind}")
         echo(f"Digest: {art.digest}")
         echo(f"Media type: {art.media_type}")
-        echo("Use --raw to output binary content.")
+        echo("\nUse --raw to output binary content.")
 
 
 @artifacts_group.command("counts")
 @click.argument("run_id")
 @click.option("--top", "-k", type=int, default=10, help="Show top K outcomes.")
-@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
+@click.option(
+    "--experiment",
+    "-e",
+    type=int,
+    default=None,
+    help="Experiment index for batch jobs.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["table", "json"]),
+    default="table",
+)
 @click.pass_context
 def artifacts_counts(
     ctx: click.Context,
     run_id: str,
     top: int,
+    experiment: int | None,
     fmt: str,
 ) -> None:
     """Show measurement counts from a run."""
     from devqubit_engine.storage.artifacts.counts import get_counts
 
-    run_record, _, store = _load_run(ctx, run_id)
-    counts = get_counts(run_record, store)
+    registry, store = _get_storage(ctx)
+
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    try:
+        run_record = registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
+    counts = get_counts(run_record, store, experiment_index=experiment)
 
     if not counts:
         raise click.ClickException("No counts found in run.")
@@ -167,8 +289,9 @@ def artifacts_counts(
                 "probabilities": counts.probabilities,
             }
         )
-    else:
-        echo(format_counts_table(counts, top_k=top))
+        return
+
+    echo(format_counts_table(counts, top_k=top))
 
 
 # =============================================================================
@@ -181,6 +304,30 @@ def tag_group() -> None:
     """Manage run tags."""
 
 
+def _validate_tag_key(key: str) -> str:
+    """
+    Validate and normalize a tag key.
+
+    Raises
+    ------
+    click.ClickException
+        If key is invalid.
+    """
+    key = key.strip()
+    if not key:
+        raise click.ClickException("Tag key cannot be empty")
+    if len(key) > 128:
+        raise click.ClickException(f"Tag key too long (max 128): {key[:32]}...")
+    # Allow alphanumeric, underscore, hyphen, dot
+    import re
+
+    if not re.match(r"^[\w.\-]+$", key):
+        raise click.ClickException(
+            f"Invalid tag key '{key}': use only alphanumeric, underscore, hyphen, dot"
+        )
+    return key
+
+
 @tag_group.command("add")
 @click.argument("run_id")
 @click.argument("tags", nargs=-1, required=True)
@@ -191,25 +338,41 @@ def tag_add(ctx: click.Context, run_id: str, tags: tuple[str, ...]) -> None:
 
     Tags can be key=value pairs or just keys (value defaults to "true").
 
-    \b
     Examples:
         devqubit tag add abc123 experiment=bell
         devqubit tag add abc123 validated production
     """
-    run_record, registry, _ = _load_run(ctx, run_id)
-    record = run_record.record
-    run_tags = record.get("data", {}).get("tags", {})
+    registry, _ = _get_storage(ctx)
 
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    try:
+        run_record = registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
+    # Get current tags
+    current_tags = dict(run_record.tags)
+
+    added = 0
     for tag in tags:
         if "=" in tag:
             key, value = tag.split("=", 1)
+            key = _validate_tag_key(key)
+            value = value.strip()
         else:
-            key, value = tag, "true"
-        run_tags[key] = value
+            key = _validate_tag_key(tag)
+            value = "true"
 
-    record.setdefault("data", {})["tags"] = run_tags
+        current_tags[key] = value
+        added += 1
+
+    # Update record
+    record = run_record.record
+    record.setdefault("data", {})["tags"] = current_tags
     registry.save(record)
-    echo(f"Added {len(tags)} tag(s) to {run_id}")
+
+    echo(f"Added {added} tag(s) to {run_id}")
 
 
 @tag_group.command("remove")
@@ -220,29 +383,60 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
     """
     Remove tags from a run.
 
-    \b
     Examples:
         devqubit tag remove abc123 experiment
         devqubit tag remove abc123 temp debug
     """
-    run_record, registry, _ = _load_run(ctx, run_id)
+    registry, _ = _get_storage(ctx)
+
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    try:
+        run_record = registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
+    # Get current tags
+    current_tags = dict(run_record.tags)
+
+    removed = 0
+    not_found = []
+    for key in keys:
+        key = key.strip()
+        if key in current_tags:
+            del current_tags[key]
+            removed += 1
+        else:
+            not_found.append(key)
+
+    # Update record
     record = run_record.record
-    run_tags = record.get("data", {}).get("tags", {})
-
-    removed = sum(1 for key in keys if run_tags.pop(key, None) is not None)
-
-    record.setdefault("data", {})["tags"] = run_tags
+    record.setdefault("data", {})["tags"] = current_tags
     registry.save(record)
-    echo(f"Removed {removed} tag(s) from {run_id}")
+
+    if removed > 0:
+        echo(f"Removed {removed} tag(s) from {run_id}")
+    if not_found:
+        echo(f"Tags not found: {', '.join(not_found)}")
 
 
 @tag_group.command("list")
 @click.argument("run_id")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
 @click.pass_context
-def tag_list(ctx: click.Context, run_id: str) -> None:
+def tag_list(ctx: click.Context, run_id: str, fmt: str) -> None:
     """List tags on a run."""
-    run_record, _, _ = _load_run(ctx, run_id)
-    run_tags = run_record.record.get("data", {}).get("tags", {})
+    run_record = _load_run(ctx, run_id)
+    run_tags = run_record.tags
+
+    if fmt == "json":
+        print_json(run_tags)
+        return
 
     if not run_tags:
         echo("No tags.")

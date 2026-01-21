@@ -23,6 +23,46 @@ from devqubit_engine.storage.errors import ObjectNotFoundError
 
 logger = logging.getLogger(__name__)
 
+# Maximum allowed uncompressed size for metadata files (10 MB)
+_MAX_METADATA_SIZE = 10 * 1024 * 1024
+
+# Maximum allowed uncompressed size for objects (1 GB)
+_MAX_OBJECT_SIZE = 1024 * 1024 * 1024
+
+
+def _validate_digest(digest: str) -> str | None:
+    """
+    Validate digest format and return hex part.
+
+    Parameters
+    ----------
+    digest : str
+        Digest to validate.
+
+    Returns
+    -------
+    str or None
+        Lowercase hex part if valid, None otherwise.
+    """
+    if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        return None
+
+    hex_part = digest[7:].strip().lower()
+    if len(hex_part) != 64:
+        return None
+
+    try:
+        int(hex_part, 16)
+    except ValueError:
+        return None
+
+    return hex_part
+
+
+def _digest_to_path(hex_part: str) -> str:
+    """Convert hex digest to bundle object path."""
+    return f"objects/sha256/{hex_part[:2]}/{hex_part}"
+
 
 def is_bundle_path(path: Any) -> bool:
     """
@@ -69,6 +109,9 @@ class BundleStore:
     Objects are stored under ``objects/sha256/<prefix>/<hex>`` and addressed
     by ``sha256:<hex>`` digests.
 
+    This class provides a partial implementation of ObjectStoreProtocol,
+    supporting read-only operations only.
+
     Parameters
     ----------
     zf : zipfile.ZipFile
@@ -91,6 +134,10 @@ class BundleStore:
         self._zf = zf
         # Cache namelist for O(1) exists() checks
         self._names = frozenset(zf.namelist())
+        # Cache ZipInfo for size lookups
+        self._info_cache: dict[str, zipfile.ZipInfo] = {}
+        for info in zf.infolist():
+            self._info_cache[info.filename] = info
 
     def get_bytes(self, digest: str) -> bytes:
         """
@@ -113,24 +160,42 @@ class BundleStore:
         ObjectNotFoundError
             If the object is not present in the bundle.
         """
-        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        hex_part = _validate_digest(digest)
+        if hex_part is None:
             raise ValueError(f"Invalid digest format: {digest!r}")
 
-        hex_part = digest[7:].strip().lower()
-        if len(hex_part) != 64:
-            raise ValueError(f"Invalid digest length: {digest!r}")
+        path = _digest_to_path(hex_part)
 
-        try:
-            int(hex_part, 16)
-        except ValueError as e:
-            raise ValueError(f"Invalid digest hex: {digest!r}") from e
-
-        path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
+        # Check for zip bomb before reading
+        info = self._info_cache.get(path)
+        if info is not None and info.file_size > _MAX_OBJECT_SIZE:
+            raise ValueError(
+                f"Object too large: {info.file_size} bytes " f"(max {_MAX_OBJECT_SIZE})"
+            )
 
         try:
             return self._zf.read(path)
         except KeyError as e:
             raise ObjectNotFoundError(f"sha256:{hex_part}") from e
+
+    def get_bytes_or_none(self, digest: str) -> bytes | None:
+        """
+        Retrieve bytes by digest, returning None if not found.
+
+        Parameters
+        ----------
+        digest : str
+            Object identifier in the form ``sha256:<64 hex chars>``.
+
+        Returns
+        -------
+        bytes or None
+            Raw object bytes, or None if not found or invalid digest.
+        """
+        try:
+            return self.get_bytes(digest)
+        except (ObjectNotFoundError, ValueError):
+            return None
 
     def exists(self, digest: str) -> bool:
         """
@@ -147,24 +212,54 @@ class BundleStore:
             True if the object exists in the bundle.
             Invalid digests return False.
         """
-        if not isinstance(digest, str) or not digest.startswith("sha256:"):
+        hex_part = _validate_digest(digest)
+        if hex_part is None:
             return False
 
-        hex_part = digest[7:].strip().lower()
-        if len(hex_part) != 64:
-            return False
-
-        try:
-            int(hex_part, 16)
-        except ValueError:
-            return False
-
-        path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
+        path = _digest_to_path(hex_part)
         return path in self._names
 
-    def list_objects(self) -> Iterator[str]:
+    def get_size(self, digest: str) -> int:
+        """
+        Get the uncompressed size of an object.
+
+        Parameters
+        ----------
+        digest : str
+            Object identifier in the form ``sha256:<64 hex chars>``.
+
+        Returns
+        -------
+        int
+            Uncompressed size in bytes.
+
+        Raises
+        ------
+        ValueError
+            If digest format is invalid.
+        ObjectNotFoundError
+            If the object is not present in the bundle.
+        """
+        hex_part = _validate_digest(digest)
+        if hex_part is None:
+            raise ValueError(f"Invalid digest format: {digest!r}")
+
+        path = _digest_to_path(hex_part)
+        info = self._info_cache.get(path)
+
+        if info is None:
+            raise ObjectNotFoundError(f"sha256:{hex_part}")
+
+        return info.file_size
+
+    def list_digests(self, prefix: str | None = None) -> Iterator[str]:
         """
         Iterate over all stored object digests in the bundle.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            Filter by digest prefix (e.g., "sha256:ab").
 
         Yields
         ------
@@ -172,15 +267,31 @@ class BundleStore:
             Digests in the form ``sha256:<64 hex chars>``.
         """
         for name in self._names:
-            if name.startswith("objects/sha256/") and len(name.split("/")) == 4:
-                hex_part = name.split("/")[-1].strip().lower()
-                if len(hex_part) != 64:
-                    continue
-                try:
-                    int(hex_part, 16)
-                except ValueError:
-                    continue
-                yield f"sha256:{hex_part}"
+            if not name.startswith("objects/sha256/"):
+                continue
+
+            parts = name.split("/")
+            if len(parts) != 4:
+                continue
+
+            hex_part = parts[-1].strip().lower()
+            if len(hex_part) != 64:
+                continue
+
+            try:
+                int(hex_part, 16)
+            except ValueError:
+                continue
+
+            digest = f"sha256:{hex_part}"
+
+            if prefix is not None and not digest.startswith(prefix):
+                continue
+
+            yield digest
+
+    # Alias for compatibility
+    list_objects = list_digests
 
 
 class Bundle:
@@ -268,6 +379,48 @@ class Bundle:
         status = "open" if self._zf else "closed"
         return f"Bundle({self.path!r}, {status})"
 
+    def _read_json(self, filename: str, max_size: int = _MAX_METADATA_SIZE) -> Any:
+        """
+        Read and parse a JSON file from the bundle.
+
+        Parameters
+        ----------
+        filename : str
+            Name of file in bundle.
+        max_size : int
+            Maximum allowed uncompressed size.
+
+        Returns
+        -------
+        Any
+            Parsed JSON content.
+
+        Raises
+        ------
+        RuntimeError
+            If bundle is not open.
+        ValueError
+            If file is too large or not valid JSON.
+        """
+        if self._zf is None:
+            raise RuntimeError("Bundle not open")
+
+        # Check size before reading
+        try:
+            info = self._zf.getinfo(filename)
+            if info.file_size > max_size:
+                raise ValueError(
+                    f"{filename} too large: {info.file_size} bytes (max {max_size})"
+                )
+        except KeyError as e:
+            raise ValueError(f"Missing required file: {filename}") from e
+
+        data = self._zf.read(filename)
+        try:
+            return json.loads(data.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise ValueError(f"Invalid JSON in {filename}: {e}") from e
+
     @property
     def manifest(self) -> dict[str, Any]:
         """
@@ -285,9 +438,7 @@ class Bundle:
             If the bundle is not open.
         """
         if self._manifest is None:
-            if self._zf is None:
-                raise RuntimeError("Bundle not open")
-            self._manifest = json.loads(self._zf.read("manifest.json").decode("utf-8"))
+            self._manifest = self._read_json("manifest.json")
         return self._manifest
 
     @property
@@ -306,9 +457,7 @@ class Bundle:
             If the bundle is not open.
         """
         if self._run_record is None:
-            if self._zf is None:
-                raise RuntimeError("Bundle not open")
-            self._run_record = json.loads(self._zf.read("run.json").decode("utf-8"))
+            self._run_record = self._read_json("run.json")
         return self._run_record
 
     @property
@@ -353,7 +502,7 @@ class Bundle:
         list of str
             Digests in the form ``sha256:<64 hex chars>``.
         """
-        return list(self.store.list_objects())
+        return list(self.store.list_digests())
 
     def get_artifact_kinds(self) -> list[str]:
         """
@@ -394,3 +543,59 @@ class Bundle:
             Adapter name, or empty string if not present.
         """
         return self.run_record.get("adapter", "")
+
+    def get_status(self) -> str:
+        """
+        Get run status from run record.
+
+        Returns
+        -------
+        str
+            Run status (RUNNING, FINISHED, FAILED, KILLED),
+            or "UNKNOWN" if not present.
+        """
+        info = self.run_record.get("info", {})
+        if isinstance(info, dict):
+            return info.get("status", "UNKNOWN")
+        return "UNKNOWN"
+
+    def get_created_at(self) -> str | None:
+        """
+        Get run creation timestamp.
+
+        Returns
+        -------
+        str or None
+            ISO 8601 timestamp, or None if not present.
+        """
+        return self.run_record.get("created_at")
+
+    def validate_objects(self) -> tuple[list[str], list[str]]:
+        """
+        Validate that all artifact digests exist in bundle.
+
+        Returns
+        -------
+        tuple of (list, list)
+            (present_digests, missing_digests)
+        """
+        present: list[str] = []
+        missing: list[str] = []
+
+        arts = self.run_record.get("artifacts", []) or []
+        if not isinstance(arts, list):
+            return present, missing
+
+        for art in arts:
+            if not isinstance(art, dict):
+                continue
+            digest = art.get("digest", "")
+            if not digest:
+                continue
+
+            if self.store.exists(digest):
+                present.append(digest)
+            else:
+                missing.append(digest)
+
+        return present, missing

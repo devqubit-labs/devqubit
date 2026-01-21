@@ -95,6 +95,10 @@ class Op(Enum):
     EXISTS = "exists"
 
 
+# Map of string operators to Op enum for faster lookup
+_OP_MAP: dict[str, Op] = {op.value: op for op in Op}
+
+
 @dataclass(frozen=True)
 class Condition:
     """
@@ -215,9 +219,11 @@ def _tokenize(query: str) -> list[tuple[str, str]]:
     while pos < len(query):
         match = _TOKEN_RE.match(query, pos)
         if not match:
-            raise QueryParseError(
-                f"Invalid token at position {pos}: {query[pos:pos+10]!r}"
-            )
+            # Show context around the error
+            context = query[pos : pos + 20]
+            if len(query) > pos + 20:
+                context += "..."
+            raise QueryParseError(f"Invalid token at position {pos}: {context!r}")
         token_type = match.lastgroup
         value = match.group()
         pos = match.end()
@@ -239,6 +245,34 @@ def _parse_value(token_type: str, token_value: str) -> Any:
         # Bare word treated as string
         return token_value
     return token_value
+
+
+def _parse_op(op_str: str) -> Op:
+    """
+    Parse operator string to Op enum.
+
+    Parameters
+    ----------
+    op_str : str
+        Operator string (e.g., ">=", "~").
+
+    Returns
+    -------
+    Op
+        Parsed operator.
+
+    Raises
+    ------
+    QueryParseError
+        If operator is not recognized.
+    """
+    op = _OP_MAP.get(op_str)
+    if op is None:
+        valid_ops = ", ".join(_OP_MAP.keys())
+        raise QueryParseError(
+            f"Unknown operator: {op_str!r}. Valid operators: {valid_ops}"
+        )
+    return op
 
 
 def parse_query(query_str: str) -> Query:
@@ -292,7 +326,9 @@ def parse_query(query_str: str) -> Query:
     while i < len(tokens):
         # Expect: FIELD [OP VALUE | EXISTS]
         if tokens[i][0] != "FIELD":
-            raise QueryParseError(f"Expected field name, got {tokens[i]}")
+            raise QueryParseError(
+                f"Expected field name, got '{tokens[i][1]}' ({tokens[i][0]})"
+            )
         field = tokens[i][1]
         i += 1
 
@@ -305,7 +341,7 @@ def parse_query(query_str: str) -> Query:
             i += 1
         elif tokens[i][0] == "OP":
             op_str = tokens[i][1]
-            op = Op(op_str)
+            op = _parse_op(op_str)  # Now properly converts to QueryParseError
             i += 1
 
             if i >= len(tokens):
@@ -315,17 +351,21 @@ def parse_query(query_str: str) -> Query:
             conditions.append(Condition(field=field, op=op, value=value))
             i += 1
         else:
-            raise QueryParseError(f"Expected operator, got {tokens[i]}")
+            raise QueryParseError(
+                f"Expected operator after '{field}', got '{tokens[i][1]}'"
+            )
 
         # Check for AND (explicit connector required between conditions)
         if i < len(tokens):
             if tokens[i][0] == "AND":
                 i += 1
             elif tokens[i][0] == "OR":
-                raise QueryParseError("OR not supported in MVP - use multiple queries")
+                raise QueryParseError(
+                    "OR not supported. Use separate queries or combine results."
+                )
             elif tokens[i][0] == "FIELD":
-                # Implicit AND - allow but could also raise here
-                pass
+                # Implicit AND - allow for convenience
+                logger.debug("Implicit AND between conditions at position %d", i)
 
     logger.debug("Parsed query with %d conditions", len(conditions))
     return Query(conditions=conditions)
@@ -392,7 +432,7 @@ def _resolve_field(record: dict[str, Any], field: str) -> tuple[bool, Any]:
             if "name" not in proj:
                 return (False, None)
             return (True, proj["name"])
-        return (True, str(proj))
+        return (True, str(proj) if proj else "")
 
     if field == "adapter":
         if "adapter" not in record:
@@ -421,15 +461,24 @@ def _resolve_field(record: dict[str, Any], field: str) -> tuple[bool, Any]:
     if field.startswith("metric.") or field.startswith("metrics."):
         # Strip prefix and look in data.metrics
         suffix = field.split(".", 1)[1]
-        return _get_nested_value(record.get("data", {}), f"metrics.{suffix}")
+        data = record.get("data")
+        if not isinstance(data, dict):
+            return (False, None)
+        return _get_nested_value(data, f"metrics.{suffix}")
 
     if field.startswith("params."):
         suffix = field.split(".", 1)[1]
-        return _get_nested_value(record.get("data", {}), f"params.{suffix}")
+        data = record.get("data")
+        if not isinstance(data, dict):
+            return (False, None)
+        return _get_nested_value(data, f"params.{suffix}")
 
     if field.startswith("tag.") or field.startswith("tags."):
         suffix = field.split(".", 1)[1]
-        return _get_nested_value(record.get("data", {}), f"tags.{suffix}")
+        data = record.get("data")
+        if not isinstance(data, dict):
+            return (False, None)
+        return _get_nested_value(data, f"tags.{suffix}")
 
     # Direct path lookup
     return _get_nested_value(record, field)
@@ -609,7 +658,7 @@ def search_records(
         keyed.sort(key=lambda x: x[0], reverse=descending)
         results = [rec for _, rec in keyed] + missing
 
-    if limit is not None:
+    if limit is not None and limit > 0:
         results = results[:limit]
 
     return results

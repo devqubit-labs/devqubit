@@ -28,7 +28,14 @@ from __future__ import annotations
 from typing import Any
 
 import click
-from devqubit_engine.cli._utils import echo, print_json, print_table, root_from_ctx
+from devqubit_engine.cli._utils import (
+    echo,
+    print_json,
+    print_table,
+    root_from_ctx,
+    safe_get,
+    truncate_id,
+)
 
 
 def register(cli: click.Group) -> None:
@@ -41,6 +48,15 @@ def register(cli: click.Group) -> None:
     cli.add_command(groups_group)
 
 
+def _get_run_tags(run_record: Any) -> dict[str, Any]:
+    """Safely extract tags from a run record."""
+    data = run_record.record.get("data") if hasattr(run_record, "record") else {}
+    if not isinstance(data, dict):
+        return {}
+    tags = data.get("tags")
+    return tags if isinstance(tags, dict) else {}
+
+
 @click.command("list")
 @click.option("--limit", "-n", type=int, default=20, show_default=True)
 @click.option("--project", "-p", default=None, help="Filter by project.")
@@ -49,7 +65,11 @@ def register(cli: click.Group) -> None:
 @click.option("--backend", "-b", default=None, help="Filter by backend name.")
 @click.option("--group", "-g", default=None, help="Filter by group ID.")
 @click.option(
-    "--tag", "-t", "tags", multiple=True, help="Filter by tag (key or key=value)."
+    "--tag",
+    "-t",
+    "tags",
+    multiple=True,
+    help="Filter by tag (key or key=value).",
 )
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
 @click.pass_context
@@ -80,6 +100,7 @@ def list_runs(
     config = Config(root_dir=root)
     registry = create_registry(config=config)
 
+    # When filtering by tags, fetch more runs initially then filter
     filter_kwargs: dict[str, Any] = {
         "limit": limit if not tags else 1000,
         "project": project,
@@ -99,18 +120,21 @@ def list_runs(
         for tag in tags:
             if "=" in tag:
                 key, value = tag.split("=", 1)
-                tag_filters[key] = value
+                tag_filters[key.strip()] = value.strip()
             else:
-                tag_filters[tag] = None
+                tag_filters[tag.strip()] = None
 
         filtered_runs = []
         for r in runs:
             run_id = r.get("run_id", "")
+            if not run_id:
+                continue
             try:
                 run_record = registry.load(run_id)
-                run_tags = run_record.record.get("data", {}).get("tags", {})
+                run_tags = _get_run_tags(run_record)
                 match = all(
-                    key in run_tags and (expected is None or run_tags[key] == expected)
+                    key in run_tags
+                    and (expected is None or run_tags.get(key) == expected)
                     for key, expected in tag_filters.items()
                 )
                 if match:
@@ -118,7 +142,7 @@ def list_runs(
                     if len(filtered_runs) >= limit:
                         break
             except Exception:
-                pass
+                continue
         runs = filtered_runs
 
     if fmt == "json":
@@ -133,17 +157,23 @@ def list_runs(
     rows = []
     for r in runs:
         proj = r.get("project")
-        proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj or "")
-        adapter_name = r.get("adapter") or r.get("info", {}).get("adapter", "")
-        status_val = r.get("status") or r.get("info", {}).get("status", "")
+        if isinstance(proj, dict):
+            proj_name = proj.get("name", "")
+        else:
+            proj_name = str(proj) if proj else ""
+
+        info = r.get("info", {}) or {}
+        adapter_name = r.get("adapter") or info.get("adapter", "")
+        status_val = r.get("status") or info.get("status", "")
+        created = str(r.get("created_at", ""))[:19]
 
         rows.append(
             [
-                (r.get("run_id", "")[:12] + "...") if r.get("run_id") else "",
+                truncate_id(r.get("run_id", "")),
                 proj_name[:20],
                 str(adapter_name),
                 str(status_val),
-                str(r.get("created_at", ""))[:19],
+                created,
             ]
         )
 
@@ -155,7 +185,10 @@ def list_runs(
 @click.option("--limit", "-n", type=int, default=20, show_default=True)
 @click.option("--project", "-p", default=None, help="Filter by project first.")
 @click.option(
-    "--sort", "-s", default=None, help="Sort by field (e.g., metric.fidelity)."
+    "--sort",
+    "-s",
+    default=None,
+    help="Sort by field (e.g., metric.fidelity).",
 )
 @click.option("--asc", is_flag=True, help="Sort ascending (default: descending).")
 @click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
@@ -189,6 +222,7 @@ def search_runs(
     config = Config(root_dir=root)
     registry = create_registry(config=config)
 
+    # Validate query syntax
     try:
         parse_query(query)
     except QueryParseError as e:
@@ -214,21 +248,25 @@ def search_runs(
 
     headers = ["Run ID", "Project", "Status", "Created"]
     if sort and sort.startswith("metric."):
-        headers.append(sort.split(".", 1)[1][:12])
+        metric_name = sort.split(".", 1)[1]
+        headers.append(metric_name[:12])
 
     rows = []
     for r in results:
         row = [
-            r.run_id[:12] + "...",
+            truncate_id(r.run_id),
             r.project[:20] if r.project else "",
             r.status or "",
             r.created_at[:19] if r.created_at else "",
         ]
         if sort and sort.startswith("metric."):
             metric_name = sort.split(".", 1)[1]
-            metrics = r.record.get("data", {}).get("metrics", {})
+            metrics = safe_get(r.record, "data", "metrics", default={})
             val = metrics.get(metric_name)
-            row.append(f"{val:.4f}" if isinstance(val, float) else str(val or "-"))
+            if isinstance(val, float):
+                row.append(f"{val:.4f}")
+            else:
+                row.append(str(val) if val is not None else "-")
         rows.append(row)
 
     print_table(headers, rows, f"Search Results ({len(results)})")
@@ -237,7 +275,10 @@ def search_runs(
 @click.command("show")
 @click.argument("run_id")
 @click.option(
-    "--format", "fmt", type=click.Choice(["pretty", "json"]), default="pretty"
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
 )
 @click.pass_context
 def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
@@ -260,55 +301,70 @@ def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
         return
 
     record = run_record.record
+    info = record.get("info", {}) or {}
+
     echo(f"Run ID:      {run_record.run_id}")
-    echo(f"Project:     {run_record.project}")
-    echo(f"Adapter:     {run_record.adapter}")
-    echo(f"Status:      {run_record.status}")
-    echo(f"Created:     {run_record.created_at}")
-    echo(f"Ended:       {record.get('info', {}).get('ended_at', '')}")
+    echo(f"Project:     {run_record.project or '-'}")
+    echo(f"Adapter:     {run_record.adapter or '-'}")
+    echo(f"Status:      {run_record.status or '-'}")
+    echo(f"Created:     {run_record.created_at or '-'}")
+    echo(f"Ended:       {info.get('ended_at') or '-'}")
 
-    if record.get("group_id"):
-        group_name = record.get("group_name") or ""
-        echo(
-            f"Group:       {record['group_id']}"
-            + (f" ({group_name})" if group_name else "")
-        )
-    if record.get("parent_run_id"):
-        echo(f"Parent:      {record['parent_run_id']}")
+    group_id = record.get("group_id")
+    if group_id:
+        group_name = record.get("group_name", "")
+        suffix = f" ({group_name})" if group_name else ""
+        echo(f"Group:       {group_id}{suffix}")
 
-    backend = record.get("backend", {})
+    parent_id = record.get("parent_run_id")
+    if parent_id:
+        echo(f"Parent:      {parent_id}")
+
+    backend = record.get("backend", {}) or {}
     if backend:
         echo(f"Backend:     {backend.get('name', 'unknown')}")
         if backend.get("provider"):
-            echo(f"Provider:    {backend.get('provider')}")
+            echo(f"Provider:    {backend['provider']}")
 
     fps = run_record.fingerprints
     if fps:
         run_fp = fps.get("run", "")
-        echo(f"Fingerprint: {run_fp[:16]}..." if run_fp else "Fingerprint: -")
+        if run_fp:
+            echo(f"Fingerprint: {run_fp[:16]}...")
+        else:
+            echo("Fingerprint: -")
 
-    prov = record.get("provenance", {})
+    prov = record.get("provenance", {}) or {}
     git = prov.get("git", {}) if isinstance(prov, dict) else {}
     if git:
         commit = git.get("commit", "")[:8] if git.get("commit") else ""
         branch = git.get("branch", "")
         dirty = " (dirty)" if git.get("dirty") else ""
-        echo(f"Git:         {branch}@{commit}{dirty}")
+        if commit or branch:
+            echo(f"Git:         {branch}@{commit}{dirty}")
 
-    params = record.get("data", {}).get("params", {})
+    data = record.get("data", {}) or {}
+    params = data.get("params", {}) or {}
     if params:
-        echo(f"Params:      {len(params)} parameters")
+        echo(f"Params:      {len(params)} parameter(s)")
 
-    metrics = record.get("data", {}).get("metrics", {})
+    metrics = data.get("metrics", {}) or {}
     if metrics:
-        echo(f"Metrics:     {len(metrics)} metrics")
-        for k, v in list(metrics.items())[:5]:
-            echo(f"  {k}: {v:.6f}" if isinstance(v, float) else f"  {k}: {v}")
-        if len(metrics) > 5:
-            echo(f"  ... and {len(metrics) - 5} more")
+        echo(f"Metrics:     {len(metrics)} metric(s)")
+        for i, (k, v) in enumerate(metrics.items()):
+            if i >= 5:
+                echo(f"  ... and {len(metrics) - 5} more")
+                break
+            if isinstance(v, float):
+                echo(f"  {k}: {v:.6f}")
+            else:
+                echo(f"  {k}: {v}")
 
-    if run_record.artifacts:
-        echo(f"Artifacts:   {len(run_record.artifacts)} artifacts")
+    artifacts = run_record.artifacts
+    if artifacts:
+        echo(f"Artifacts:   {len(artifacts)} artifact(s)")
+    else:
+        echo("Artifacts:   0")
 
 
 @click.command("delete")
@@ -316,7 +372,7 @@ def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
 @click.pass_context
 def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
-    """Delete a run."""
+    """Delete a run and its artifacts."""
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
@@ -327,9 +383,10 @@ def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
     if not registry.exists(run_id):
         raise click.ClickException(f"Run not found: {run_id}")
 
-    if not yes and not click.confirm(f"Delete run {run_id}?"):
-        echo("Cancelled.")
-        return
+    if not yes:
+        if not click.confirm(f"Delete run {run_id}? This cannot be undone."):
+            echo("Cancelled.")
+            return
 
     ok = registry.delete(run_id)
     if not ok:
@@ -339,8 +396,9 @@ def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
 
 
 @click.command("projects")
+@click.option("--format", "fmt", type=click.Choice(["table", "json"]), default="table")
 @click.pass_context
-def list_projects(ctx: click.Context) -> None:
+def list_projects(ctx: click.Context, fmt: str) -> None:
     """List all projects."""
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
@@ -350,6 +408,22 @@ def list_projects(ctx: click.Context) -> None:
     registry = create_registry(config=config)
 
     projects = registry.list_projects()
+
+    if fmt == "json":
+        result = []
+        for p in projects:
+            count = registry.count_runs(project=p)
+            baseline = registry.get_baseline(p)
+            result.append(
+                {
+                    "name": p,
+                    "run_count": count,
+                    "baseline_run_id": baseline.get("run_id") if baseline else None,
+                }
+            )
+        print_json(result)
+        return
+
     if not projects:
         echo("No projects found.")
         return
@@ -359,7 +433,7 @@ def list_projects(ctx: click.Context) -> None:
     for p in projects:
         count = registry.count_runs(project=p)
         baseline = registry.get_baseline(p)
-        baseline_str = baseline["run_id"][:12] + "..." if baseline else "-"
+        baseline_str = truncate_id(baseline["run_id"]) if baseline else "-"
         rows.append([p, count, baseline_str])
 
     print_table(headers, rows, "Projects")
@@ -405,15 +479,22 @@ def groups_list(
         return
 
     headers = ["Group ID", "Name", "Runs", "Last Run"]
-    rows = [
-        [
-            g["group_id"][:20] + ("..." if len(g["group_id"]) > 20 else ""),
-            (g.get("group_name") or "")[:20],
-            g["run_count"],
-            g.get("last_created", "")[:19],
-        ]
-        for g in groups
-    ]
+    rows = []
+    for g in groups:
+        group_id = g.get("group_id", "")
+        group_name = g.get("group_name") or ""
+        run_count = g.get("run_count", 0)
+        last_created = str(g.get("last_created", ""))[:19]
+
+        rows.append(
+            [
+                truncate_id(group_id, 20),
+                group_name[:20],
+                run_count,
+                last_created,
+            ]
+        )
+
     print_table(headers, rows, f"Run Groups ({len(groups)})")
 
 
@@ -446,12 +527,14 @@ def groups_show(
         return
 
     headers = ["Run ID", "Status", "Created"]
-    rows = [
-        [
-            r.get("run_id", "")[:12] + "...",
-            r.get("status", ""),
-            str(r.get("created_at", ""))[:19],
-        ]
-        for r in runs
-    ]
-    print_table(headers, rows, f"Runs in {group_id} ({len(runs)})")
+    rows = []
+    for r in runs:
+        rows.append(
+            [
+                truncate_id(r.get("run_id", "")),
+                r.get("status", ""),
+                str(r.get("created_at", ""))[:19],
+            ]
+        )
+
+    print_table(headers, rows, f"Runs in {truncate_id(group_id, 20)} ({len(runs)})")

@@ -20,11 +20,10 @@ replay
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import click
-from devqubit_engine.cli._utils import echo, root_from_ctx
+from devqubit_engine.cli._utils import echo, print_json, root_from_ctx
 
 
 def register(cli: click.Group) -> None:
@@ -32,6 +31,13 @@ def register(cli: click.Group) -> None:
     cli.add_command(diff_cmd)
     cli.add_command(verify_cmd)
     cli.add_command(replay_cmd)
+
+
+def _is_quiet(ctx: click.Context) -> bool:
+    """Check if quiet mode is enabled."""
+    if ctx.obj is None:
+        return False
+    return bool(ctx.obj.get("quiet", False))
 
 
 @click.command("diff")
@@ -43,14 +49,25 @@ def register(cli: click.Group) -> None:
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["text", "json", "summary"]),
-    default="text",
+    type=click.Choice(["pretty", "json", "summary"]),
+    default="pretty",
     help="Output format.",
 )
 @click.option(
     "--no-circuit-diff",
     is_flag=True,
     help="Skip circuit semantic comparison.",
+)
+@click.option(
+    "--no-noise-context",
+    is_flag=True,
+    help="Skip bootstrap noise estimation (faster).",
+)
+@click.option(
+    "--item-index",
+    type=int,
+    default=0,
+    help="Result item index for TVD (default: 0, use -1 for all).",
 )
 @click.pass_context
 def diff_cmd(
@@ -60,6 +77,8 @@ def diff_cmd(
     output: Path | None,
     fmt: str,
     no_circuit_diff: bool,
+    no_noise_context: bool,
+    item_index: int,
 ) -> None:
     """
     Compare two runs or bundles comprehensively.
@@ -67,19 +86,26 @@ def diff_cmd(
     Shows complete comparison including parameters, program, device drift,
     TVD with bootstrap-calibrated noise context analysis.
 
+    REF_A and REF_B can be run IDs or bundle file paths (.zip).
+
     Examples:
         devqubit diff abc123 def456
         devqubit diff experiment1.zip experiment2.zip
         devqubit diff abc123 def456 --format json -o report.json
+        devqubit diff abc123 def456 --no-noise-context
     """
     from devqubit_engine.compare.diff import diff
     from devqubit_engine.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
     store = create_store(config=config)
+
+    # Convert item_index=-1 to "all"
+    item_idx: int | str = item_index if item_index >= 0 else "all"
 
     try:
         result = diff(
@@ -88,7 +114,13 @@ def diff_cmd(
             registry=registry,
             store=store,
             include_circuit_diff=not no_circuit_diff,
+            include_noise_context=not no_noise_context,
+            item_index=item_idx,
         )
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {e.run_id}") from e
+    except FileNotFoundError as e:
+        raise click.ClickException(f"Bundle not found: {e}") from e
     except Exception as e:
         raise click.ClickException(f"Comparison failed: {e}") from e
 
@@ -102,6 +134,7 @@ def diff_cmd(
 
     # Write to file or stdout
     if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(formatted, encoding="utf-8")
         echo(f"Report saved to {output}")
     else:
@@ -116,13 +149,13 @@ def diff_cmd(
 @click.option(
     "--noise-factor",
     type=float,
-    help="Fail if TVD > noise_factor x noise_p95 (bootstrap-calibrated threshold). Recommended: 1.0-1.5.",
+    help="Fail if TVD > noise_factor x noise_p95. Recommended: 1.0-1.5.",
 )
 @click.option(
     "--program-match-mode",
     type=click.Choice(["exact", "structural", "either"]),
     default="either",
-    help="Program matching mode: exact (digest), structural, either (default).",
+    help="Program matching mode.",
 )
 @click.option(
     "--no-params-match",
@@ -138,13 +171,15 @@ def diff_cmd(
 @click.option("--promote", is_flag=True, help="Promote to baseline on pass.")
 @click.option("--allow-missing", is_flag=True, help="Pass if no baseline exists.")
 @click.option(
-    "--junit", type=click.Path(path_type=Path), help="Write JUnit XML report."
+    "--junit",
+    type=click.Path(path_type=Path),
+    help="Write JUnit XML report.",
 )
 @click.option(
     "--format",
     "fmt",
-    type=click.Choice(["text", "json", "github", "summary"]),
-    default="text",
+    type=click.Choice(["pretty", "json", "github", "summary"]),
+    default="pretty",
     help="Output format.",
 )
 @click.pass_context
@@ -171,12 +206,10 @@ def verify_cmd(
     why it failed, and suggested actions.
 
     The --noise-factor option provides a shot-count-aware threshold using
-    bootstrap-calibrated noise estimation. Verification fails if TVD exceeds
-    noise_factor x noise_p95 (the 95th percentile of expected shot noise).
-    Recommended values: 1.0 (strict) to 1.5 (lenient).
+    bootstrap-calibrated noise estimation.
 
     The --program-match-mode option controls how programs are compared:
-    - exact: require identical artifact digests (strict reproducibility)
+    - exact: require identical artifact digests
     - structural: require same circuit structure (VQE/QAOA friendly)
     - either: pass if exact OR structural matches (default)
 
@@ -185,10 +218,9 @@ def verify_cmd(
         devqubit verify abc123 --project myproject --promote
         devqubit verify abc123 --tvd-max 0.05 --format json
         devqubit verify abc123 --noise-factor 1.0
-        devqubit verify abc123 --program-match-mode structural
     """
     from devqubit_engine.compare.ci import result_to_github_annotations, write_junit
-    from devqubit_engine.compare.results import ProgramMatchMode
+    from devqubit_engine.compare.types import ProgramMatchMode
     from devqubit_engine.compare.verify import (
         VerifyPolicy,
         verify,
@@ -238,22 +270,27 @@ def verify_cmd(
         proj = project or candidate.project
         if not proj:
             raise click.ClickException(
-                "No project specified and candidate has no project"
+                "No project specified and candidate has no project. "
+                "Use --project or --baseline."
             )
 
-        result = verify_against_baseline(
-            candidate,
-            project=proj,
-            store=store,
-            registry=registry,
-            policy=policy,
-            promote_on_pass=promote,
-        )
+        try:
+            result = verify_against_baseline(
+                candidate,
+                project=proj,
+                store=store,
+                registry=registry,
+                policy=policy,
+                promote_on_pass=promote,
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e)) from e
 
     # Write JUnit if requested
     if junit:
+        junit.parent.mkdir(parents=True, exist_ok=True)
         write_junit(result, junit)
-        if not ctx.obj.get("quiet"):
+        if not _is_quiet(ctx):
             echo(f"JUnit report written to {junit}")
 
     # Format output
@@ -270,7 +307,7 @@ def verify_cmd(
 
     # Add promotion notice if applicable
     if result.ok and promote and not baseline:
-        echo(f"\n✓ Promoted {candidate_id} to baseline for project")
+        echo(f"\n[OK] Promoted {candidate_id} to baseline for project")
 
     ctx.exit(0 if result.ok else 1)
 
@@ -288,9 +325,16 @@ def verify_cmd(
     help="Acknowledge experimental status (required).",
 )
 @click.option(
-    "--list-backends", is_flag=True, help="List available simulator backends."
+    "--list-backends",
+    is_flag=True,
+    help="List available simulator backends.",
 )
-@click.option("--format", "fmt", type=click.Choice(["text", "json"]), default="text")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
 @click.pass_context
 def replay_cmd(
     ctx: click.Context,
@@ -320,13 +364,17 @@ def replay_cmd(
     Examples:
         devqubit replay experiment.zip --experimental
         devqubit replay abc123 --backend aer_simulator --experimental --seed 42
-        devqubit replay abc123 --experimental --save && devqubit diff abc123 <replay_id>
+        devqubit replay abc123 --experimental --save
         devqubit replay --list-backends
     """
     from devqubit_engine.bundle.replay import list_available_backends, replay
 
     if list_backends:
         backends = list_available_backends()
+        if fmt == "json":
+            print_json(backends)
+            return
+
         if backends:
             echo("Available simulator backends:")
             echo("(Note: only simulators are currently supported)")
@@ -334,7 +382,7 @@ def replay_cmd(
             for sdk in sorted(backends.keys()):
                 echo(f"  {sdk}:")
                 for b in backends[sdk]:
-                    echo(f"    • {b}")
+                    echo(f"    - {b}")
         else:
             echo("No backends available.")
             echo("Install: qiskit-aer, amazon-braket-sdk, cirq, or pennylane")
@@ -351,23 +399,28 @@ def replay_cmd(
 
     root = root_from_ctx(ctx)
 
-    result = replay(
-        ref,
-        backend=backend,
-        root=root,
-        shots=shots,
-        seed=seed,
-        save_run=save,
-        project=project,
-        ack_experimental=True,
-    )
+    try:
+        result = replay(
+            ref,
+            backend=backend,
+            root=root,
+            shots=shots,
+            seed=seed,
+            save_run=save,
+            project=project,
+            ack_experimental=True,
+        )
+    except FileNotFoundError as e:
+        raise click.ClickException(f"Bundle not found: {e}") from e
+    except Exception as e:
+        raise click.ClickException(f"Replay failed: {e}") from e
 
     if fmt == "json":
-        echo(json.dumps(result.to_dict(), indent=2, default=str))
+        print_json(result.to_dict())
         ctx.exit(0 if result.ok else 1)
         return
 
-    # Text format
+    # Pretty format
     lines = [
         "=" * 70,
         "REPLAY RESULT (EXPERIMENTAL)",
@@ -386,7 +439,7 @@ def replay_cmd(
     lines.extend(
         [
             "",
-            f"Result: {'✓ OK' if result.ok else '✗ FAILED'}",
+            f"Result: {'[OK]' if result.ok else '[FAILED]'}",
             f"  {result.message}",
         ]
     )
@@ -400,7 +453,7 @@ def replay_cmd(
     if result.errors:
         lines.extend(["", "Warnings:"])
         for err in result.errors:
-            lines.append(f"  ⚠ {err}")
+            lines.append(f"  [!] {err}")
 
     lines.extend(["", "=" * 70])
 

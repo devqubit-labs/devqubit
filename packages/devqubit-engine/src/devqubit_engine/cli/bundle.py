@@ -27,21 +27,35 @@ from devqubit_engine.cli._utils import echo, print_json, root_from_ctx
 
 def register(cli: click.Group) -> None:
     """Register bundle commands with CLI."""
-    cli.add_command(pack_run_cmd)
-    cli.add_command(unpack_bundle_cmd)
-    cli.add_command(info_bundle)
+    cli.add_command(pack_cmd)
+    cli.add_command(unpack_cmd)
+    cli.add_command(info_cmd)
+
+
+def _is_quiet(ctx: click.Context) -> bool:
+    """Check if quiet mode is enabled."""
+    if ctx.obj is None:
+        return False
+    return bool(ctx.obj.get("quiet", False))
 
 
 @click.command("pack")
 @click.argument("run_id")
 @click.option("--out", "-o", type=click.Path(path_type=Path), help="Output file path.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing file.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
 @click.pass_context
-def pack_run_cmd(
+def pack_cmd(
     ctx: click.Context,
     run_id: str,
     out: Path | None,
     force: bool,
+    fmt: str,
 ) -> None:
     """
     Pack a run into a bundle.
@@ -56,52 +70,94 @@ def pack_run_cmd(
     """
     from devqubit_engine.bundle.pack import pack_run
     from devqubit_engine.config import Config
+    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
-    out = out or Path(f"{run_id}.devqubit.zip")
+    output_path = out or Path(f"{run_id}.devqubit.zip")
 
-    if out.exists() and not force:
-        raise click.ClickException(f"File exists: {out}. Use --force to overwrite.")
+    if output_path.exists() and not force:
+        raise click.ClickException(
+            f"File exists: {output_path}. Use --force to overwrite."
+        )
 
     config = Config(root_dir=root)
     store = create_store(config=config)
     registry = create_registry(config=config)
 
+    # Verify run exists before packing
+    try:
+        registry.load(run_id)
+    except RunNotFoundError as e:
+        raise click.ClickException(f"Run not found: {run_id}") from e
+
     try:
         result = pack_run(
             run_id=run_id,
-            output_path=out,
+            output_path=output_path,
             store=store,
             registry=registry,
         )
     except Exception as e:
         raise click.ClickException(f"Pack failed: {e}") from e
 
-    echo(f"Packed run {run_id} to {out}")
-    if not ctx.obj.get("quiet"):
+    if fmt == "json":
+        print_json(
+            {
+                "run_id": run_id,
+                "output_path": str(output_path),
+                "artifact_count": result.artifact_count,
+                "object_count": result.object_count,
+                "missing_objects": result.missing_objects,
+                "size_bytes": (
+                    output_path.stat().st_size if output_path.exists() else None
+                ),
+            }
+        )
+        return
+
+    echo(f"Packed run {run_id} to {output_path}")
+    if not _is_quiet(ctx):
         echo(f"  Artifacts: {result.artifact_count}")
         echo(f"  Objects:   {result.object_count}")
         if result.missing_objects:
             echo(f"  Missing:   {len(result.missing_objects)}")
+            for digest in result.missing_objects[:3]:
+                echo(f"    - {digest[:20]}...")
+            if len(result.missing_objects) > 3:
+                echo(f"    ... and {len(result.missing_objects) - 3} more")
 
 
 @click.command("unpack")
 @click.argument("bundle", type=click.Path(exists=True, path_type=Path))
 @click.option(
-    "--to", "-t", "dest", type=click.Path(path_type=Path), help="Destination workspace."
+    "--to",
+    "-t",
+    "dest",
+    type=click.Path(path_type=Path),
+    help="Destination workspace.",
 )
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing run.")
 @click.option(
-    "--verify/--no-verify", default=True, show_default=True, help="Verify digests."
+    "--verify/--no-verify",
+    default=True,
+    show_default=True,
+    help="Verify digests.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
 )
 @click.pass_context
-def unpack_bundle_cmd(
+def unpack_cmd(
     ctx: click.Context,
     bundle: Path,
     dest: Path | None,
     force: bool,
     verify: bool,
+    fmt: str,
 ) -> None:
     """
     Unpack a bundle into a workspace.
@@ -115,8 +171,16 @@ def unpack_bundle_cmd(
         devqubit unpack experiment.zip --force --no-verify
     """
     from devqubit_engine.bundle.pack import unpack_bundle
+    from devqubit_engine.bundle.reader import is_bundle_path
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
+
+    # Validate bundle before proceeding
+    if not is_bundle_path(bundle):
+        raise click.ClickException(
+            f"Not a valid devqubit bundle: {bundle}\n"
+            "Bundle must be a ZIP file containing manifest.json and run.json"
+        )
 
     root = root_from_ctx(ctx)
     dest = dest or root
@@ -141,8 +205,19 @@ def unpack_bundle_cmd(
     except Exception as e:
         raise click.ClickException(f"Unpack failed: {e}") from e
 
+    if fmt == "json":
+        print_json(
+            {
+                "run_id": result.run_id,
+                "destination": str(dest),
+                "artifact_count": result.artifact_count,
+                "object_count": result.object_count,
+            }
+        )
+        return
+
     echo(f"Unpacked to {dest}")
-    if not ctx.obj.get("quiet"):
+    if not _is_quiet(ctx):
         echo(f"  Run ID:    {result.run_id}")
         echo(f"  Artifacts: {result.artifact_count}")
         echo(f"  Objects:   {result.object_count}")
@@ -151,9 +226,23 @@ def unpack_bundle_cmd(
 @click.command("info")
 @click.argument("bundle", type=click.Path(exists=True, path_type=Path))
 @click.option(
-    "--format", "fmt", type=click.Choice(["pretty", "json"]), default="pretty"
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
 )
-def info_bundle(bundle: Path, fmt: str) -> None:
+@click.option(
+    "--objects", "show_objects", is_flag=True, help="List all object digests."
+)
+@click.option(
+    "--artifacts", "show_artifacts", is_flag=True, help="List artifact details."
+)
+def info_cmd(
+    bundle: Path,
+    fmt: str,
+    show_objects: bool,
+    show_artifacts: bool,
+) -> None:
     """
     Show bundle info without extracting.
 
@@ -163,32 +252,87 @@ def info_bundle(bundle: Path, fmt: str) -> None:
     Examples:
         devqubit info experiment.zip
         devqubit info experiment.zip --format json
+        devqubit info experiment.zip --artifacts
     """
-    from devqubit_engine.bundle.pack import list_bundle_contents
+    from devqubit_engine.bundle.reader import Bundle, is_bundle_path
+
+    if not is_bundle_path(bundle):
+        raise click.ClickException(
+            f"Not a valid devqubit bundle: {bundle}\n"
+            "Bundle must be a ZIP file containing manifest.json and run.json"
+        )
 
     try:
-        contents = list_bundle_contents(bundle)
+        with Bundle(bundle) as b:
+            manifest = b.manifest
+            run_record = b.run_record
+            objects = b.list_objects()
+            artifacts = run_record.get("artifacts", []) or []
+
+            contents = {
+                "bundle_path": str(bundle),
+                "run_id": b.run_id,
+                "project": b.get_project(),
+                "adapter": b.get_adapter(),
+                "artifact_count": len(artifacts),
+                "object_count": len(objects),
+                "manifest": manifest,
+            }
+
+            if show_objects:
+                contents["objects"] = objects
+
+            if show_artifacts:
+                contents["artifacts"] = artifacts
+
     except Exception as e:
-        raise click.ClickException(f"Failed: {e}") from e
+        raise click.ClickException(f"Failed to read bundle: {e}") from e
 
     if fmt == "json":
         print_json(contents)
         return
 
-    manifest = contents.get("manifest", {})
-
     echo(f"Bundle:      {bundle.name}")
-    echo(f"Run ID:      {contents.get('run_id', 'unknown')}")
-    echo(f"Project:     {contents.get('project', 'unknown')}")
-    echo(f"Adapter:     {contents.get('adapter', 'unknown')}")
-    echo(f"Artifacts:   {contents.get('artifact_count', 0)}")
-    echo(f"Objects:     {len(contents.get('objects', []))}")
+    echo(f"Run ID:      {contents['run_id'] or 'unknown'}")
+    echo(f"Project:     {contents['project'] or 'unknown'}")
+    echo(f"Adapter:     {contents['adapter'] or 'unknown'}")
+    echo(f"Artifacts:   {contents['artifact_count']}")
+    echo(f"Objects:     {contents['object_count']}")
 
+    # Additional manifest info
+    if manifest.get("format_version"):
+        echo(f"Format:      v{manifest['format_version']}")
     if manifest.get("backend_name"):
         echo(f"Backend:     {manifest['backend_name']}")
     if manifest.get("fingerprint"):
-        echo(f"Fingerprint: {manifest['fingerprint'][:16]}...")
+        fp = manifest["fingerprint"]
+        echo(f"Fingerprint: {fp[:16]}..." if len(fp) > 16 else f"Fingerprint: {fp}")
     if manifest.get("git_commit"):
         echo(f"Git commit:  {manifest['git_commit'][:8]}")
     if manifest.get("created_at"):
         echo(f"Packed at:   {manifest['created_at'][:19]}")
+
+    # Run record info
+    info = run_record.get("info", {})
+    if isinstance(info, dict):
+        if info.get("status"):
+            echo(f"Status:      {info['status']}")
+        if info.get("run_name"):
+            echo(f"Run name:    {info['run_name']}")
+
+    # Optional detailed listings
+    if show_artifacts and artifacts:
+        echo("\nArtifacts:")
+        for i, art in enumerate(artifacts):
+            if isinstance(art, dict):
+                kind = art.get("kind", "unknown")
+                role = art.get("role", "unknown")
+                digest = art.get("digest", "")[:16]
+                echo(f"  [{i}] {role}/{kind} ({digest}...)")
+
+    if show_objects and objects:
+        echo("\nObjects:")
+        for digest in objects[:20]:
+            echo(f"  {digest}")
+        if len(objects) > 20:
+            echo(f"  ... and {len(objects) - 20} more")

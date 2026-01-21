@@ -57,8 +57,19 @@ class RunRecord:
     """
 
     record: dict[str, Any]
-    artifacts: list[ArtifactRef] = field(default_factory=list)
+    artifacts: list[ArtifactRef] | None = field(default_factory=list)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
+
+    def _get_artifacts(self) -> list[ArtifactRef]:
+        """
+        Safely get artifacts list.
+
+        Returns
+        -------
+        list of ArtifactRef
+            Artifacts list (empty if None).
+        """
+        return self.artifacts if self.artifacts is not None else []
 
     @property
     def run_id(self) -> str:
@@ -346,13 +357,15 @@ class RunRecord:
         """
         with self._lock:
             result = dict(self.record)
-            result["artifacts"] = [a.to_dict() for a in self.artifacts]
+            artifacts = self._get_artifacts()
+            result["artifacts"] = [a.to_dict() for a in artifacts]
         return result
 
     def __repr__(self) -> str:
         """Return a concise representation of the run record."""
+        artifacts = self._get_artifacts()
         return (
             f"RunRecord(run_id={self.run_id!r}, project={self.project!r}, "
             f"adapter={self.adapter!r}, status={self.status!r}, "
-            f"artifacts={len(self.artifacts)})"
+            f"artifacts={len(artifacts)})"
         )

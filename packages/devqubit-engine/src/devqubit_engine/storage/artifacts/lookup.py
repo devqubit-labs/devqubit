@@ -26,6 +26,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_artifacts(record: RunRecord) -> list[ArtifactRef]:
+    """
+    Safely get artifacts list from record.
+
+    Handles cases where artifacts might be None due to
+    deserialization issues or incomplete records.
+
+    Parameters
+    ----------
+    record : RunRecord
+        Run record.
+
+    Returns
+    -------
+    list of ArtifactRef
+        Artifacts list (empty if None or invalid).
+    """
+    artifacts = record.artifacts
+    if artifacts is None:
+        logger.debug("Run %s has artifacts=None", record.run_id)
+        return []
+    return artifacts
+
+
 # =============================================================================
 # Finding artifacts
 # =============================================================================
@@ -60,7 +84,7 @@ def find_artifact(
     >>> if artifact:
     ...     print(f"Found: {artifact.kind}")
     """
-    for artifact in record.artifacts:
+    for artifact in _get_artifacts(record):
         if role and artifact.role != role:
             continue
         if kind_contains and kind_contains.lower() not in artifact.kind.lower():
@@ -93,8 +117,8 @@ def find_all_artifacts(
     list of ArtifactRef
         All matching artifact references.
     """
-    results = []
-    for artifact in record.artifacts:
+    results: list[ArtifactRef] = []
+    for artifact in _get_artifacts(record):
         if role and artifact.role != role:
             continue
         if kind_contains and kind_contains.lower() not in artifact.kind.lower():
@@ -152,17 +176,33 @@ def get_artifact(record: RunRecord, selector: str | int) -> ArtifactRef | None:
     -------
     ArtifactRef or None
         Matching artifact or None if not found.
+
+    Examples
+    --------
+    >>> # By index
+    >>> art = get_artifact(record, 0)
+
+    >>> # By digest prefix
+    >>> art = get_artifact(record, "sha256:abc123")
+
+    >>> # By role:kind pattern
+    >>> art = get_artifact(record, "program:openqasm3")
+
+    >>> # By kind substring
+    >>> art = get_artifact(record, "counts")
     """
+    artifacts = _get_artifacts(record)
+
     if isinstance(selector, int):
-        if 0 <= selector < len(record.artifacts):
-            return record.artifacts[selector]
+        if 0 <= selector < len(artifacts):
+            return artifacts[selector]
         return None
 
     selector = str(selector)
 
-    # Digest prefix
+    # Digest prefix match
     if selector.startswith("sha256:"):
-        for art in record.artifacts:
+        for art in artifacts:
             if art.digest.startswith(selector):
                 return art
         return None
@@ -170,14 +210,15 @@ def get_artifact(record: RunRecord, selector: str | int) -> ArtifactRef | None:
     # role:kind pattern
     if ":" in selector:
         role, kind = selector.split(":", 1)
-        for art in record.artifacts:
-            if art.role == role and kind in art.kind:
+        for art in artifacts:
+            if art.role == role and kind.lower() in art.kind.lower():
                 return art
         return None
 
-    # Kind substring match
-    for art in record.artifacts:
-        if selector in art.kind:
+    # Kind substring match (case-insensitive)
+    selector_lower = selector.lower()
+    for art in artifacts:
+        if selector_lower in art.kind.lower():
             return art
 
     return None
@@ -272,22 +313,27 @@ class ArtifactInfo:
 
     @property
     def kind(self) -> str:
+        """Get artifact kind."""
         return self.ref.kind
 
     @property
     def digest(self) -> str:
+        """Get full digest."""
         return self.ref.digest
 
     @property
     def digest_short(self) -> str:
+        """Get shortened digest for display."""
         return self.ref.digest[:20] + "..."
 
     @property
     def role(self) -> str:
+        """Get artifact role."""
         return self.ref.role
 
     @property
     def media_type(self) -> str:
+        """Get media type."""
         return self.ref.media_type
 
     def to_dict(self) -> dict[str, Any]:
@@ -328,7 +374,7 @@ def list_artifacts(
     role : str, optional
         Filter by role (e.g., "program", "results", "device_snapshot").
     kind_contains : str, optional
-        Filter by kind substring.
+        Filter by kind substring (case-insensitive).
     store : ObjectStoreProtocol, optional
         If provided, include size information.
 
@@ -338,8 +384,9 @@ def list_artifacts(
         Artifact information sorted by role then kind.
     """
     results: list[ArtifactInfo] = []
+    artifacts = _get_artifacts(record)
 
-    for i, art in enumerate(record.artifacts):
+    for i, art in enumerate(artifacts):
         if role and art.role != role:
             continue
         if kind_contains and kind_contains.lower() not in art.kind.lower():
@@ -350,7 +397,7 @@ def list_artifacts(
             meta.get("name") or meta.get("filename") or meta.get("program_name") or ""
         )
 
-        size = None
+        size: int | None = None
         if store:
             try:
                 size = store.get_size(art.digest)
