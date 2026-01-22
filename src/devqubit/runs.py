@@ -95,17 +95,24 @@ def _get_registry() -> "RegistryProtocol":
 
 
 def load_run(
-    run_id: str,
+    run_id_or_name: str,
     *,
+    project: str | None = None,
     registry: "RegistryProtocol | None" = None,
 ) -> "RunRecord":
     """
-    Load a run record by ID.
+    Load a run by ID or name.
+
+    When ``project`` is provided, the first argument can be either a run ID
+    or a run name. The function first attempts to load by ID, then falls
+    back to searching by name within the project.
 
     Parameters
     ----------
-    run_id : str
-        Run identifier.
+    run_id_or_name : str
+        Run identifier (ULID) or run name.
+    project : str, optional
+        Project name. Required when loading by name.
     registry : RegistryProtocol, optional
         Custom registry. Uses global config if not provided.
 
@@ -122,26 +129,51 @@ def load_run(
     Examples
     --------
     >>> from devqubit.runs import load_run
-    >>> run = load_run("abc123")
-    >>> print(run.project, run.status)
-    my_project FINISHED
+    >>> # Load by ID
+    >>> run = load_run("01HXYZ...")
+    >>> # Load by name within a project
+    >>> run = load_run("bell-experiment-v2", project="bell_state")
     """
     reg = registry if registry is not None else _get_registry()
-    return reg.load(run_id)
+
+    # Try loading by ID first (fast path, backward compatible)
+    record = reg.load_or_none(run_id_or_name)
+    if record is not None:
+        return record
+
+    # If project provided, try loading by name
+    if project is not None:
+        runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
+        if runs:
+            return reg.load(runs[0]["run_id"])
+
+        from devqubit_engine.storage.errors import RunNotFoundError
+
+        raise RunNotFoundError(
+            f"No run with name {run_id_or_name!r} in project {project!r}"
+        )
+
+    # No project provided and ID not found
+    from devqubit_engine.storage.errors import RunNotFoundError
+
+    raise RunNotFoundError(run_id_or_name)
 
 
 def load_run_or_none(
-    run_id: str,
+    run_id_or_name: str,
     *,
+    project: str | None = None,
     registry: "RegistryProtocol | None" = None,
 ) -> "RunRecord | None":
     """
-    Load a run record, returning None if not found.
+    Load a run by ID or name, returning None if not found.
 
     Parameters
     ----------
-    run_id : str
-        Run identifier.
+    run_id_or_name : str
+        Run identifier (ULID) or run name.
+    project : str, optional
+        Project name. Required when loading by name.
     registry : RegistryProtocol, optional
         Custom registry. Uses global config if not provided.
 
@@ -156,23 +188,41 @@ def load_run_or_none(
     >>> run = load_run_or_none("maybe_exists")
     >>> if run is not None:
     ...     print(run.status)
+
+    >>> # Try loading by name
+    >>> run = load_run_or_none("my-experiment", project="bell_state")
     """
     reg = registry if registry is not None else _get_registry()
-    return reg.load_or_none(run_id)
+
+    # Try loading by ID first
+    record = reg.load_or_none(run_id_or_name)
+    if record is not None:
+        return record
+
+    # If project provided, try loading by name
+    if project is not None:
+        runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
+        if runs:
+            return reg.load_or_none(runs[0]["run_id"])
+
+    return None
 
 
 def run_exists(
-    run_id: str,
+    run_id_or_name: str,
     *,
+    project: str | None = None,
     registry: "RegistryProtocol | None" = None,
 ) -> bool:
     """
-    Check if a run exists.
+    Check if a run exists by ID or name.
 
     Parameters
     ----------
-    run_id : str
-        Run identifier.
+    run_id_or_name : str
+        Run identifier (ULID) or run name.
+    project : str, optional
+        Project name. Required when checking by name.
     registry : RegistryProtocol, optional
         Custom registry. Uses global config if not provided.
 
@@ -186,14 +236,29 @@ def run_exists(
     >>> from devqubit.runs import run_exists
     >>> if run_exists("abc123"):
     ...     print("Run found!")
+
+    >>> # Check by name
+    >>> if run_exists("my-experiment", project="bell_state"):
+    ...     print("Run found!")
     """
     reg = registry if registry is not None else _get_registry()
-    return reg.exists(run_id)
+
+    # Try by ID first
+    if reg.exists(run_id_or_name):
+        return True
+
+    # If project provided, try by name
+    if project is not None:
+        runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
+        return len(runs) > 0
+
+    return False
 
 
 def list_runs(
     *,
     project: str | None = None,
+    name: str | None = None,
     adapter: str | None = None,
     status: str | None = None,
     backend_name: str | None = None,
@@ -214,6 +279,8 @@ def list_runs(
     ----------
     project : str, optional
         Filter by project name.
+    name : str, optional
+        Filter by run name (exact match).
     adapter : str, optional
         Filter by adapter name (e.g., "qiskit", "pennylane").
     status : str, optional
@@ -248,10 +315,14 @@ def list_runs(
 
     >>> # List only finished runs
     >>> finished = list_runs(status="FINISHED", limit=50)
+
+    >>> # Find run by name
+    >>> runs = list_runs(project="bell_state", name="nightly-check")
     """
     reg = registry if registry is not None else _get_registry()
     return reg.list_runs(
         project=project,
+        name=name,
         adapter=adapter,
         status=status,
         backend_name=backend_name,

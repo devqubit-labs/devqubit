@@ -273,6 +273,18 @@ class RunRecord:
             return None
 
     @property
+    def name(self) -> str | None:
+        """
+        Alias for run_name.
+
+        Returns
+        -------
+        str or None
+            Run name, or None if not set.
+        """
+        return self.run_name
+
+    @property
     def ended_at(self) -> str | None:
         """
         Get the run end timestamp.

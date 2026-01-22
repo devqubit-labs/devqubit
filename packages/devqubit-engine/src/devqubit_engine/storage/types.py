@@ -161,6 +161,8 @@ class RunSummary(TypedDict, total=False):
     ----------
     run_id : str
         Unique run identifier.
+    run_name : str or None
+        Human-readable run name.
     project : str
         Project name.
     adapter : str
@@ -180,6 +182,7 @@ class RunSummary(TypedDict, total=False):
     """
 
     run_id: str
+    run_name: str | None
     project: str
     adapter: str
     status: str
@@ -441,6 +444,7 @@ class RegistryProtocol(Protocol):
         limit: int = 100,
         offset: int = 0,
         project: str | None = None,
+        name: str | None = None,
         adapter: str | None = None,
         status: str | None = None,
         backend_name: str | None = None,
@@ -459,6 +463,8 @@ class RegistryProtocol(Protocol):
             Number of results to skip. Default is 0.
         project : str, optional
             Filter by project name.
+        name : str, optional
+            Filter by run name (exact match).
         adapter : str, optional
             Filter by adapter name.
         status : str, optional
