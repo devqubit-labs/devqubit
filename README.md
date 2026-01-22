@@ -88,7 +88,7 @@ The adapter captures: circuit (QPY + QASM3), backend config, job metadata, and r
 ## Comparing runs
 
 ```python
-from devqubit import diff
+from devqubit.compare import diff
 
 result = diff("01JD7X...", "01JD8Y...")
 
@@ -108,8 +108,7 @@ devqubit diff 01JD7X... 01JD8Y...
 Verify that a run matches an established baseline:
 
 ```python
-from devqubit import verify_baseline
-from devqubit.compare import VerifyPolicy
+from devqubit.compare import verify_baseline, VerifyPolicy
 
 policy = VerifyPolicy(
     tvd_threshold=0.05,
