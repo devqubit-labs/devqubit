@@ -81,7 +81,7 @@ class MetricDrift:
 
     def __repr__(self) -> str:
         sig = "!" if self.significant else ""
-        return f"MetricDrift({self.metric}{sig}, {self.value_a} -> {self.value_b})"
+        return f"MetricDrift({self.metric}{sig}, {self.value_a} => {self.value_b})"
 
 
 @dataclass
@@ -471,7 +471,7 @@ class ComparisonResult:
     def format_summary(self) -> str:
         """Format as brief one-line summary."""
         if self.identical:
-            return f"Identical: {self.run_id_a} == {self.run_id_b}"
+            return f"✓ IDENTICAL  {self.run_id_a} == {self.run_id_b}"
 
         issues: list[str] = []
         if not self.params.get("match"):
@@ -487,7 +487,7 @@ class ComparisonResult:
         if self.circuit_diff and not self.circuit_diff.match:
             issues.append("circuit")
 
-        return f"Differ ({', '.join(issues)}): {self.run_id_a} vs {self.run_id_b}"
+        return f"✗ DIFFER     {self.run_id_a} vs {self.run_id_b}  [{', '.join(issues)}]"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
@@ -599,10 +599,11 @@ class VerifyResult:
     def format_summary(self) -> str:
         """Format as brief one-line summary."""
         if self.ok:
-            return (
-                f"PASS: {self.candidate_run_id} verified against {self.baseline_run_id}"
-            )
-        return f"FAIL: {self.candidate_run_id} - {'; '.join(self.failures[:2])}"
+            return f"✓ PASS  {self.candidate_run_id} verified against {self.baseline_run_id}"
+        failures_str = "; ".join(self.failures[:2])
+        if len(self.failures) > 2:
+            failures_str += f" (+{len(self.failures) - 2} more)"
+        return f"✗ FAIL  {self.candidate_run_id}  [{failures_str}]"
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""

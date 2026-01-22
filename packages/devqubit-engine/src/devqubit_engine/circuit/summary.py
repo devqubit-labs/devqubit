@@ -78,7 +78,7 @@ class CircuitSummary:
 
     def to_dict(self) -> dict[str, Any]:
         """
-        Convert to dictionary.
+        Convert to dictionary for serialization.
 
         Returns
         -------
@@ -94,7 +94,7 @@ class CircuitSummary:
             "gate_count_multi": self.gate_count_multi,
             "gate_count_measure": self.gate_count_measure,
             "gate_count_total": self.gate_count_total,
-            "gate_types": self.gate_types,
+            "gate_types": self.gate_types.copy(),
             "has_parameters": self.has_parameters,
             "parameter_count": self.parameter_count,
             "is_clifford": self.is_clifford,
@@ -103,13 +103,13 @@ class CircuitSummary:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> CircuitSummary:
+    def from_dict(cls, data: dict[str, Any]) -> CircuitSummary:
         """
-        Create from dictionary.
+        Create instance from dictionary.
 
         Parameters
         ----------
-        d : dict
+        data : dict
             Dictionary with summary fields.
 
         Returns
@@ -118,24 +118,24 @@ class CircuitSummary:
             Reconstructed summary.
         """
         return cls(
-            num_qubits=int(d.get("num_qubits", 0)),
-            num_clbits=int(d.get("num_clbits", 0)),
-            depth=int(d.get("depth", 0)),
-            gate_count_1q=int(d.get("gate_count_1q", 0)),
-            gate_count_2q=int(d.get("gate_count_2q", 0)),
-            gate_count_multi=int(d.get("gate_count_multi", 0)),
-            gate_count_measure=int(d.get("gate_count_measure", 0)),
-            gate_count_total=int(d.get("gate_count_total", 0)),
-            gate_types=dict(d.get("gate_types", {})),
-            has_parameters=bool(d.get("has_parameters", False)),
-            parameter_count=int(d.get("parameter_count", 0)),
-            is_clifford=d.get("is_clifford"),
-            source_format=CircuitFormat(d.get("source_format", "unknown")),
-            sdk=SDK(d.get("sdk", "unknown")),
+            num_qubits=int(data.get("num_qubits", 0)),
+            num_clbits=int(data.get("num_clbits", 0)),
+            depth=int(data.get("depth", 0)),
+            gate_count_1q=int(data.get("gate_count_1q", 0)),
+            gate_count_2q=int(data.get("gate_count_2q", 0)),
+            gate_count_multi=int(data.get("gate_count_multi", 0)),
+            gate_count_measure=int(data.get("gate_count_measure", 0)),
+            gate_count_total=int(data.get("gate_count_total", 0)),
+            gate_types=dict(data.get("gate_types", {})),
+            has_parameters=bool(data.get("has_parameters", False)),
+            parameter_count=int(data.get("parameter_count", 0)),
+            is_clifford=data.get("is_clifford"),
+            source_format=CircuitFormat(data.get("source_format", "unknown")),
+            sdk=SDK(data.get("sdk", "unknown")),
         )
 
     def __repr__(self) -> str:
-        """Return string representation."""
+        """Return concise string representation."""
         return (
             f"CircuitSummary(qubits={self.num_qubits}, depth={self.depth}, "
             f"gates={self.gate_count_total}, sdk={self.sdk.value})"
@@ -172,7 +172,7 @@ class CircuitDiff:
 
     def to_dict(self) -> dict[str, Any]:
         """
-        Convert to dictionary.
+        Convert to dictionary for serialization.
 
         Returns
         -------
@@ -181,14 +181,14 @@ class CircuitDiff:
         """
         return {
             "match": self.match,
-            "changes": self.changes,
-            "metrics": self.metrics,
+            "changes": self.changes.copy(),
+            "metrics": self.metrics.copy(),
             "summary_a": self.summary_a.to_dict(),
             "summary_b": self.summary_b.to_dict(),
         }
 
     def __repr__(self) -> str:
-        """Return string representation."""
+        """Return concise string representation."""
         status = "match" if self.match else f"{len(self.changes)} changes"
         return f"CircuitDiff({status})"
 
@@ -241,7 +241,7 @@ def summarize_circuit_data(data: CircuitData) -> CircuitSummary:
 
 def summarize_circuit(circuit: Any, sdk: SDK | None = None) -> CircuitSummary:
     """
-    Extract summary from SDK-native circuit.
+    Extract summary from SDK-native circuit object.
 
     Parameters
     ----------
@@ -310,6 +310,26 @@ def _detect_sdk_from_circuit(circuit: Any) -> SDK:
     )
 
 
+# =============================================================================
+# Diff functions
+# =============================================================================
+
+
+# Label width for aligned diff output
+_DIFF_LABEL_WIDTH = 14
+
+# Fields to compare with optional percentage display
+_NUMERIC_DIFF_FIELDS = (
+    ("num_qubits", "qubits", False),
+    ("num_clbits", "clbits", False),
+    ("depth", "depth", True),
+    ("gate_count_1q", "1Q gates", True),
+    ("gate_count_2q", "2Q gates", True),
+    ("gate_count_total", "total gates", True),
+    ("parameter_count", "parameters", False),
+)
+
+
 def diff_summaries(
     summary_a: CircuitSummary,
     summary_b: CircuitSummary,
@@ -336,41 +356,26 @@ def diff_summaries(
     metrics: dict[str, Any] = {}
 
     # Compare numeric fields
-    _NUMERIC_FIELDS = (
-        ("num_qubits", "qubits", False),
-        ("num_clbits", "clbits", False),
-        ("depth", "depth", True),
-        ("gate_count_1q", "1Q gates", True),
-        ("gate_count_2q", "2Q gates", True),
-        ("gate_count_total", "total gates", True),
-        ("parameter_count", "parameters", False),
-    )
-
-    for field_name, label, show_pct in _NUMERIC_FIELDS:
+    for field_name, label, show_pct in _NUMERIC_DIFF_FIELDS:
         val_a = getattr(summary_a, field_name)
         val_b = getattr(summary_b, field_name)
-        _compare_numeric(field_name, label, val_a, val_b, show_pct, changes, metrics)
+        _record_numeric_diff(
+            field_name, label, val_a, val_b, show_pct, changes, metrics
+        )
 
-    # Clifford status change
+    # Compare Clifford status
     if summary_a.is_clifford != summary_b.is_clifford:
+        label = "is_clifford"
         changes.append(
-            f"is_clifford: {summary_a.is_clifford} → {summary_b.is_clifford}"
+            f"{label:<{_DIFF_LABEL_WIDTH}}  "
+            f"{summary_a.is_clifford} => {summary_b.is_clifford}"
         )
         metrics["is_clifford_changed"] = True
         metrics["is_clifford_a"] = summary_a.is_clifford
         metrics["is_clifford_b"] = summary_b.is_clifford
 
-    # Gate type changes
-    types_a = set(summary_a.gate_types.keys())
-    types_b = set(summary_b.gate_types.keys())
-
-    if new_gates := types_b - types_a:
-        changes.append(f"new gate types: {', '.join(sorted(new_gates))}")
-        metrics["new_gate_types"] = sorted(new_gates)
-
-    if removed_gates := types_a - types_b:
-        changes.append(f"removed gate types: {', '.join(sorted(removed_gates))}")
-        metrics["removed_gate_types"] = sorted(removed_gates)
+    # Compare gate types
+    _record_gate_type_diff(summary_a, summary_b, changes, metrics)
 
     logger.debug(
         "Compared summaries: %s",
@@ -386,7 +391,7 @@ def diff_summaries(
     )
 
 
-def _compare_numeric(
+def _record_numeric_diff(
     metric_key: str,
     label: str,
     val_a: int,
@@ -395,7 +400,26 @@ def _compare_numeric(
     changes: list[str],
     metrics: dict[str, Any],
 ) -> None:
-    """Compare two numeric values and record changes."""
+    """
+    Compare two numeric values and record changes.
+
+    Parameters
+    ----------
+    metric_key : str
+        Key for metrics dict.
+    label : str
+        Human-readable label.
+    val_a : int
+        Baseline value.
+    val_b : int
+        Comparison value.
+    show_pct : bool
+        Whether to show percentage change.
+    changes : list of str
+        List to append change descriptions to.
+    metrics : dict
+        Dict to record numeric metrics to.
+    """
     if val_a == val_b:
         return
 
@@ -405,6 +429,42 @@ def _compare_numeric(
     if show_pct and val_a > 0:
         pct = (delta / val_a) * 100
         metrics[f"{metric_key}_delta_pct"] = pct
-        changes.append(f"{label}: {val_a} → {val_b} ({pct:+.1f}%)")
+        changes.append(
+            f"{label:<{_DIFF_LABEL_WIDTH}}  {val_a} => {val_b} ({pct:+.1f}%)"
+        )
     else:
-        changes.append(f"{label}: {val_a} → {val_b}")
+        changes.append(f"{label:<{_DIFF_LABEL_WIDTH}}  {val_a} => {val_b}")
+
+
+def _record_gate_type_diff(
+    summary_a: CircuitSummary,
+    summary_b: CircuitSummary,
+    changes: list[str],
+    metrics: dict[str, Any],
+) -> None:
+    """
+    Compare gate types between summaries.
+
+    Parameters
+    ----------
+    summary_a : CircuitSummary
+        Baseline summary.
+    summary_b : CircuitSummary
+        Comparison summary.
+    changes : list of str
+        List to append change descriptions to.
+    metrics : dict
+        Dict to record gate type changes to.
+    """
+    types_a = set(summary_a.gate_types.keys())
+    types_b = set(summary_b.gate_types.keys())
+
+    if new_gates := types_b - types_a:
+        sorted_gates = ", ".join(sorted(new_gates))
+        changes.append(f"{'+ gates':<{_DIFF_LABEL_WIDTH}}  {sorted_gates}")
+        metrics["new_gate_types"] = sorted(new_gates)
+
+    if removed_gates := types_a - types_b:
+        sorted_gates = ", ".join(sorted(removed_gates))
+        changes.append(f"{'- gates':<{_DIFF_LABEL_WIDTH}}  {sorted_gates}")
+        metrics["removed_gate_types"] = sorted(removed_gates)
