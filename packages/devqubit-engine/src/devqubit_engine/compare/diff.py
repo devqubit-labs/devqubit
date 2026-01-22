@@ -57,7 +57,7 @@ from devqubit_engine.storage.types import (
     ObjectStoreProtocol,
     RegistryProtocol,
 )
-from devqubit_engine.tracking.record import RunRecord
+from devqubit_engine.tracking.record import RunRecord, resolve_run_id
 from devqubit_engine.uec.api.resolve import resolve_envelope
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.distributions import (
@@ -749,6 +749,7 @@ def diff(
     ref_a: str | Path,
     ref_b: str | Path,
     *,
+    project: str | None = None,
     registry: RegistryProtocol | None = None,
     store: ObjectStoreProtocol | None = None,
     thresholds: DriftThresholds | None = None,
@@ -762,15 +763,17 @@ def diff(
     """
     Compare two runs or bundles by reference.
 
-    Accepts run IDs or bundle file paths and loads the appropriate
-    records and stores automatically.
+    Accepts run IDs, run names (with project), or bundle file paths
+    and loads the appropriate records and stores automatically.
 
     Parameters
     ----------
     ref_a : str or Path
-        Baseline run ID or bundle path.
+        Baseline run ID, run name, or bundle path.
     ref_b : str or Path
-        Candidate run ID or bundle path.
+        Candidate run ID, run name, or bundle path.
+    project : str, optional
+        Project name. Required when using run names instead of IDs.
     registry : RegistryProtocol, optional
         Run registry. Uses global config if not provided.
     store : ObjectStoreProtocol, optional
@@ -827,8 +830,9 @@ def diff(
             bundle_contexts.append(ctx_a)
             run_a, store_a = ctx_a.__enter__()
         else:
-            logger.debug("Loading baseline from registry: %s", ref_a)
-            run_a = get_registry_().load(str(ref_a))
+            run_id_a = resolve_run_id(str(ref_a), project, get_registry_())
+            logger.debug("Loading baseline from registry: %s", run_id_a)
+            run_a = get_registry_().load(run_id_a)
             store_a = get_store_()
 
         # Load run B
@@ -838,8 +842,9 @@ def diff(
             bundle_contexts.append(ctx_b)
             run_b, store_b = ctx_b.__enter__()
         else:
-            logger.debug("Loading candidate from registry: %s", ref_b)
-            run_b = get_registry_().load(str(ref_b))
+            run_id_b = resolve_run_id(str(ref_b), project, get_registry_())
+            logger.debug("Loading candidate from registry: %s", run_id_b)
+            run_b = get_registry_().load(run_id_b)
             store_b = get_store_()
 
         return diff_runs(

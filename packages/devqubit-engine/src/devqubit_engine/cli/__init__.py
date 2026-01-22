@@ -37,11 +37,17 @@ Examples
     # Compare two runs
     devqubit diff abc123 def456
 
+    # Compare runs by name
+    devqubit diff baseline-v1 experiment-v2 --project bell_state
+
     # Verify against baseline
     devqubit verify abc123 --project myproject
 
     # Pack a run for sharing
     devqubit pack abc123 -o experiment.zip
+
+    # Pack by name
+    devqubit pack my-experiment --project bell_state -o experiment.zip
 
     # Launch web UI
     devqubit ui --port 8080

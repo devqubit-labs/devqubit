@@ -13,7 +13,7 @@ Commands
 diff
     Compare two runs or bundles comprehensively.
 verify
-    Verify a run against a baseline with policy checks.
+    Verify a run against baseline with policy checks.
 replay
     Replay a quantum experiment on a simulator.
 """
@@ -23,7 +23,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-from devqubit_engine.cli._utils import echo, print_json, root_from_ctx
+from devqubit_engine.cli._utils import (
+    echo,
+    is_quiet,
+    print_json,
+    resolve_run,
+    root_from_ctx,
+)
 
 
 def register(cli: click.Group) -> None:
@@ -33,16 +39,15 @@ def register(cli: click.Group) -> None:
     cli.add_command(replay_cmd)
 
 
-def _is_quiet(ctx: click.Context) -> bool:
-    """Check if quiet mode is enabled."""
-    if ctx.obj is None:
-        return False
-    return bool(ctx.obj.get("quiet", False))
-
-
 @click.command("diff")
 @click.argument("ref_a")
 @click.argument("ref_b")
+@click.option(
+    "--project",
+    "-p",
+    default=None,
+    help="Project name (required when using run names).",
+)
 @click.option(
     "--output", "-o", type=click.Path(path_type=Path), help="Save report to file."
 )
@@ -74,6 +79,7 @@ def diff_cmd(
     ctx: click.Context,
     ref_a: str,
     ref_b: str,
+    project: str | None,
     output: Path | None,
     fmt: str,
     no_circuit_diff: bool,
@@ -86,10 +92,12 @@ def diff_cmd(
     Shows complete comparison including parameters, program, device drift,
     TVD with bootstrap-calibrated noise context analysis.
 
-    REF_A and REF_B can be run IDs or bundle file paths (.zip).
+    REF_A and REF_B can be run IDs, run names (with --project), or bundle
+    file paths (.zip).
 
     Examples:
         devqubit diff abc123 def456
+        devqubit diff baseline-v1 experiment-v2 --project bell_state
         devqubit diff experiment1.zip experiment2.zip
         devqubit diff abc123 def456 --format json -o report.json
         devqubit diff abc123 def456 --no-noise-context
@@ -113,12 +121,19 @@ def diff_cmd(
             ref_b,
             registry=registry,
             store=store,
+            project=project,
             include_circuit_diff=not no_circuit_diff,
             include_noise_context=not no_noise_context,
             item_index=item_idx,
         )
     except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {e.run_id}") from e
+        if project:
+            raise click.ClickException(
+                f"Run not found: '{e.run_id}' (looked up as ID and as name in project '{project}')"
+            ) from e
+        raise click.ClickException(
+            f"Run not found: '{e.run_id}'. Use --project to look up by name."
+        ) from e
     except FileNotFoundError as e:
         raise click.ClickException(f"Bundle not found: {e}") from e
     except Exception as e:
@@ -142,9 +157,11 @@ def diff_cmd(
 
 
 @click.command("verify")
-@click.argument("candidate_id")
-@click.option("--baseline", "-b", help="Baseline run ID (default: project baseline).")
-@click.option("--project", "-p", help="Project for baseline lookup.")
+@click.argument("candidate_id_or_name")
+@click.option("--baseline", "-b", help="Baseline run ID or name.")
+@click.option(
+    "--project", "-p", help="Project for baseline lookup and name resolution."
+)
 @click.option("--tvd-max", type=float, help="Maximum allowed TVD.")
 @click.option(
     "--noise-factor",
@@ -185,7 +202,7 @@ def diff_cmd(
 @click.pass_context
 def verify_cmd(
     ctx: click.Context,
-    candidate_id: str,
+    candidate_id_or_name: str,
     baseline: str | None,
     project: str | None,
     tvd_max: float | None,
@@ -205,6 +222,9 @@ def verify_cmd(
     Shows comprehensive verification results including what failed,
     why it failed, and suggested actions.
 
+    CANDIDATE_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
     The --noise-factor option provides a shot-count-aware threshold using
     bootstrap-calibrated noise estimation.
 
@@ -215,7 +235,7 @@ def verify_cmd(
 
     Examples:
         devqubit verify abc123 --baseline def456
-        devqubit verify abc123 --project myproject --promote
+        devqubit verify my-experiment --project myproject --promote
         devqubit verify abc123 --tvd-max 0.05 --format json
         devqubit verify abc123 --noise-factor 1.0
     """
@@ -227,7 +247,6 @@ def verify_cmd(
         verify_against_baseline,
     )
     from devqubit_engine.config import Config
-    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
@@ -235,10 +254,8 @@ def verify_cmd(
     registry = create_registry(config=config)
     store = create_store(config=config)
 
-    try:
-        candidate = registry.load(candidate_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Candidate not found: {candidate_id}") from e
+    # Resolve candidate run (supports ID or name with project)
+    candidate = resolve_run(candidate_id_or_name, registry, project)
 
     # Convert string to enum
     match_mode = ProgramMatchMode(program_match_mode)
@@ -254,10 +271,8 @@ def verify_cmd(
     )
 
     if baseline:
-        try:
-            baseline_record = registry.load(baseline)
-        except RunNotFoundError as e:
-            raise click.ClickException(f"Baseline not found: {baseline}") from e
+        # Resolve baseline run (supports ID or name with project)
+        baseline_record = resolve_run(baseline, registry, project)
 
         result = verify(
             baseline_record,
@@ -290,7 +305,7 @@ def verify_cmd(
     if junit:
         junit.parent.mkdir(parents=True, exist_ok=True)
         write_junit(result, junit)
-        if not _is_quiet(ctx):
+        if not is_quiet(ctx):
             echo(f"JUnit report written to {junit}")
 
     # Format output
@@ -307,18 +322,23 @@ def verify_cmd(
 
     # Add promotion notice if applicable
     if result.ok and promote and not baseline:
-        echo(f"\n[OK] Promoted {candidate_id} to baseline for project")
+        echo(f"\n[OK] Promoted {candidate.run_id} to baseline for project")
 
     ctx.exit(0 if result.ok else 1)
 
 
 @click.command("replay")
 @click.argument("ref", required=False)
+@click.option("--project", "-p", help="Project name (for run name resolution).")
 @click.option("--backend", "-b", default=None, help="Simulator backend name.")
 @click.option("--shots", "-s", type=int, help="Override shot count.")
 @click.option("--seed", type=int, help="Random seed for reproducibility (best-effort).")
 @click.option("--save", is_flag=True, help="Save replay as a new tracked run.")
-@click.option("--project", "-p", help="Project name for saved run.")
+@click.option(
+    "--save-project",
+    default=None,
+    help="Project name for saved run (defaults to --project).",
+)
 @click.option(
     "--experimental",
     is_flag=True,
@@ -339,11 +359,12 @@ def verify_cmd(
 def replay_cmd(
     ctx: click.Context,
     ref: str | None,
+    project: str | None,
     backend: str | None,
     shots: int | None,
     seed: int | None,
     save: bool,
-    project: str | None,
+    save_project: str | None,
     experimental: bool,
     list_backends: bool,
     fmt: str,
@@ -353,6 +374,8 @@ def replay_cmd(
 
     Reconstructs the circuit and executes it on a simulator backend.
     Use 'devqubit diff' to compare replay results with the original.
+
+    REF can be a run ID, run name (with --project), or bundle file path (.zip).
 
     EXPERIMENTAL: Replay is best-effort and may not be fully reproducible.
     Use --experimental flag to acknowledge this.
@@ -364,10 +387,11 @@ def replay_cmd(
     Examples:
         devqubit replay experiment.zip --experimental
         devqubit replay abc123 --backend aer_simulator --experimental --seed 42
-        devqubit replay abc123 --experimental --save
+        devqubit replay my-run --project bell_state --experimental --save
         devqubit replay --list-backends
     """
     from devqubit_engine.bundle.replay import list_available_backends, replay
+    from devqubit_engine.tracking.record import resolve_run_id
 
     if list_backends:
         backends = list_available_backends()
@@ -389,7 +413,7 @@ def replay_cmd(
         return
 
     if not ref:
-        raise click.ClickException("REF argument required (bundle path or run ID)")
+        raise click.ClickException("REF argument required (bundle path or run ID/name)")
 
     if not experimental:
         raise click.ClickException(
@@ -399,20 +423,39 @@ def replay_cmd(
 
     root = root_from_ctx(ctx)
 
+    # Resolve run ID if not a bundle path
+    resolved_ref = ref
+    if not ref.endswith(".zip") and not Path(ref).exists():
+        from devqubit_engine.config import Config
+        from devqubit_engine.storage.factory import create_registry
+
+        config = Config(root_dir=root)
+        registry = create_registry(config=config)
+        resolved_ref = resolve_run_id(ref, project, registry)
+
     try:
         result = replay(
-            ref,
+            resolved_ref,
             backend=backend,
             root=root,
             shots=shots,
             seed=seed,
             save_run=save,
-            project=project,
+            project=save_project or project,
             ack_experimental=True,
         )
     except FileNotFoundError as e:
         raise click.ClickException(f"Bundle not found: {e}") from e
     except Exception as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            if project:
+                raise click.ClickException(
+                    f"Run not found: '{ref}' (looked up as ID and as name in project '{project}')"
+                ) from e
+            raise click.ClickException(
+                f"Run not found: '{ref}'. Use --project to look up by name."
+            ) from e
         raise click.ClickException(f"Replay failed: {e}") from e
 
     if fmt == "json":

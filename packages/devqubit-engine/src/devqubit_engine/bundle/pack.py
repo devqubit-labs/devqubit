@@ -43,6 +43,7 @@ from typing import Any
 
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.tracking.record import resolve_run_id
 from devqubit_engine.utils.common import utc_now_iso
 
 
@@ -77,6 +78,11 @@ class PackResult:
     object_count: int
     missing_objects: list[str] = field(default_factory=list)
 
+    @property
+    def total_objects(self) -> int:
+        """Total objects written to bundle."""
+        return self.object_count
+
     def __repr__(self) -> str:
         """Return string representation."""
         return (
@@ -94,28 +100,48 @@ class UnpackResult:
     ----------
     run_id : str
         Run identifier that was unpacked.
+    bundle_path : Path
+        Source bundle file path.
     artifact_count : int
         Number of artifacts in the run record.
     object_count : int
         Number of new objects written to the store.
+    skipped_objects : list of str
+        Digests of objects that already existed in the store and were skipped.
+    missing_objects : list of str
+        Digests of objects referenced in run record but not found in bundle.
     """
 
     run_id: str
+    bundle_path: Path
     artifact_count: int
     object_count: int
+    skipped_objects: list[str] = field(default_factory=list)
+    missing_objects: list[str] = field(default_factory=list)
+
+    @property
+    def total_objects(self) -> int:
+        """Total objects in bundle (written + skipped)."""
+        return self.object_count + len(self.skipped_objects)
 
     def __repr__(self) -> str:
         """Return string representation."""
-        return f"UnpackResult(run_id={self.run_id!r}, objects={self.object_count})"
+        return (
+            f"UnpackResult(run_id={self.run_id!r}, "
+            f"objects={self.object_count}, skipped={len(self.skipped_objects)}, "
+            f"missing={len(self.missing_objects)})"
+        )
 
 
 def pack_run(
-    run_id: str,
+    run_id_or_name: str,
     output_path: str | Path,
     *,
+    project: str | None = None,
     store: ObjectStoreProtocol | None = None,
     registry: RegistryProtocol | None = None,
     strict: bool = False,
+    include_artifacts: bool = True,
 ) -> PackResult:
     """
     Pack a run into a portable bundle.
@@ -125,10 +151,12 @@ def pack_run(
 
     Parameters
     ----------
-    run_id : str
-        Run identifier to pack.
+    run_id_or_name : str
+        Run identifier (ULID) or run name.
     output_path : str or Path
         Output bundle file path.
+    project : str, optional
+        Project name. Required when using run name instead of ID.
     store : ObjectStoreProtocol, optional
         Object store to read artifacts from. Uses default if not provided.
     registry : RegistryProtocol, optional
@@ -136,6 +164,9 @@ def pack_run(
     strict : bool, optional
         If True, fail if any referenced artifact object is missing.
         Default is False (missing objects are recorded but don't fail).
+    include_artifacts : bool, optional
+        If True, include artifact blobs in the bundle. Default is True.
+        Set to False to create a metadata-only bundle.
 
     Returns
     -------
@@ -158,6 +189,9 @@ def pack_run(
     store = store or create_store()
     registry = registry or create_registry()
 
+    # Resolve name to ID if needed
+    run_id = resolve_run_id(run_id_or_name, project, registry)
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -173,25 +207,27 @@ def pack_run(
     # Collect unique digests referenced by artifacts
     digests: list[str] = []
     seen: set[str] = set()
-    for art in artifacts:
-        if not isinstance(art, dict):
-            continue
-        digest = art.get("digest", "")
-        if (
-            isinstance(digest, str)
-            and digest.startswith("sha256:")
-            and digest not in seen
-        ):
-            seen.add(digest)
-            digests.append(digest)
 
-    logger.debug(
-        "Found %d unique digests in %d artifacts", len(digests), len(artifacts)
-    )
+    if include_artifacts:
+        for art in artifacts:
+            if not isinstance(art, dict):
+                continue
+            digest = art.get("digest", "")
+            if (
+                isinstance(digest, str)
+                and digest.startswith("sha256:")
+                and digest not in seen
+            ):
+                seen.add(digest)
+                digests.append(digest)
+
+        logger.debug(
+            "Found %d unique digests in %d artifacts", len(digests), len(artifacts)
+        )
 
     # Preflight missing objects in strict mode
     missing: list[str] = []
-    if strict:
+    if strict and include_artifacts:
         for d in digests:
             try:
                 if not store.exists(d):
@@ -385,6 +421,8 @@ def unpack_bundle(
             artifacts = []
 
         obj_count = 0
+        skipped: list[str] = []
+        missing: list[str] = []
         seen: set[str] = set()
 
         for art in artifacts:
@@ -416,6 +454,7 @@ def unpack_bundle(
                 try:
                     if store.exists(digest):
                         logger.debug("Skipping existing object: %s", digest[:24])
+                        skipped.append(digest)
                         continue
                 except Exception:
                     pass
@@ -426,6 +465,7 @@ def unpack_bundle(
                 data = zf.read(obj_path)
             except KeyError:
                 logger.warning("Object not in bundle: %s", digest[:24])
+                missing.append(digest)
                 continue
 
             if verify_digests:
@@ -446,12 +486,21 @@ def unpack_bundle(
 
         registry.save(record)
 
-    logger.info("Unpacked run %s: %d new objects", run_id, obj_count)
+    logger.info(
+        "Unpacked run %s: %d new objects, %d skipped, %d missing",
+        run_id,
+        obj_count,
+        len(skipped),
+        len(missing),
+    )
 
     return UnpackResult(
         run_id=run_id,
+        bundle_path=bundle_path,
         artifact_count=len(artifacts),
         object_count=obj_count,
+        skipped_objects=skipped,
+        missing_objects=missing,
     )
 
 

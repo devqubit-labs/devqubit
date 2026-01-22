@@ -17,6 +17,53 @@ from typing import Any
 from devqubit_engine.storage.types import ArtifactRef
 
 
+def resolve_run_id(
+    run_id_or_name: str,
+    project: str | None,
+    registry: Any,
+) -> str:
+    """
+    Resolve a run reference (ID or name) to a run ID.
+
+    Parameters
+    ----------
+    run_id_or_name : str
+        Run identifier (ULID) or run name.
+    project : str or None
+        Project name. Required when resolving by name.
+    registry : RegistryProtocol
+        Registry to query.
+
+    Returns
+    -------
+    str
+        Resolved run ID.
+
+    Notes
+    -----
+    Resolution order:
+    1. Try as run ID (fast path, exact match)
+    2. If project provided and ID not found, try as name within project
+    3. Return as-is if not found (let caller handle the error)
+    """
+    # Fast path: try as ID first
+    if registry.exists(run_id_or_name):
+        return run_id_or_name
+
+    # If project provided, try as name
+    if project is not None:
+        runs = registry.list_runs(
+            project=project,
+            name=run_id_or_name,
+            limit=1,
+        )
+        if runs:
+            return runs[0]["run_id"]
+
+    # Return as-is - caller will get proper error from registry.load()
+    return run_id_or_name
+
+
 @dataclass
 class RunRecord:
     """

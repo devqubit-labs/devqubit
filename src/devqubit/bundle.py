@@ -10,12 +10,17 @@ that can be shared, archived, or used for offline verification.
 Packing
 -------
 >>> from devqubit.bundle import pack_run
->>> pack_run("run_id", "experiment.zip")
+>>> result = pack_run("run_id", "experiment.zip")
+>>> print(f"Packed {result.object_count} objects")
+
+>>> # Or by name within a project
+>>> result = pack_run("nightly-v1", "experiment.zip", project="bell_state")
 
 Unpacking
 ---------
 >>> from devqubit.bundle import unpack_bundle
->>> unpack_bundle("experiment.zip")
+>>> result = unpack_bundle("experiment.zip")
+>>> print(f"Restored {result.object_count} new objects")
 
 Reading Bundles
 ---------------
@@ -48,11 +53,15 @@ __all__ = [
     "Bundle",
     "list_bundle_contents",
     "replay",
+    "PackResult",
+    "UnpackResult",
 ]
 
 
 if TYPE_CHECKING:
     from devqubit_engine.bundle.pack import (
+        PackResult,
+        UnpackResult,
         list_bundle_contents,
         pack_run,
         unpack_bundle,
@@ -67,6 +76,8 @@ _LAZY_IMPORTS = {
     "list_bundle_contents": ("devqubit_engine.bundle.pack", "list_bundle_contents"),
     "Bundle": ("devqubit_engine.bundle.reader", "Bundle"),
     "replay": ("devqubit_engine.bundle.replay", "replay"),
+    "PackResult": ("devqubit_engine.bundle.pack", "PackResult"),
+    "UnpackResult": ("devqubit_engine.bundle.pack", "UnpackResult"),
 }
 
 

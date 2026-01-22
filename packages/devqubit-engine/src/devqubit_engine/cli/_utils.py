@@ -17,6 +17,8 @@ from typing import Any, Sequence
 import click
 from devqubit_engine.storage.artifacts.counts import CountsInfo
 from devqubit_engine.storage.artifacts.lookup import ArtifactInfo
+from devqubit_engine.storage.types import RegistryProtocol
+from devqubit_engine.tracking.record import RunRecord
 
 
 def echo(msg: str, *, err: bool = False) -> None:
@@ -158,6 +160,55 @@ def is_quiet(ctx: click.Context) -> bool:
     if ctx.obj is None:
         return False
     return bool(ctx.obj.get("quiet", False))
+
+
+def resolve_run(
+    run_id_or_name: str,
+    registry: RegistryProtocol,
+    project: str | None = None,
+) -> RunRecord:
+    """
+    Resolve run by ID or name and load it.
+
+    Uses resolve_run_id from engine for ID-first resolution:
+    1. Try as run ID (fast path)
+    2. If project provided and ID not found, try as name within project
+
+    Parameters
+    ----------
+    run_id_or_name : str
+        Run ID or run name.
+    registry : RegistryProtocol
+        Registry instance.
+    project : str, optional
+        Project name. Required when using run name.
+
+    Returns
+    -------
+    RunRecord
+        Loaded run record.
+
+    Raises
+    ------
+    click.ClickException
+        If run is not found.
+    """
+    from devqubit_engine.storage.errors import RunNotFoundError
+    from devqubit_engine.tracking.record import resolve_run_id
+
+    resolved_id = resolve_run_id(run_id_or_name, project, registry)
+
+    try:
+        return registry.load(resolved_id)
+    except RunNotFoundError:
+        if project:
+            raise click.ClickException(
+                f"Run not found: '{run_id_or_name}'"
+                f"(looked up as ID and as name in project '{project}')"
+            )
+        raise click.ClickException(
+            f"Run not found: '{run_id_or_name}'." f"Use --project to look up by name."
+        )
 
 
 def format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:

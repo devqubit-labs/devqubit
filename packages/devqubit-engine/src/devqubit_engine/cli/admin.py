@@ -22,7 +22,13 @@ ui
 from __future__ import annotations
 
 import click
-from devqubit_engine.cli._utils import echo, print_json, print_table, root_from_ctx
+from devqubit_engine.cli._utils import (
+    echo,
+    print_json,
+    print_table,
+    resolve_run,
+    root_from_ctx,
+)
 
 
 def register(cli: click.Group) -> None:
@@ -259,7 +265,7 @@ def storage_prune(
         print_json(result)
         return
 
-    echo(f"Deleted {stats.runs_pruned} runs")
+    echo(f"Pruned {stats.runs_pruned} runs.")
     if stats.errors:
         echo(f"\nEncountered {len(stats.errors)} errors during deletion.")
 
@@ -273,40 +279,28 @@ def storage_prune(
 )
 @click.pass_context
 def storage_health(ctx: click.Context, fmt: str) -> None:
-    """
-    Check workspace health.
-
-    Reports on total runs, objects, and identifies any integrity issues
-    such as orphaned or missing objects.
-    """
+    """Check storage health and integrity."""
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.gc import check_workspace_health
+    from devqubit_engine.storage.gc import check_health
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
     store = create_store(config=config)
 
-    health = check_workspace_health(store, registry)
+    health = check_health(store, registry)
 
     if fmt == "json":
         print_json(health)
         return
 
-    echo(f"Total runs:         {health['total_runs']}")
-    echo(f"Total objects:      {health['total_objects']}")
-    echo(f"Referenced objects: {health['referenced_objects']}")
-    echo(f"Orphaned objects:   {health['orphaned_objects']}")
-    echo(f"Missing objects:    {health['missing_objects']}")
-
-    if health["status_counts"]:
-        echo("\nRuns by status:")
-        for status, count in sorted(health["status_counts"].items()):
-            echo(f"  {status}: {count}")
-
-    if health["projects"]:
-        echo(f"\nProjects ({len(health['projects'])}): {', '.join(health['projects'])}")
+    echo(f"Workspace:        {root}")
+    echo(f"Total runs:       {health['total_runs']}")
+    echo(f"Total objects:    {health['total_objects']}")
+    echo(f"Referenced:       {health['referenced_objects']}")
+    echo(f"Orphaned:         {health['orphaned_objects']}")
+    echo(f"Missing:          {health['missing_objects']}")
 
     if health["errors"]:
         echo(f"\nErrors ({len(health['errors'])}):")
@@ -340,25 +334,31 @@ def baseline_group() -> None:
 
 @baseline_group.command("set")
 @click.argument("project")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
 @click.pass_context
-def baseline_set(ctx: click.Context, project: str, run_id: str) -> None:
-    """Set baseline run for a project."""
+def baseline_set(ctx: click.Context, project: str, run_id_or_name: str) -> None:
+    """
+    Set baseline run for a project.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    the project argument is used for name resolution.
+
+    Examples:
+        devqubit baseline set myproject abc123
+        devqubit baseline set bell_state baseline-v1
+    """
     from devqubit_engine.config import Config
-    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
 
-    try:
-        registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    # Resolve run (supports ID or name within project)
+    run_record = resolve_run(run_id_or_name, registry, project)
 
-    registry.set_baseline(project, run_id)
-    echo(f"Baseline set: {project} -> {run_id}")
+    registry.set_baseline(project, run_record.run_id)
+    echo(f"Baseline set: {project} -> {run_record.run_id}")
 
 
 @baseline_group.command("get")

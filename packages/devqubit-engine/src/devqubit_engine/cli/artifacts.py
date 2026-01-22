@@ -17,6 +17,7 @@ from devqubit_engine.cli._utils import (
     format_artifacts_table,
     format_counts_table,
     print_json,
+    resolve_run,
     root_from_ctx,
 )
 
@@ -58,16 +59,22 @@ def _get_storage(
     return registry, store
 
 
-def _load_run(ctx: click.Context, run_id: str) -> RunRecord:
+def _load_run(
+    ctx: click.Context,
+    run_id_or_name: str,
+    project: str | None = None,
+) -> RunRecord:
     """
-    Load run record by ID.
+    Load run record by ID or name.
 
     Parameters
     ----------
     ctx : click.Context
         CLI context.
-    run_id : str
-        Run identifier.
+    run_id_or_name : str
+        Run identifier or name.
+    project : str, optional
+        Project name (required when using run name).
 
     Returns
     -------
@@ -79,14 +86,8 @@ def _load_run(ctx: click.Context, run_id: str) -> RunRecord:
     click.ClickException
         If run is not found.
     """
-    from devqubit_engine.storage.errors import RunNotFoundError
-
     registry, _ = _get_storage(ctx)
-
-    try:
-        return registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    return resolve_run(run_id_or_name, registry, project)
 
 
 def _parse_selector(selector: str) -> str | int:
@@ -108,7 +109,10 @@ def artifacts_group() -> None:
 
 
 @artifacts_group.command("list")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option("--role", "-r", help="Filter by role (program, results, etc).")
 @click.option("--kind", "-k", help="Filter by kind substring.")
 @click.option(
@@ -120,22 +124,27 @@ def artifacts_group() -> None:
 @click.pass_context
 def artifacts_list(
     ctx: click.Context,
-    run_id: str,
+    run_id_or_name: str,
+    project: str | None,
     role: str | None,
     kind: str | None,
     fmt: str,
 ) -> None:
-    """List artifacts in a run."""
+    """
+    List artifacts in a run.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
+    Examples:
+        devqubit artifacts list abc123
+        devqubit artifacts list my-experiment --project bell_state
+        devqubit artifacts list abc123 --role program
+    """
     from devqubit_engine.storage.artifacts.lookup import list_artifacts
 
     registry, store = _get_storage(ctx)
-
-    from devqubit_engine.storage.errors import RunNotFoundError
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     artifacts = list_artifacts(
         run_record,
@@ -156,8 +165,11 @@ def artifacts_list(
 
 
 @artifacts_group.command("show")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
 @click.argument("selector")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option("--raw", is_flag=True, help="Output raw bytes to stdout.")
 @click.option(
     "--format",
@@ -168,8 +180,9 @@ def artifacts_list(
 @click.pass_context
 def artifacts_show(
     ctx: click.Context,
-    run_id: str,
+    run_id_or_name: str,
     selector: str,
+    project: str | None,
     raw: bool,
     fmt: str,
 ) -> None:
@@ -178,10 +191,13 @@ def artifacts_show(
 
     SELECTOR can be: index (0, 1, ...), kind substring, or role:kind pattern.
 
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
     Examples:
         devqubit artifacts show abc123 0
         devqubit artifacts show abc123 counts
-        devqubit artifacts show abc123 program:openqasm3
+        devqubit artifacts show my-run program:openqasm3 --project bell_state
         devqubit artifacts show abc123 results --raw > output.json
     """
     from devqubit_engine.storage.artifacts.lookup import (
@@ -191,13 +207,7 @@ def artifacts_show(
     )
 
     registry, store = _get_storage(ctx)
-
-    from devqubit_engine.storage.errors import RunNotFoundError
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     selector_val = _parse_selector(selector)
 
@@ -240,7 +250,10 @@ def artifacts_show(
 
 
 @artifacts_group.command("counts")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option("--top", "-k", type=int, default=10, help="Show top K outcomes.")
 @click.option(
     "--experiment",
@@ -258,22 +271,27 @@ def artifacts_show(
 @click.pass_context
 def artifacts_counts(
     ctx: click.Context,
-    run_id: str,
+    run_id_or_name: str,
+    project: str | None,
     top: int,
     experiment: int | None,
     fmt: str,
 ) -> None:
-    """Show measurement counts from a run."""
+    """
+    Show measurement counts from a run.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
+    Examples:
+        devqubit artifacts counts abc123
+        devqubit artifacts counts my-experiment --project bell_state
+        devqubit artifacts counts abc123 --top 20 --format json
+    """
     from devqubit_engine.storage.artifacts.counts import get_counts
 
     registry, store = _get_storage(ctx)
-
-    from devqubit_engine.storage.errors import RunNotFoundError
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     counts = get_counts(run_record, store, experiment_index=experiment)
 
@@ -329,27 +347,32 @@ def _validate_tag_key(key: str) -> str:
 
 
 @tag_group.command("add")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
 @click.argument("tags", nargs=-1, required=True)
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.pass_context
-def tag_add(ctx: click.Context, run_id: str, tags: tuple[str, ...]) -> None:
+def tag_add(
+    ctx: click.Context,
+    run_id_or_name: str,
+    tags: tuple[str, ...],
+    project: str | None,
+) -> None:
     """
     Add tags to a run.
 
     Tags can be key=value pairs or just keys (value defaults to "true").
 
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
     Examples:
         devqubit tag add abc123 experiment=bell
-        devqubit tag add abc123 validated production
+        devqubit tag add my-run validated production --project bell_state
     """
     registry, _ = _get_storage(ctx)
-
-    from devqubit_engine.storage.errors import RunNotFoundError
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     # Get current tags
     current_tags = dict(run_record.tags)
@@ -372,29 +395,34 @@ def tag_add(ctx: click.Context, run_id: str, tags: tuple[str, ...]) -> None:
     record.setdefault("data", {})["tags"] = current_tags
     registry.save(record)
 
-    echo(f"Added {added} tag(s) to {run_id}")
+    echo(f"Added {added} tag(s) to {run_record.run_id}")
 
 
 @tag_group.command("remove")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
 @click.argument("keys", nargs=-1, required=True)
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.pass_context
-def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
+def tag_remove(
+    ctx: click.Context,
+    run_id_or_name: str,
+    keys: tuple[str, ...],
+    project: str | None,
+) -> None:
     """
     Remove tags from a run.
 
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
     Examples:
         devqubit tag remove abc123 experiment
-        devqubit tag remove abc123 temp debug
+        devqubit tag remove my-run temp debug --project bell_state
     """
     registry, _ = _get_storage(ctx)
-
-    from devqubit_engine.storage.errors import RunNotFoundError
-
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     # Get current tags
     current_tags = dict(run_record.tags)
@@ -415,13 +443,16 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
     registry.save(record)
 
     if removed > 0:
-        echo(f"Removed {removed} tag(s) from {run_id}")
+        echo(f"Removed {removed} tag(s) from {run_record.run_id}")
     if not_found:
         echo(f"Tags not found: {', '.join(not_found)}")
 
 
 @tag_group.command("list")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option(
     "--format",
     "fmt",
@@ -429,9 +460,23 @@ def tag_remove(ctx: click.Context, run_id: str, keys: tuple[str, ...]) -> None:
     default="pretty",
 )
 @click.pass_context
-def tag_list(ctx: click.Context, run_id: str, fmt: str) -> None:
-    """List tags on a run."""
-    run_record = _load_run(ctx, run_id)
+def tag_list(
+    ctx: click.Context,
+    run_id_or_name: str,
+    project: str | None,
+    fmt: str,
+) -> None:
+    """
+    List tags on a run.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
+    Examples:
+        devqubit tag list abc123
+        devqubit tag list my-experiment --project bell_state
+    """
+    run_record = _load_run(ctx, run_id_or_name, project)
     run_tags = run_record.tags
 
     if fmt == "json":
