@@ -28,7 +28,7 @@ qc.h(0)
 qc.cx(0, 1)
 qc.measure_all()
 
-with track(project="bell-state") as run:
+with track(project="bell-state", name="baseline-v1") as run:
     # Wrap the backend - this enables automatic capture
     backend = run.wrap(AerSimulator())
 
@@ -42,7 +42,7 @@ with track(project="bell-state") as run:
     run.log_metric("p00", counts.get("00", 0) / 1000)
     run.log_metric("p11", counts.get("11", 0) / 1000)
 
-print(f"Run saved: {run.run_id}")
+print(f"Run saved: {run.run_id} (name: {run.name})")
 ```
 
 The adapter automatically captures:
@@ -57,21 +57,27 @@ The adapter automatically captures:
 # List runs in a project
 devqubit list --project bell-state
 
-# Show run details
-devqubit show <run_id>
+# Show run details (by name or ID)
+devqubit show baseline-v1 --project bell-state
 
 # List captured artifacts
-devqubit artifacts list <run_id>
+devqubit artifacts list baseline-v1 --project bell-state
 
 # Export a portable bundle
-devqubit pack <run_id> -o bell-run.zip
+devqubit pack baseline-v1 -o bell-run.zip --project bell-state
 ```
+
+> **Tip:** Most CLI commands accept run name or run ID. Use `--project` when referencing by name.
 
 ## Compare Runs
 
 ```python
-from devqubit import diff
+from devqubit.compare import diff
 
+# Compare by name (recommended)
+result = diff("baseline-v1", "experiment-v2", project="bell-state")
+
+# Or by run ID
 result = diff("01JD7X...", "01JD8Y...")
 
 print(result.identical)              # False
@@ -83,7 +89,7 @@ print(result.device_drift)           # DriftResult with calibration changes
 Or via CLI:
 
 ```bash
-devqubit diff 01JD7X... 01JD8Y...
+devqubit diff baseline-v1 experiment-v2 --project bell-state
 ```
 
 ## Baseline Verification
@@ -91,27 +97,26 @@ devqubit diff 01JD7X... 01JD8Y...
 Set a known-good run as baseline and verify new runs against it:
 
 ```bash
-# Set baseline
-devqubit baseline set bell-state <baseline_run_id>
+# Set baseline (by name or ID)
+devqubit baseline set bell-state baseline-v1
 
 # Verify a candidate run
-devqubit verify <candidate_run_id> --project bell-state
+devqubit verify nightly-run --project bell-state
 
 # With noise-aware threshold (recommended for hardware)
-devqubit verify <candidate_run_id> --project bell-state --noise-factor 1.2
+devqubit verify nightly-run --project bell-state --noise-factor 1.2
 
 # Export JUnit report for CI
-devqubit verify <candidate_run_id> --project bell-state --junit results.xml
+devqubit verify nightly-run --project bell-state --junit results.xml
 ```
 
 Programmatic verification:
 
 ```python
-from devqubit import verify_baseline
-from devqubit.compare import VerifyPolicy
+from devqubit.compare import verify_baseline, VerifyPolicy
 
 result = verify_baseline(
-    candidate_run,
+    "nightly-run",  # run name or ID
     project="bell-state",
     policy=VerifyPolicy(
         noise_factor=1.2,                 # 1.2x bootstrap noise threshold

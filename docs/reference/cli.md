@@ -4,20 +4,22 @@ The `devqubit` CLI helps you inspect runs, compare results, manage baselines, an
 
 If you're new, start with {doc}`../getting-started/quickstart`.
 
+> **Run identifiers:** Most commands accept `<run>` which can be either a **run ID** (ULID like `01JD7X...`) or a **run name** (like `baseline-v1`). When using names, provide `--project` for disambiguation.
+
 ## Quick Start
 
 ```bash
 # List recent runs
 devqubit list
 
-# Show run details
-devqubit show <run_id>
+# Show run details (by name or ID)
+devqubit show baseline-v1 --project myproject
 
 # Compare two runs
-devqubit diff <run_a> <run_b>
+devqubit diff baseline-v1 candidate-v2 --project myproject
 
 # Verify against baseline
-devqubit verify <run_id> --project myproject
+devqubit verify nightly-run --project myproject
 
 # Launch web UI
 devqubit ui
@@ -140,13 +142,14 @@ devqubit search "backend ~ ibm and status = FINISHED"
 Display detailed information about a run.
 
 ```bash
-devqubit show RUN_ID [OPTIONS]
+devqubit show <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Description |
 |--------|-------------|
+| `--project` | Project name (required when using run name) |
 | `--format` | Output format: `pretty` (default) or `json` |
 
 **Output includes:**
@@ -162,11 +165,14 @@ devqubit show RUN_ID [OPTIONS]
 **Examples:**
 
 ```bash
-# Human-readable summary
-devqubit show abc123def456
+# By run name
+devqubit show baseline-v1 --project bell-state
+
+# By run ID
+devqubit show 01JD7X...
 
 # Full JSON for programmatic access
-devqubit show abc123def456 --format json
+devqubit show baseline-v1 --project bell-state --format json
 ```
 
 ---
@@ -176,23 +182,24 @@ devqubit show abc123def456 --format json
 Delete a run from the workspace.
 
 ```bash
-devqubit delete RUN_ID [OPTIONS]
+devqubit delete <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 | `--yes` | `-y` | Skip confirmation prompt |
 
 **Example:**
 
 ```bash
 # Interactive confirmation
-devqubit delete abc123
+devqubit delete old-experiment --project myproj
 
 # Non-interactive (for scripts)
-devqubit delete abc123 --yes
+devqubit delete 01JD7X... --yes
 ```
 
 ---
@@ -261,13 +268,14 @@ devqubit groups show GROUP_ID [OPTIONS]
 List artifacts in a run.
 
 ```bash
-devqubit artifacts list RUN_ID [OPTIONS]
+devqubit artifacts list <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 | `--role` | `-r` | Filter by role (program, result, device_raw, envelope) |
 | `--kind` | `-k` | Filter by kind substring |
 | `--format` | | Output format: `table` (default) or `json` |
@@ -276,13 +284,13 @@ devqubit artifacts list RUN_ID [OPTIONS]
 
 ```bash
 # List all artifacts
-devqubit artifacts list abc123
+devqubit artifacts list baseline-v1 --project bell-state
 
 # Filter by role
-devqubit artifacts list abc123 --role program
+devqubit artifacts list baseline-v1 --project bell-state --role program
 
 # Filter by kind
-devqubit artifacts list abc123 --kind openqasm
+devqubit artifacts list baseline-v1 --project bell-state --kind openqasm
 ```
 
 ---
@@ -292,7 +300,7 @@ devqubit artifacts list abc123 --kind openqasm
 Display artifact content.
 
 ```bash
-devqubit artifacts show RUN_ID SELECTOR [OPTIONS]
+devqubit artifacts show <run> SELECTOR [OPTIONS]
 ```
 
 **Selector formats:**
@@ -304,6 +312,7 @@ devqubit artifacts show RUN_ID SELECTOR [OPTIONS]
 
 | Option | Description |
 |--------|-------------|
+| `--project` | Project name (required when using run name) |
 | `--raw` | Output raw bytes to stdout (for piping) |
 | `--format` | Output format: `pretty` (default) or `json` |
 
@@ -311,16 +320,16 @@ devqubit artifacts show RUN_ID SELECTOR [OPTIONS]
 
 ```bash
 # Show by index
-devqubit artifacts show abc123 0
+devqubit artifacts show baseline-v1 0 --project bell-state
 
 # Show by kind
-devqubit artifacts show abc123 counts
+devqubit artifacts show baseline-v1 counts --project bell-state
 
 # Show by role:kind
-devqubit artifacts show abc123 program:openqasm3
+devqubit artifacts show baseline-v1 program:openqasm3 --project bell-state
 
 # Export raw content
-devqubit artifacts show abc123 results --raw > output.json
+devqubit artifacts show baseline-v1 results --project bell-state --raw > output.json
 ```
 
 ---
@@ -330,13 +339,14 @@ devqubit artifacts show abc123 results --raw > output.json
 Display measurement counts from a run.
 
 ```bash
-devqubit artifacts counts RUN_ID [OPTIONS]
+devqubit artifacts counts <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 | `--top` | `-k` | Show top K outcomes (default: 10) |
 | `--experiment` | `-e` | Experiment index for batch jobs |
 | `--format` | | Output format: `table` (default) or `json` |
@@ -345,10 +355,10 @@ devqubit artifacts counts RUN_ID [OPTIONS]
 
 ```bash
 # Show top 5 outcomes
-devqubit artifacts counts abc123 --top 5
+devqubit artifacts counts baseline-v1 --project bell-state --top 5
 
 # Show counts for second circuit in batch
-devqubit artifacts counts abc123 --experiment 1
+devqubit artifacts counts baseline-v1 --project bell-state --experiment 1
 ```
 
 ---
@@ -362,8 +372,14 @@ Tags are key-value pairs for organizing and filtering runs.
 Add tags to a run.
 
 ```bash
-devqubit tag add RUN_ID TAG [TAG ...]
+devqubit tag add <run> TAG [TAG ...] [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 
 Tags can be `key=value` pairs or just `key` (value defaults to "true").
 
@@ -371,10 +387,10 @@ Tags can be `key=value` pairs or just `key` (value defaults to "true").
 
 ```bash
 # Add key=value tag
-devqubit tag add abc123 experiment=bell
+devqubit tag add baseline-v1 experiment=bell --project bell-state
 
 # Add multiple tags
-devqubit tag add abc123 validated production device=ibm_brisbane
+devqubit tag add baseline-v1 validated production device=ibm_brisbane --project bell-state
 ```
 
 ---
@@ -384,13 +400,19 @@ devqubit tag add abc123 validated production device=ibm_brisbane
 Remove tags from a run.
 
 ```bash
-devqubit tag remove RUN_ID KEY [KEY ...]
+devqubit tag remove <run> KEY [KEY ...] [OPTIONS]
 ```
+
+**Options:**
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 
 **Example:**
 
 ```bash
-devqubit tag remove abc123 temp debug
+devqubit tag remove baseline-v1 temp debug --project bell-state
 ```
 
 ---
@@ -400,13 +422,14 @@ devqubit tag remove abc123 temp debug
 List all tags on a run.
 
 ```bash
-devqubit tag list RUN_ID [OPTIONS]
+devqubit tag list <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Description |
 |--------|-------------|
+| `--project` | Project name (required when using run name) |
 | `--format` | Output format: `pretty` (default) or `json` |
 
 ---
@@ -418,15 +441,16 @@ devqubit tag list RUN_ID [OPTIONS]
 Compare two runs or bundles comprehensively.
 
 ```bash
-devqubit diff REF_A REF_B [OPTIONS]
+devqubit diff <run_a> <run_b> [OPTIONS]
 ```
 
-REF can be a run ID or bundle file path.
+`<run_a>` and `<run_b>` can be run names, run IDs, or bundle file paths.
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run names) |
 | `--output` | `-o` | Save report to file |
 | `--format` | | Output: `pretty` (default), `json`, or `summary` |
 | `--no-circuit-diff` | | Skip circuit semantic comparison |
@@ -442,20 +466,23 @@ REF can be a run ID or bundle file path.
 **Examples:**
 
 ```bash
-# Compare two runs
-devqubit diff abc123 def456
+# Compare two runs by name
+devqubit diff baseline-v1 candidate-v2 --project bell-state
+
+# Compare two runs by ID
+devqubit diff 01JD7X... 01JD8Y...
 
 # Compare bundles
 devqubit diff experiment1.zip experiment2.zip
 
 # Save report as JSON
-devqubit diff abc123 def456 --format json -o report.json
+devqubit diff baseline-v1 candidate-v2 --project bell-state --format json -o report.json
 
 # Quick comparison (skip noise estimation)
-devqubit diff abc123 def456 --no-noise-context
+devqubit diff baseline-v1 candidate-v2 --project bell-state --no-noise-context
 
 # Compare all result items in batch
-devqubit diff abc123 def456 --item-index -1
+devqubit diff baseline-v1 candidate-v2 --project bell-state --item-index -1
 ```
 
 ---
@@ -465,15 +492,15 @@ devqubit diff abc123 def456 --item-index -1
 Verify a run against baseline with full root-cause analysis.
 
 ```bash
-devqubit verify CANDIDATE_ID [OPTIONS]
+devqubit verify <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
-| `--baseline` | `-b` | Baseline run ID (default: project baseline) |
-| `--project` | `-p` | Project for baseline lookup |
+| `--baseline` | `-b` | Baseline run (name or ID; default: project baseline) |
+| `--project` | `-p` | Project for baseline lookup (required when using run name) |
 | `--tvd-max` | | Maximum allowed TVD |
 | `--noise-factor` | | Fail if TVD > noise_factor × noise_p95 (recommended: 1.0-1.5) |
 | `--program-match-mode` | | `exact`, `structural`, or `either` (default) |
@@ -493,35 +520,35 @@ devqubit verify CANDIDATE_ID [OPTIONS]
 **Examples:**
 
 ```bash
-# Verify against explicit baseline
-devqubit verify abc123 --baseline def456
+# Verify by run name against project baseline
+devqubit verify nightly-run --project bell-state
 
-# Verify against project baseline
-devqubit verify abc123 --project bell-state
+# Verify against explicit baseline (by name)
+devqubit verify candidate-v2 --baseline baseline-v1 --project bell-state
 
 # With TVD threshold
-devqubit verify abc123 --project bell-state --tvd-max 0.05
+devqubit verify nightly-run --project bell-state --tvd-max 0.05
 
 # Bootstrap-calibrated threshold (recommended)
-devqubit verify abc123 --project bell-state --noise-factor 1.0
+devqubit verify nightly-run --project bell-state --noise-factor 1.0
 
 # VQE-friendly (ignore parameter values in circuit)
-devqubit verify abc123 --project vqe-h2 --program-match-mode structural
+devqubit verify nightly-run --project vqe-h2 --program-match-mode structural
 
 # Strict mode (fingerprint must match)
-devqubit verify abc123 --project bell-state --strict
+devqubit verify nightly-run --project bell-state --strict
 
 # CI integration with JUnit output
-devqubit verify abc123 --project bell-state --junit results.xml
+devqubit verify nightly-run --project bell-state --junit results.xml
 
 # GitHub Actions format
-devqubit verify abc123 --project bell-state --format github
+devqubit verify nightly-run --project bell-state --format github
 
 # Promote on success
-devqubit verify abc123 --project bell-state --promote
+devqubit verify nightly-run --project bell-state --promote
 
 # Relaxed verification (only check TVD)
-devqubit verify abc123 --project bell-state \
+devqubit verify nightly-run --project bell-state \
   --no-params-match --no-program-match --noise-factor 1.5
 ```
 
@@ -534,18 +561,18 @@ Re-execute a quantum circuit from a run or bundle on a simulator.
 **⚠️ EXPERIMENTAL:** Replay is best-effort and may not be fully reproducible.
 
 ```bash
-devqubit replay [REF] [OPTIONS]
+devqubit replay <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 | `--backend` | `-b` | Simulator backend name |
 | `--shots` | `-s` | Override shot count |
 | `--seed` | | Random seed for reproducibility (best-effort) |
 | `--save` | | Save replay as new tracked run |
-| `--project` | `-p` | Project name for saved run |
 | `--experimental` | | Acknowledge experimental status (required) |
 | `--list-backends` | | List available simulator backends |
 | `--format` | | Output format: `pretty` or `json` |
@@ -570,11 +597,11 @@ devqubit replay --list-backends
 devqubit replay experiment.zip --experimental
 
 # Specify backend, shots, and seed
-devqubit replay abc123 --backend aer_simulator --shots 10000 --seed 42 --experimental
+devqubit replay baseline-v1 --project bell-state --backend aer_simulator --shots 10000 --seed 42 --experimental
 
 # Save and compare with original
-devqubit replay abc123 --experimental --save --project replay-test
-devqubit diff abc123 <replay_run_id>
+devqubit replay baseline-v1 --project bell-state --experimental --save --project replay-test
+devqubit diff baseline-v1 <replay_run_id> --project bell-state
 ```
 
 ---
@@ -588,13 +615,14 @@ Bundles are portable ZIP archives containing a run and all its artifacts.
 Create a bundle from a run.
 
 ```bash
-devqubit pack RUN_ID [OPTIONS]
+devqubit pack <run> [OPTIONS]
 ```
 
 **Options:**
 
 | Option | Short | Description |
 |--------|-------|-------------|
+| `--project` | `-p` | Project name (required when using run name) |
 | `--out` | `-o` | Output file path (default: `<run_id>.devqubit.zip`) |
 | `--force` | `-f` | Overwrite existing file |
 | `--format` | | Output format: `pretty` (default) or `json` |
@@ -602,14 +630,17 @@ devqubit pack RUN_ID [OPTIONS]
 **Examples:**
 
 ```bash
-# Pack with default name
-devqubit pack abc123
+# Pack by name
+devqubit pack baseline-v1 --project bell-state
 
 # Specify output path
-devqubit pack abc123 -o experiment.zip
+devqubit pack baseline-v1 --project bell-state -o experiment.zip
+
+# Pack by ID
+devqubit pack 01JD7X... -o experiment.zip
 
 # Overwrite existing
-devqubit pack abc123 -o experiment.zip --force
+devqubit pack baseline-v1 --project bell-state -o experiment.zip --force
 ```
 
 ---
@@ -686,7 +717,23 @@ Baselines are reference runs for verification.
 Set the baseline run for a project.
 
 ```bash
-devqubit baseline set PROJECT RUN_ID
+devqubit baseline set PROJECT <run> [OPTIONS]
+```
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--project` | Project context (required when using run name and it differs from PROJECT) |
+
+**Examples:**
+
+```bash
+# Set baseline by run name
+devqubit baseline set bell-state baseline-v1
+
+# Set baseline by run ID
+devqubit baseline set bell-state 01JD7X...
 ```
 
 ---
@@ -938,7 +985,7 @@ devqubit --root /path/to/.devqubit <command>
 # ...
 
 # Verify against baseline with bootstrap-calibrated threshold
-devqubit verify $RUN_ID \
+devqubit verify nightly-run \
   --project $PROJECT \
   --program-match-mode either \
   --noise-factor 1.0 \
@@ -950,15 +997,15 @@ devqubit verify $RUN_ID \
 ### Sharing Experiments
 
 ```bash
-# Pack run for sharing
-devqubit pack abc123 -o experiment.zip
+# Pack run for sharing (by name)
+devqubit pack baseline-v1 --project bell-state -o experiment.zip
 
 # Recipient unpacks
 devqubit unpack experiment.zip
 
 # Recipient can view, replay, or compare
-devqubit show abc123
-devqubit replay abc123 --backend aer_simulator --experimental
+devqubit show 01JD7X...  # use run ID from bundle
+devqubit replay 01JD7X... --backend aer_simulator --experimental
 ```
 
 ### Workspace Maintenance

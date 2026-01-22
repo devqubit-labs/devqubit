@@ -7,57 +7,92 @@ devqubit compares two runs (or bundles) across: metadata, parameters, metrics, p
 ## Comparing Runs
 
 ```python
-from devqubit import diff
+from devqubit.compare import diff
 
-result = diff("RUN_BASELINE", "RUN_CANDIDATE")
+# By run name (recommended)
+result = diff("baseline-v1", "candidate-v2", project="bell-state")
+
+# Or by run ID
+result = diff("01KDNZYSNPZFVPZG94DATP1DT6", "01KDNZZ9KBYK1DDCW6KP38DA34")
+
 print(result)
 ```
 
 Output:
 
 ```
-======================================================================
-RUN COMPARISON
-======================================================================
-Baseline:  01KDNZYSNPZFVPZG94DATP1DT6
-Candidate: 01KDNZZ9KBYK1DDCW6KP38DA34
+══════════════════════════════════════════════════════════════════════
+                            RUN COMPARISON
+══════════════════════════════════════════════════════════════════════
 
-Overall: ✗ DIFFER
+  Baseline:      01KDNZYSNPZFVPZG94DATP1DT6  [vqe-h2]
+  Candidate:     01KDNZZ9KBYK1DDCW6KP38DA34  [vqe-h2]
 
-----------------------------------------------------------------------
-Metadata
-----------------------------------------------------------------------
-  project: ✓
-  backend: ✗  fake_manila -> aer_simulator
+──────────────────────────────────────────────────────────────────────
+  RESULT: ✗ DIFFER
+──────────────────────────────────────────────────────────────────────
 
-----------------------------------------------------------------------
-Program
-----------------------------------------------------------------------
-  ✓ Match (structural)
+SUMMARY
+───────
+  ✓ Program:       structural match
+  ✗ Parameters:    2 changed, 1 added
+  ! Results:       TVD = 0.0870 (3.5x noise)
+  ! Device:        calibration drift detected
 
-----------------------------------------------------------------------
-Results
-----------------------------------------------------------------------
-  TVD: 0.037598
-  Noise threshold (p95): 0.068421
-  p-value: 0.234
-  Interpretation: Consistent with sampling noise
+METADATA DIFFERENCES
+────────────────────
+  backend:       ibm_brisbane => ibm_kyoto
 
-======================================================================
+PARAMETER CHANGES
+─────────────────
+  learning_rate         0.01 => 0.02 (+100.0%)
+  num_layers            4 => 6 (+50.0%)
+
+METRIC CHANGES
+──────────────
+  energy                -1.136 => -1.142 (-0.5%)
+  fidelity              0.952 => 0.891 (-6.4%)
+
+DISTRIBUTION ANALYSIS
+─────────────────────
+  TVD:           0.087000  !
+  Expected noise: 0.025000
+  Noise ratio:   3.48x
+  Assessment:    Moderate divergence
+
+DEVICE CALIBRATION
+──────────────────
+  Baseline cal:  2026-01-15T10:00:00Z
+  Candidate cal: 2026-01-15T14:30:00Z
+
+  ! Significant drift in 2 metric(s):
+    median_t2_us        120.5 => 98.3 (-18.4%)
+    median_t1_us        95.2 => 82.1 (-13.8%)
+
+CIRCUIT DIFFERENCES
+───────────────────
+  depth          4 => 6 (+50.0%)
+  2Q gates       8 => 12 (+50.0%)
+  + gates        rz, rzz
+
+WARNINGS
+────────
+  ! Backend changed between runs
+  ! Calibration data may not be comparable across devices
 ```
 
-`diff` accepts run IDs or bundle files:
+`diff` accepts run names (with project), run IDs, or bundle files:
 
 ```python
-result = diff("RUN_A", "RUN_B")                   # Two run IDs
-result = diff("baseline.zip", "RUN_B")            # Bundle vs run
-result = diff("baseline.zip", "candidate.zip")    # Two bundles
+result = diff("baseline", "candidate", project="myproj")  # Two run names
+result = diff("01JD7X...", "01JD8Y...")                   # Two run IDs
+result = diff("baseline.zip", "candidate.zip")            # Two bundles
 ```
 
 ## ComparisonResult
 
 ```python
-result = diff("RUN_A", "RUN_B")
+result = diff("baseline", "candidate", project="myproj")
 
 # Overall
 result.identical          # True if everything matches
@@ -120,8 +155,7 @@ if result.noise_context:
 Verify a candidate run against the project's baseline:
 
 ```python
-from devqubit import verify_baseline
-from devqubit.compare import VerifyPolicy
+from devqubit.compare import verify_baseline, VerifyPolicy
 
 policy = VerifyPolicy(
     params_must_match=True,
@@ -130,7 +164,7 @@ policy = VerifyPolicy(
 )
 
 result = verify_baseline(
-    "RUN_CANDIDATE",
+    "nightly-run",  # run name or ID
     project="vqe-h2",
     policy=policy,
 )
@@ -178,7 +212,7 @@ When both `tvd_max` and `noise_factor` are set, the **stricter** (minimum) thres
 ```python
 from devqubit.runs import get_baseline, set_baseline, clear_baseline
 
-set_baseline("vqe-h2", "RUN_PRODUCTION_V1")
+set_baseline("vqe-h2", "production-v1")  # by name or ID
 baseline = get_baseline("vqe-h2")
 clear_baseline("vqe-h2")
 ```
@@ -186,7 +220,7 @@ clear_baseline("vqe-h2")
 Or via CLI:
 
 ```bash
-devqubit baseline set vqe-h2 RUN_PRODUCTION_V1
+devqubit baseline set vqe-h2 production-v1
 devqubit baseline get vqe-h2
 devqubit baseline clear vqe-h2
 ```
@@ -195,7 +229,7 @@ Auto-promote on pass:
 
 ```python
 result = verify_baseline(
-    "RUN_CANDIDATE",
+    "nightly-run",
     project="vqe-h2",
     policy=policy,
     promote_on_pass=True,
@@ -219,24 +253,24 @@ if result.device_drift and result.device_drift.significant_drift:
 # GitHub Actions
 - name: Verify against baseline
   run: |
-    devqubit verify --project vqe-h2 $RUN_ID \
+    devqubit verify --project vqe-h2 nightly-run \
       --noise-factor 1.0 \
       --junit results.xml
 ```
 
 ```python
-from devqubit import verify_baseline
+from devqubit.compare import verify_baseline
 from devqubit.ci import write_junit
 
-result = verify_baseline("RUN_CANDIDATE", project="vqe-h2")
+result = verify_baseline("nightly-run", project="vqe-h2")
 write_junit(result, "results.xml")
 ```
 
 ## CLI
 
 ```bash
-devqubit diff RUN_A RUN_B
-devqubit diff RUN_A RUN_B --format json
-devqubit verify --project vqe-h2 RUN_CANDIDATE
-devqubit verify --project vqe-h2 RUN_CANDIDATE --noise-factor 1.0 --promote
+devqubit diff baseline-v1 candidate-v2 --project myproj
+devqubit diff baseline-v1 candidate-v2 --project myproj --format json
+devqubit verify --project vqe-h2 nightly-run
+devqubit verify --project vqe-h2 nightly-run --noise-factor 1.0 --promote
 ```

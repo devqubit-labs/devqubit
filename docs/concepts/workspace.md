@@ -58,14 +58,3 @@ from devqubit.storage import create_store, create_registry
 store = create_store("s3://my-bucket/devqubit/objects")
 registry = create_registry("s3://my-bucket/devqubit")
 ```
-
-## Custom Backends
-
-Register custom backends via entry points:
-
-```python
-from devqubit.storage.factory import register_store_backend
-
-register_store_backend("myscheme", MyCustomStore)
-store = create_store("myscheme://location")
-```

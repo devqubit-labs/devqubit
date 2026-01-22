@@ -196,7 +196,7 @@ Use fingerprints to detect what changed between runs — same `program` fingerpr
 **verify** checks a candidate run against a baseline with a policy: required equality constraints (params/program), TVD thresholds (hard limit or noise-calibrated), and produces a human-readable verdict with root-cause analysis.
 
 ```python
-from devqubit import diff, verify_baseline
+from devqubit.compare import diff, verify_baseline
 
 # Compare two runs
 result = diff("run_a", "run_b")

@@ -72,7 +72,7 @@ qc.h(0)
 qc.cx(0, 1)
 qc.measure_all()
 
-with track(project="bell-state") as run:
+with track(project="bell-state", name="baseline-v1") as run:
     backend = run.wrap(AerSimulator())
     job = backend.run(qc, shots=1000)
     counts = job.result().get_counts()
@@ -80,7 +80,7 @@ with track(project="bell-state") as run:
     run.log_param("shots", 1000)
     run.log_metric("p00", counts.get("00", 0) / 1000)
 
-print(f"Run saved: {run.run_id}")
+print(f"Run saved: {run.run_id}")  # or use run.name
 ```
 
 The adapter captures: circuit (QPY + QASM3), backend config, job metadata, and results.
@@ -90,6 +90,10 @@ The adapter captures: circuit (QPY + QASM3), backend config, job metadata, and r
 ```python
 from devqubit.compare import diff
 
+# By run name (with project context)
+result = diff("baseline-v1", "experiment-v2", project="bell-state")
+
+# Or by run ID
 result = diff("01JD7X...", "01JD8Y...")
 
 print(result.identical)           # False
@@ -100,7 +104,7 @@ print(result.tvd)                 # 0.023
 Or via CLI:
 
 ```bash
-devqubit diff 01JD7X... 01JD8Y...
+devqubit diff baseline-v1 experiment-v2 --project bell-state
 ```
 
 ## CI/CD verification
@@ -116,7 +120,7 @@ policy = VerifyPolicy(
 )
 
 result = verify_baseline(
-    candidate_run_id,
+    "nightly-run",  # run name or ID
     project="vqe-hydrogen",
     policy=policy,
 )
@@ -127,20 +131,22 @@ assert result.ok, result.reason
 In CI pipelines, use the CLI with JUnit output:
 
 ```bash
-devqubit verify $RUN_ID --project vqe-hydrogen --junit results.xml
+devqubit verify nightly-run --project vqe-hydrogen --junit results.xml
 ```
 
 ## CLI reference
 
 ```bash
-devqubit list                              # List recent runs
-devqubit show <run_id>                     # Show run details
-devqubit diff <run_a> <run_b>              # Compare two runs
-devqubit verify <run_id> --project myproj  # Verify against baseline
-devqubit pack <run_id> -o bundle.zip       # Export portable bundle
-devqubit unpack bundle.zip                 # Import bundle
-devqubit ui                                # Start web UI
+devqubit list                                       # List recent runs
+devqubit show <run>                                 # Show run details
+devqubit diff <run_a> <run_b> --project myproj      # Compare two runs
+devqubit verify <run> --project myproj              # Verify against baseline
+devqubit pack <run> -o bundle.zip --project myproj  # Export portable bundle
+devqubit unpack bundle.zip                          # Import bundle
+devqubit ui                                         # Start web UI
 ```
+
+> **Note:** `<run>` can be a run ID or run name. When using names, provide `--project` for disambiguation.
 
 See [CLI reference](https://devqubit.readthedocs.io/en/latest/reference/cli.html) for full interface information.
 
