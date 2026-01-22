@@ -212,6 +212,8 @@ class ProgramComparison:
 
     Attributes
     ----------
+    has_programs : bool
+        True if at least one run has program artifacts.
     exact_match : bool
         True if artifact digests are identical (byte-for-byte match).
     structural_match : bool
@@ -254,8 +256,11 @@ class ProgramComparison:
     - ``executed_*_hash``: Hashes for physical (compiled) circuits.
 
     For manual runs, hashes are unavailable and ``hash_available=False``.
+    When no programs are captured, ``has_programs=False`` and match fields
+    should be ignored.
     """
 
+    has_programs: bool = False
     exact_match: bool = False
     structural_match: bool = False
     parametric_match: bool = False
@@ -283,6 +288,8 @@ class ProgramComparison:
         ProgramMatchStatus
             Detailed status based on hash comparison.
         """
+        if not self.has_programs:
+            return ProgramMatchStatus.HASH_UNAVAILABLE
         if not self.hash_available:
             return ProgramMatchStatus.HASH_UNAVAILABLE
         if self.parametric_match:
@@ -304,6 +311,8 @@ class ProgramComparison:
         -------
         bool
             True if programs match according to the mode.
+            When both runs have no programs ([] == []), exact_match is True
+            and this returns True.
         """
         if mode == ProgramMatchMode.EXACT:
             return self.exact_match
@@ -315,11 +324,12 @@ class ProgramComparison:
     @property
     def structural_only_match(self) -> bool:
         """True if structural matches but exact doesn't (different param values)."""
-        return self.structural_match and not self.exact_match
+        return self.has_programs and self.structural_match and not self.exact_match
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         d: dict[str, Any] = {
+            "has_programs": self.has_programs,
             "exact_match": self.exact_match,
             "structural_match": self.structural_match,
             "parametric_match": self.parametric_match,

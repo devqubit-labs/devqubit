@@ -32,6 +32,7 @@ from devqubit_engine.cli._utils import (
     echo,
     print_json,
     print_table,
+    resolve_run,
     root_from_ctx,
     safe_get,
     truncate_id,
@@ -64,6 +65,7 @@ def _get_run_tags(run_record: Any) -> dict[str, Any]:
 @click.option("--status", "-s", default=None, help="Filter by status.")
 @click.option("--backend", "-b", default=None, help="Filter by backend name.")
 @click.option("--group", "-g", default=None, help="Filter by group ID.")
+@click.option("--name", default=None, help="Filter by run name (exact match).")
 @click.option(
     "--tag",
     "-t",
@@ -81,6 +83,7 @@ def list_runs(
     status: str | None,
     backend: str | None,
     group: str | None,
+    name: str | None,
     tags: tuple[str, ...],
     fmt: str,
 ) -> None:
@@ -91,6 +94,7 @@ def list_runs(
         devqubit list
         devqubit list --limit 50 --project myproject
         devqubit list --status COMPLETED --backend ibm_brisbane
+        devqubit list --name baseline-v1 --project bell_state
         devqubit list --tag experiment=bell --tag validated
     """
     from devqubit_engine.config import Config
@@ -111,6 +115,8 @@ def list_runs(
         filter_kwargs["backend_name"] = backend
     if group:
         filter_kwargs["group_id"] = group
+    if name:
+        filter_kwargs["name"] = name  # Fixed: was "run_name", should be "name"
 
     runs = registry.list_runs(**filter_kwargs)
 
@@ -153,7 +159,7 @@ def list_runs(
         echo("No runs found.")
         return
 
-    headers = ["Run ID", "Project", "Adapter", "Status", "Created"]
+    headers = ["Run ID", "Name", "Project", "Adapter", "Status", "Created"]
     rows = []
     for r in runs:
         proj = r.get("project")
@@ -166,12 +172,14 @@ def list_runs(
         adapter_name = r.get("adapter") or info.get("adapter", "")
         status_val = r.get("status") or info.get("status", "")
         created = str(r.get("created_at", ""))[:19]
+        run_name = r.get("run_name") or info.get("run_name") or ""
 
         rows.append(
             [
                 truncate_id(r.get("run_id", "")),
-                proj_name[:20],
-                str(adapter_name),
+                run_name[:15] if run_name else "-",
+                proj_name[:15],
+                str(adapter_name)[:12],
                 str(status_val),
                 created,
             ]
@@ -246,16 +254,18 @@ def search_runs(
         echo("No matching runs found.")
         return
 
-    headers = ["Run ID", "Project", "Status", "Created"]
+    headers = ["Run ID", "Name", "Project", "Status", "Created"]
     if sort and sort.startswith("metric."):
         metric_name = sort.split(".", 1)[1]
         headers.append(metric_name[:12])
 
     rows = []
     for r in results:
+        run_name = r.run_name or ""
         row = [
             truncate_id(r.run_id),
-            r.project[:20] if r.project else "",
+            run_name[:15] if run_name else "-",
+            r.project[:15] if r.project else "",
             r.status or "",
             r.created_at[:19] if r.created_at else "",
         ]
@@ -273,7 +283,10 @@ def search_runs(
 
 
 @click.command("show")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option(
     "--format",
     "fmt",
@@ -281,20 +294,31 @@ def search_runs(
     default="pretty",
 )
 @click.pass_context
-def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
-    """Show detailed run information."""
+def show_run(
+    ctx: click.Context,
+    run_id_or_name: str,
+    project: str | None,
+    fmt: str,
+) -> None:
+    """
+    Show detailed run information.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
+    Examples:
+        devqubit show abc123
+        devqubit show my-experiment --project bell_state
+        devqubit show abc123 --format json
+    """
     from devqubit_engine.config import Config
-    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
 
-    try:
-        run_record = registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
+    run_record = resolve_run(run_id_or_name, registry, project)
 
     if fmt == "json":
         print_json(run_record.to_dict())
@@ -304,6 +328,8 @@ def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
     info = record.get("info", {}) or {}
 
     echo(f"Run ID:      {run_record.run_id}")
+    if run_record.name:
+        echo(f"Run name:    {run_record.name}")
     echo(f"Project:     {run_record.project or '-'}")
     echo(f"Adapter:     {run_record.adapter or '-'}")
     echo(f"Status:      {run_record.status or '-'}")
@@ -368,11 +394,29 @@ def show_run(ctx: click.Context, run_id: str, fmt: str) -> None:
 
 
 @click.command("delete")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
 @click.pass_context
-def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
-    """Delete a run and its artifacts."""
+def delete_run(
+    ctx: click.Context,
+    run_id_or_name: str,
+    project: str | None,
+    yes: bool,
+) -> None:
+    """
+    Delete a run and its artifacts.
+
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
+    Examples:
+        devqubit delete abc123
+        devqubit delete my-experiment --project bell_state
+        devqubit delete abc123 --yes
+    """
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
 
@@ -380,11 +424,15 @@ def delete_run(ctx: click.Context, run_id: str, yes: bool) -> None:
     config = Config(root_dir=root)
     registry = create_registry(config=config)
 
-    if not registry.exists(run_id):
-        raise click.ClickException(f"Run not found: {run_id}")
+    # Resolve to get actual run ID
+    run_record = resolve_run(run_id_or_name, registry, project)
+    run_id = run_record.run_id
 
     if not yes:
-        if not click.confirm(f"Delete run {run_id}? This cannot be undone."):
+        display_name = f"{run_id}"
+        if run_record.name:
+            display_name = f"{run_record.name} ({run_id})"
+        if not click.confirm(f"Delete run {display_name}? This cannot be undone."):
             echo("Cancelled.")
             return
 
@@ -526,12 +574,14 @@ def groups_show(
         echo(f"No runs found in group: {group_id}")
         return
 
-    headers = ["Run ID", "Status", "Created"]
+    headers = ["Run ID", "Name", "Status", "Created"]
     rows = []
     for r in runs:
+        run_name = r.get("run_name") or r.get("info", {}).get("run_name") or ""
         rows.append(
             [
                 truncate_id(r.get("run_id", "")),
+                run_name[:15] if run_name else "-",
                 r.get("status", ""),
                 str(r.get("created_at", ""))[:19],
             ]

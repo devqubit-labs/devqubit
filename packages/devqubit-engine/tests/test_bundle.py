@@ -51,7 +51,7 @@ class TestBundleRoundtrip:
 
         # Pack from workspace A
         pack_result = pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store_a,
             registry=reg_a,
@@ -95,7 +95,7 @@ class TestPackRun:
             run_id = run.run_id
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
@@ -138,7 +138,7 @@ class TestPackRun:
 
         with pytest.raises(FileNotFoundError, match="Missing"):
             pack_run(
-                run_id=run_id,
+                run_id,
                 output_path=bundle_path,
                 store=store,
                 registry=registry,
@@ -157,7 +157,7 @@ class TestUnpackBundle:
             run_id = run.run_id
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
@@ -179,7 +179,7 @@ class TestUnpackBundle:
             run_id = run.run_id
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
@@ -213,7 +213,7 @@ class TestBundleReader:
             run_id = run.run_id
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,

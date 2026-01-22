@@ -13,6 +13,9 @@ Diff
 >>> result = diff("run_a", "run_b")
 >>> print(result.identical)
 
+>>> # By run name (requires project)
+>>> result = diff("baseline-v1", "experiment-v2", project="bell_state")
+
 Verification
 ------------
 >>> from devqubit.compare import verify_baseline
@@ -108,7 +111,7 @@ if TYPE_CHECKING:
 
 
 _LAZY_IMPORTS = {
-    # Core comparision function
+    # Core comparison function
     "diff": ("devqubit_engine.compare.diff", "diff"),
     # Result types
     "ComparisonResult": ("devqubit_engine.compare.results", "ComparisonResult"),
@@ -150,8 +153,8 @@ def verify_baseline(
     ----------
     candidate : str, Path, or RunRecord
         Candidate to verify. Can be:
-
         - A run ID (str)
+        - A run name within the project (str)
         - A path to a bundle file (Path or str ending in .zip)
         - A RunRecord instance (already loaded)
     project : str
@@ -227,7 +230,7 @@ def verify_baseline(
     from devqubit_engine.config import get_config
     from devqubit_engine.storage.factory import create_registry, create_store
     from devqubit_engine.storage.types import ArtifactRef
-    from devqubit_engine.tracking.record import RunRecord
+    from devqubit_engine.tracking.record import RunRecord, resolve_run_id
 
     if store is None or registry is None:
         cfg = get_config()
@@ -266,7 +269,9 @@ def verify_baseline(
             )
 
     else:
-        candidate_record = registry.load(str(candidate))
+        # Resolve name to ID if needed
+        run_id = resolve_run_id(str(candidate), project, registry)
+        candidate_record = registry.load(run_id)
 
     return _verify_against_baseline(
         candidate_record,

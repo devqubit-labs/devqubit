@@ -642,6 +642,7 @@ class LocalRegistry:
         limit: int = 100,
         offset: int = 0,
         project: str | None = None,
+        name: str | None = None,
         adapter: str | None = None,
         status: str | None = None,
         backend_name: str | None = None,
@@ -660,6 +661,8 @@ class LocalRegistry:
             Number of results to skip. Default is 0.
         project : str, optional
             Filter by project name.
+        name : str, optional
+            Filter by run name (exact match).
         adapter : str, optional
             Filter by adapter name.
         status : str, optional
@@ -684,6 +687,9 @@ class LocalRegistry:
         if project:
             conditions.append("project = ?")
             params.append(project)
+        if name:
+            conditions.append("name = ?")
+            params.append(name)
         if adapter:
             conditions.append("adapter = ?")
             params.append(adapter)

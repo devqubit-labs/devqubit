@@ -22,7 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import click
-from devqubit_engine.cli._utils import echo, print_json, root_from_ctx
+from devqubit_engine.cli._utils import echo, is_quiet, print_json, root_from_ctx
 
 
 def register(cli: click.Group) -> None:
@@ -32,15 +32,11 @@ def register(cli: click.Group) -> None:
     cli.add_command(info_cmd)
 
 
-def _is_quiet(ctx: click.Context) -> bool:
-    """Check if quiet mode is enabled."""
-    if ctx.obj is None:
-        return False
-    return bool(ctx.obj.get("quiet", False))
-
-
 @click.command("pack")
-@click.argument("run_id")
+@click.argument("run_id_or_name")
+@click.option(
+    "--project", "-p", default=None, help="Project name (required when using run name)."
+)
 @click.option("--out", "-o", type=click.Path(path_type=Path), help="Output file path.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing file.")
 @click.option(
@@ -52,7 +48,8 @@ def _is_quiet(ctx: click.Context) -> bool:
 @click.pass_context
 def pack_cmd(
     ctx: click.Context,
-    run_id: str,
+    run_id_or_name: str,
+    project: str | None,
     out: Path | None,
     force: bool,
     fmt: str,
@@ -63,18 +60,21 @@ def pack_cmd(
     Creates a self-contained ZIP archive containing the run record and
     all referenced artifacts, suitable for sharing or archiving.
 
+    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
+    --project is required.
+
     Examples:
         devqubit pack abc123
         devqubit pack abc123 -o experiment.zip
+        devqubit pack my-experiment --project bell_state -o experiment.zip
         devqubit pack abc123 -o experiment.zip --force
     """
     from devqubit_engine.bundle.pack import pack_run
     from devqubit_engine.config import Config
-    from devqubit_engine.storage.errors import RunNotFoundError
     from devqubit_engine.storage.factory import create_registry, create_store
 
     root = root_from_ctx(ctx)
-    output_path = out or Path(f"{run_id}.devqubit.zip")
+    output_path = out or Path(f"{run_id_or_name}.devqubit.zip")
 
     if output_path.exists() and not force:
         raise click.ClickException(
@@ -85,26 +85,30 @@ def pack_cmd(
     store = create_store(config=config)
     registry = create_registry(config=config)
 
-    # Verify run exists before packing
-    try:
-        registry.load(run_id)
-    except RunNotFoundError as e:
-        raise click.ClickException(f"Run not found: {run_id}") from e
-
     try:
         result = pack_run(
-            run_id=run_id,
+            run_id_or_name,
             output_path=output_path,
             store=store,
             registry=registry,
+            project=project,
         )
     except Exception as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            if project:
+                raise click.ClickException(
+                    f"Run not found: '{run_id_or_name}' (looked up as ID and as name in project '{project}')"
+                ) from e
+            raise click.ClickException(
+                f"Run not found: '{run_id_or_name}'. Use --project to look up by name."
+            ) from e
         raise click.ClickException(f"Pack failed: {e}") from e
 
     if fmt == "json":
         print_json(
             {
-                "run_id": run_id,
+                "run_id": result.run_id,
                 "output_path": str(output_path),
                 "artifact_count": result.artifact_count,
                 "object_count": result.object_count,
@@ -116,8 +120,8 @@ def pack_cmd(
         )
         return
 
-    echo(f"Packed run {run_id} to {output_path}")
-    if not _is_quiet(ctx):
+    echo(f"Packed run {result.run_id} to {output_path}")
+    if not is_quiet(ctx):
         echo(f"  Artifacts: {result.artifact_count}")
         echo(f"  Objects:   {result.object_count}")
         if result.missing_objects:
@@ -209,18 +213,24 @@ def unpack_cmd(
         print_json(
             {
                 "run_id": result.run_id,
+                "bundle_path": str(result.bundle_path),
                 "destination": str(dest),
                 "artifact_count": result.artifact_count,
                 "object_count": result.object_count,
+                "skipped_objects": result.skipped_objects,
+                "missing_objects": result.missing_objects,
+                "total_objects": result.total_objects,
             }
         )
         return
 
     echo(f"Unpacked to {dest}")
-    if not _is_quiet(ctx):
+    if not is_quiet(ctx):
         echo(f"  Run ID:    {result.run_id}")
         echo(f"  Artifacts: {result.artifact_count}")
         echo(f"  Objects:   {result.object_count}")
+        if result.skipped_objects:
+            echo(f"  Skipped:   {len(result.skipped_objects)} (already exist)")
 
 
 @click.command("info")
