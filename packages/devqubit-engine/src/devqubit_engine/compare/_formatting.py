@@ -179,13 +179,14 @@ def format_comparison_result(
 
     # Program section
     lines.extend(["", "-" * opts.width, "Program", "-" * opts.width])
-    if result.program.exact_match:
-        prog_status = f"{_SYM_OK} Match (exact)"
+    if not result.program.has_programs:
+        lines.append("  N/A (not captured)")
+    elif result.program.exact_match:
+        lines.append(f"  {_SYM_OK} Match (exact)")
     elif result.program.structural_match:
-        prog_status = f"{_SYM_OK} Match (structural)"
+        lines.append(f"  {_SYM_OK} Match (structural)")
     else:
-        prog_status = f"{_SYM_FAIL} Differ"
-    lines.append(f"  {prog_status}")
+        lines.append(f"  {_SYM_FAIL} Differ")
 
     # Parameters section
     if result.params:

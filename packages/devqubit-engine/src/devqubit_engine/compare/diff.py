@@ -164,7 +164,11 @@ def _compare_programs(
         ]
         digests_b = sorted(set(logical_digests_b + physical_digests_b))
 
-    exact_match = digests_a == digests_b
+    # Check if we have any program artifacts to compare
+    has_programs = bool(digests_a) or bool(digests_b)
+
+    # Exact match only meaningful when both have programs
+    exact_match = has_programs and digests_a == digests_b
 
     # Extract hashes from envelope program snapshot
     hash_a: str | None = None
@@ -175,7 +179,7 @@ def _compare_programs(
     exec_struct_hash_b: str | None = None
     exec_param_hash_a: str | None = None
     exec_param_hash_b: str | None = None
-    hash_available = True
+    hash_available = has_programs
 
     if envelope_a.program:
         hash_a = envelope_a.program.structural_hash
@@ -229,6 +233,7 @@ def _compare_programs(
         )
 
     return ProgramComparison(
+        has_programs=has_programs,
         exact_match=exact_match,
         structural_match=structural_match,
         parametric_match=parametric_match,
