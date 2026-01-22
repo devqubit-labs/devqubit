@@ -4,27 +4,22 @@
 """
 Run packaging and sharing utilities.
 
-Basic packing/unpacking is available from the main module:
-
->>> from devqubit import pack_run, unpack_bundle, Bundle
-
-This submodule provides additional utilities:
-- list_bundle_contents: Inspect bundle without unpacking
-- replay: Re-execute circuits from a bundle
+This module provides tools for packaging runs into portable bundles
+that can be shared, archived, or used for offline verification.
 
 Packing
 -------
->>> from devqubit import pack_run
+>>> from devqubit.bundle import pack_run
 >>> pack_run("run_id", "experiment.zip")
 
 Unpacking
 ---------
->>> from devqubit import unpack_bundle
+>>> from devqubit.bundle import unpack_bundle
 >>> unpack_bundle("experiment.zip")
 
 Reading Bundles
 ---------------
->>> from devqubit import Bundle
+>>> from devqubit.bundle import Bundle
 >>> with Bundle("experiment.zip") as bundle:
 ...     print(bundle.run_id)
 ...     print(bundle.run_record)
@@ -33,6 +28,8 @@ Listing Contents
 ----------------
 >>> from devqubit.bundle import list_bundle_contents
 >>> contents = list_bundle_contents("experiment.zip")
+>>> for item in contents:
+...     print(item)
 
 Replay
 ------

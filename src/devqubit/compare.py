@@ -2,26 +2,37 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Comparison and verification types.
+Comparison, verification, and diff utilities.
 
-This module provides types and utilities for comparing runs and
-configuring verification policies.
+This module provides the primary API for comparing runs and verifying
+experiments against baselines.
 
-Result Types
-------------
->>> from devqubit import diff
->>> from devqubit.compare import ComparisonResult, VerifyResult
+Diff
+----
+>>> from devqubit.compare import diff
 >>> result = diff("run_a", "run_b")
->>> assert isinstance(result, ComparisonResult)
 >>> print(result.identical)
 
-Verification Policy
--------------------
->>> from devqubit.compare import VerifyPolicy, ProgramMatchMode
+Verification
+------------
+>>> from devqubit.compare import verify_baseline
+>>> result = verify_baseline("candidate_run_id", project="my_project")
+>>> if result.ok:
+...     print("Verification passed!")
+... else:
+...     print(result.verdict.summary)
+
+Custom Policy
+-------------
+>>> from devqubit.compare import verify_baseline, VerifyPolicy, ProgramMatchMode
 >>> policy = VerifyPolicy(
-...     params_must_match=True,
 ...     program_match_mode=ProgramMatchMode.STRUCTURAL,
 ...     noise_factor=1.2,
+... )
+>>> result = verify_baseline(
+...     "candidate_run_id",
+...     project="my_project",
+...     policy=policy,
 ... )
 
 Verdicts (Root-Cause Analysis)
@@ -34,7 +45,7 @@ Verdicts (Root-Cause Analysis)
 
 Drift Detection
 ---------------
->>> from devqubit.compare import DriftThresholds, DriftResult
+>>> from devqubit.compare import diff, DriftThresholds
 >>> thresholds = DriftThresholds(t1_us=0.15, t2_us=0.15)
 >>> result = diff("run_a", "run_b", thresholds=thresholds)
 >>> if result.device_drift and result.device_drift.significant_drift:
@@ -49,10 +60,14 @@ Formatting
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 
 __all__ = [
+    # Core functions
+    "diff",
+    "verify_baseline",
     # Result types
     "ComparisonResult",
     "VerifyResult",
@@ -74,6 +89,7 @@ __all__ = [
 
 
 if TYPE_CHECKING:
+    from devqubit_engine.compare.diff import diff
     from devqubit_engine.compare.drift import DriftThresholds
     from devqubit_engine.compare.results import (
         ComparisonResult,
@@ -87,9 +103,13 @@ if TYPE_CHECKING:
         VerifyResult,
     )
     from devqubit_engine.compare.verify import VerifyPolicy
+    from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
+    from devqubit_engine.tracking.record import RunRecord
 
 
 _LAZY_IMPORTS = {
+    # Core comparision function
+    "diff": ("devqubit_engine.compare.diff", "diff"),
     # Result types
     "ComparisonResult": ("devqubit_engine.compare.results", "ComparisonResult"),
     "VerifyResult": ("devqubit_engine.compare.results", "VerifyResult"),
@@ -108,6 +128,154 @@ _LAZY_IMPORTS = {
     # Program comparison
     "ProgramComparison": ("devqubit_engine.compare.results", "ProgramComparison"),
 }
+
+
+def verify_baseline(
+    candidate: str | Path | "RunRecord",
+    *,
+    project: str,
+    policy: "VerifyPolicy | dict[str, Any] | None" = None,
+    store: "ObjectStoreProtocol | None" = None,
+    registry: "RegistryProtocol | None" = None,
+    promote_on_pass: bool = False,
+) -> "VerifyResult":
+    """
+    Verify a candidate run against the stored baseline for a project.
+
+    This is the recommended high-level API for CI/CD verification.
+    It automatically loads the candidate run, baseline, and storage
+    backends from the global configuration.
+
+    Parameters
+    ----------
+    candidate : str, Path, or RunRecord
+        Candidate to verify. Can be:
+
+        - A run ID (str)
+        - A path to a bundle file (Path or str ending in .zip)
+        - A RunRecord instance (already loaded)
+    project : str
+        Project name to look up baseline for.
+    policy : VerifyPolicy or dict or None, optional
+        Verification policy configuration. Uses defaults if not provided.
+        Can be a VerifyPolicy instance or a dict with policy options.
+    store : ObjectStoreProtocol or None, optional
+        Object store to use. If None, uses the default from config.
+        Required when candidate is a RunRecord from a different workspace.
+    registry : RegistryProtocol or None, optional
+        Registry to use. If None, uses the default from config.
+    promote_on_pass : bool, default=False
+        If True and verification passes, promote candidate to new baseline.
+
+    Returns
+    -------
+    VerifyResult
+        Verification result with ``ok`` status, ``failures``, ``comparison``,
+        and ``verdict`` (root-cause analysis if failed).
+
+    Raises
+    ------
+    ValueError
+        If no baseline is set for the project and ``allow_missing_baseline``
+        is False in the policy.
+    RunNotFoundError
+        If the candidate run does not exist.
+
+    Examples
+    --------
+    Basic verification:
+
+    >>> from devqubit.compare import verify_baseline
+    >>> result = verify_baseline("candidate_run_id", project="my_project")
+    >>> if result.ok:
+    ...     print("Verification passed!")
+    ... else:
+    ...     print(f"Failed: {result.failures}")
+    ...     print(f"Root cause: {result.verdict.summary}")
+
+    With custom policy:
+
+    >>> from devqubit.compare import verify_baseline, VerifyPolicy, ProgramMatchMode
+    >>> policy = VerifyPolicy(
+    ...     program_match_mode=ProgramMatchMode.STRUCTURAL,
+    ...     noise_factor=1.2,
+    ...     allow_missing_baseline=True,
+    ... )
+    >>> result = verify_baseline(
+    ...     "candidate_run_id",
+    ...     project="my_project",
+    ...     policy=policy,
+    ...     promote_on_pass=True,
+    ... )
+
+    With bundle file:
+
+    >>> result = verify_baseline("experiment.zip", project="my_project")
+
+    CI/CD integration:
+
+    >>> from devqubit.compare import verify_baseline
+    >>> from devqubit.ci import write_junit
+    >>> result = verify_baseline("candidate_run_id", project="my_project")
+    >>> write_junit(result, "results.xml")
+    >>> assert result.ok, f"Verification failed: {result.failures}"
+    """
+    from devqubit_engine.bundle.reader import Bundle, is_bundle_path
+    from devqubit_engine.compare.verify import (
+        verify_against_baseline as _verify_against_baseline,
+    )
+    from devqubit_engine.config import get_config
+    from devqubit_engine.storage.factory import create_registry, create_store
+    from devqubit_engine.storage.types import ArtifactRef
+    from devqubit_engine.tracking.record import RunRecord
+
+    if store is None or registry is None:
+        cfg = get_config()
+        if store is None:
+            store = create_store(config=cfg)
+        if registry is None:
+            registry = create_registry(config=cfg)
+
+    candidate_record: RunRecord
+    candidate_store = store
+
+    if isinstance(candidate, RunRecord):
+        candidate_record = candidate
+
+    elif is_bundle_path(candidate):
+        with Bundle(Path(candidate)) as bundle:
+            record_dict = bundle.run_record
+            artifacts = [
+                ArtifactRef.from_dict(a)
+                for a in record_dict.get("artifacts", [])
+                if isinstance(a, dict)
+            ]
+            candidate_record = RunRecord(
+                record=record_dict,
+                artifacts=artifacts,
+            )
+            candidate_store = bundle.store
+
+            return _verify_against_baseline(
+                candidate_record,
+                project=project,
+                store=candidate_store,
+                registry=registry,
+                policy=policy,
+                promote_on_pass=promote_on_pass,
+            )
+
+    else:
+        candidate_record = registry.load(str(candidate))
+
+    return _verify_against_baseline(
+        candidate_record,
+        project=project,
+        store=candidate_store,
+        registry=registry,
+        policy=policy,
+        promote_on_pass=promote_on_pass,
+    )
 
 
 def __getattr__(name: str) -> Any:

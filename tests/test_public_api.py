@@ -20,21 +20,6 @@ class TestTopLevelExports:
         assert hasattr(devqubit, "Run")
         assert hasattr(devqubit, "wrap_backend")
 
-    def test_comparison(self) -> None:
-        """Comparison API is accessible."""
-        import devqubit
-
-        assert hasattr(devqubit, "diff")
-        assert hasattr(devqubit, "verify_baseline")
-
-    def test_bundle(self) -> None:
-        """Bundle API is accessible."""
-        import devqubit
-
-        assert hasattr(devqubit, "pack_run")
-        assert hasattr(devqubit, "unpack_bundle")
-        assert hasattr(devqubit, "Bundle")
-
     def test_config(self) -> None:
         """Config API is accessible."""
         import devqubit
@@ -51,7 +36,7 @@ class TestTopLevelExports:
         assert isinstance(devqubit.__version__, str)
 
     def test_low_level_not_in_top_level(self) -> None:
-        """Low-level APIs moved to submodules."""
+        """Low-level APIs are in submodules, not top-level."""
         import devqubit
 
         # These should NOT be in top-level __all__
@@ -59,8 +44,12 @@ class TestTopLevelExports:
         assert "ArtifactRef" not in devqubit.__all__
         assert "create_store" not in devqubit.__all__
         assert "create_registry" not in devqubit.__all__
-        assert "verify_against_baseline" not in devqubit.__all__
-        assert "diff_runs" not in devqubit.__all__
+        # Moved to submodules
+        assert "diff" not in devqubit.__all__
+        assert "verify_baseline" not in devqubit.__all__
+        assert "pack_run" not in devqubit.__all__
+        assert "unpack_bundle" not in devqubit.__all__
+        assert "Bundle" not in devqubit.__all__
 
 
 class TestTracking:
@@ -99,7 +88,8 @@ class TestComparison:
 
     def test_diff_runs(self, workspace: Path, make_run: Callable) -> None:
         """diff() compares two runs."""
-        from devqubit import Config, diff, set_config
+        from devqubit import Config, set_config
+        from devqubit.compare import diff
         from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
@@ -139,7 +129,8 @@ class TestBundle:
         self, workspace: Path, make_run: Callable, tmp_path: Path
     ) -> None:
         """pack_run and unpack_bundle work correctly."""
-        from devqubit import Config, pack_run, set_config
+        from devqubit import Config, set_config
+        from devqubit.bundle import pack_run
         from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
@@ -161,7 +152,8 @@ class TestBundle:
         self, workspace: Path, make_run: Callable, tmp_path: Path
     ) -> None:
         """Bundle can read packed runs."""
-        from devqubit import Bundle, Config, pack_run, set_config
+        from devqubit import Config, set_config
+        from devqubit.bundle import Bundle, pack_run
         from devqubit.storage import create_registry, create_store
 
         config = Config(root_dir=workspace)
@@ -276,6 +268,13 @@ class TestRunsSubmodule:
 
 class TestCompareSubmodule:
     """Tests for devqubit.compare submodule."""
+
+    def test_core_functions(self) -> None:
+        """Core functions are available."""
+        from devqubit import compare
+
+        assert hasattr(compare, "diff")
+        assert hasattr(compare, "verify_baseline")
 
     def test_result_types(self) -> None:
         """Result types are available."""

@@ -7,16 +7,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from devqubit import (
-    Config,
-    diff,
-    pack_run,
-    set_config,
-    track,
-    unpack_bundle,
-    verify_baseline,
-)
-from devqubit.compare import ComparisonResult, VerifyPolicy
+from devqubit import Config, set_config, track
+from devqubit.bundle import pack_run, unpack_bundle
+from devqubit.compare import ComparisonResult, VerifyPolicy, diff, verify_baseline
 from devqubit.runs import set_baseline
 from devqubit.storage import create_registry, create_store
 
