@@ -203,11 +203,11 @@ def resolve_run(
     except RunNotFoundError:
         if project:
             raise click.ClickException(
-                f"Run not found: '{run_id_or_name}'"
+                f"Run not found: '{run_id_or_name}' "
                 f"(looked up as ID and as name in project '{project}')"
             )
         raise click.ClickException(
-            f"Run not found: '{run_id_or_name}'." f"Use --project to look up by name."
+            f"Run not found: '{run_id_or_name}'. " f"Use --project to look up by name."
         )
 
 

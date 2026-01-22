@@ -308,7 +308,11 @@ class TestProgramMatching:
 
     def test_exact_match(self):
         """EXACT mode requires identical artifacts."""
-        comp = ProgramComparison(exact_match=True, structural_match=True)
+        comp = ProgramComparison(
+            exact_match=True,
+            structural_match=True,
+            has_programs=True,
+        )
 
         assert comp.matches(ProgramMatchMode.EXACT)
         assert comp.matches(ProgramMatchMode.STRUCTURAL)
@@ -316,7 +320,11 @@ class TestProgramMatching:
 
     def test_structural_only_match(self):
         """Structural match without exact match (VQE scenario)."""
-        comp = ProgramComparison(exact_match=False, structural_match=True)
+        comp = ProgramComparison(
+            exact_match=False,
+            structural_match=True,
+            has_programs=True,
+        )
 
         assert not comp.matches(ProgramMatchMode.EXACT)
         assert comp.matches(ProgramMatchMode.STRUCTURAL)
@@ -325,7 +333,11 @@ class TestProgramMatching:
 
     def test_no_match(self):
         """No match fails all modes."""
-        comp = ProgramComparison(exact_match=False, structural_match=False)
+        comp = ProgramComparison(
+            exact_match=False,
+            structural_match=False,
+            has_programs=True,
+        )
 
         assert not comp.matches(ProgramMatchMode.EXACT)
         assert not comp.matches(ProgramMatchMode.STRUCTURAL)
@@ -338,6 +350,7 @@ class TestProgramMatching:
             structural_match=True,
             digests_a=[],
             digests_b=[],
+            has_programs=False,
         )
 
         assert comp.matches(ProgramMatchMode.EXACT)

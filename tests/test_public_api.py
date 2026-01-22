@@ -140,7 +140,7 @@ class TestBundle:
         bundle_path = tmp_path / "test.zip"
 
         result = pack_run(
-            run_id=run.run_id,
+            run.run_id,
             output_path=bundle_path,
             store=create_store(config=config),
             registry=create_registry(config=config),
@@ -163,7 +163,7 @@ class TestBundle:
         bundle_path = tmp_path / "reader.zip"
 
         pack_run(
-            run_id=run.run_id,
+            run.run_id,
             output_path=bundle_path,
             store=create_store(config=config),
             registry=create_registry(config=config),

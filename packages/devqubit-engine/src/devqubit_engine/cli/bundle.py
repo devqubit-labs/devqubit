@@ -87,7 +87,7 @@ def pack_cmd(
 
     try:
         result = pack_run(
-            run_id=run_id_or_name,
+            run_id_or_name,
             output_path=output_path,
             store=store,
             registry=registry,

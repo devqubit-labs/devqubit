@@ -167,8 +167,8 @@ def _compare_programs(
     # Check if we have any program artifacts to compare
     has_programs = bool(digests_a) or bool(digests_b)
 
-    # Exact match only meaningful when both have programs
-    exact_match = has_programs and digests_a == digests_b
+    # Exact match: digests are the same
+    exact_match = digests_a == digests_b
 
     # Extract hashes from envelope program snapshot
     hash_a: str | None = None

@@ -43,7 +43,7 @@ class TestFullWorkflow:
         # Pack
         bundle_path = tmp_path / "run.zip"
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
@@ -191,7 +191,7 @@ class TestDiffWorkflows:
             run_id = run.run_id
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store,
             registry=registry,
@@ -225,7 +225,7 @@ class TestDiffWorkflows:
             run_id_a = run_a.run_id
 
         pack_run(
-            run_id=run_id_a,
+            run_id_a,
             output_path=bundle_a,
             store=store,
             registry=registry,
@@ -240,7 +240,7 @@ class TestDiffWorkflows:
             run_id_b = run_b.run_id
 
         pack_run(
-            run_id=run_id_b,
+            run_id_b,
             output_path=bundle_b,
             store=store,
             registry=registry,
@@ -288,7 +288,7 @@ class TestArtifactRoundtrip:
             digest = ref.digest
 
         pack_run(
-            run_id=run_id,
+            run_id,
             output_path=bundle_path,
             store=store_src,
             registry=reg_src,

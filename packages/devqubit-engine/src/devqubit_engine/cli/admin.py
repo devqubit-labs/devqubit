@@ -282,14 +282,14 @@ def storage_health(ctx: click.Context, fmt: str) -> None:
     """Check storage health and integrity."""
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry, create_store
-    from devqubit_engine.storage.gc import check_health
+    from devqubit_engine.storage.gc import check_workspace_health
 
     root = root_from_ctx(ctx)
     config = Config(root_dir=root)
     registry = create_registry(config=config)
     store = create_store(config=config)
 
-    health = check_health(store, registry)
+    health = check_workspace_health(store, registry)
 
     if fmt == "json":
         print_json(health)

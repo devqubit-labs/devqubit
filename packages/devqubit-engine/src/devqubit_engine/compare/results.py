@@ -311,10 +311,9 @@ class ProgramComparison:
         -------
         bool
             True if programs match according to the mode.
-            Returns False if no programs are available.
+            When both runs have no programs ([] == []), exact_match is True
+            and this returns True.
         """
-        if not self.has_programs:
-            return False
         if mode == ProgramMatchMode.EXACT:
             return self.exact_match
         elif mode == ProgramMatchMode.STRUCTURAL:

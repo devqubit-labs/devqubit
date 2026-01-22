@@ -543,6 +543,7 @@ class GCSRegistry:
         fingerprint: str | None,
         git_commit: str | None,
         group_id: str | None = None,
+        name: str | None = None,
     ) -> bool:
         """
         Apply filters to a record.
@@ -551,7 +552,7 @@ class GCSRegistry:
         ----------
         record : dict
             Full run record.
-        project, adapter, status, backend_name, fingerprint, git_commit, group_id
+        project, name, adapter, status, backend_name, fingerprint, git_commit, group_id
             Filter fields.
 
         Returns
@@ -562,6 +563,11 @@ class GCSRegistry:
         proj = record.get("project", {})
         proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
         if project and proj_name != project:
+            return False
+
+        # Filter by run name
+        rec_name = record.get("name", "")
+        if name and rec_name != name:
             return False
 
         rec_adapter = record.get("adapter", "")
@@ -615,6 +621,7 @@ class GCSRegistry:
         limit: int = 100,
         offset: int = 0,
         project: str | None = None,
+        name: str | None = None,
         adapter: str | None = None,
         status: str | None = None,
         backend_name: str | None = None,
@@ -633,6 +640,8 @@ class GCSRegistry:
             Number of results to skip.
         project : str, optional
             Filter by project name.
+        name : str, optional
+            Filter by run name (exact match).
         adapter : str, optional
             Filter by adapter name.
         status : str, optional
@@ -662,6 +671,7 @@ class GCSRegistry:
             if not self._record_matches(
                 record,
                 project=project,
+                name=name,
                 adapter=adapter,
                 status=status,
                 backend_name=backend_name,

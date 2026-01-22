@@ -116,7 +116,7 @@ def list_runs(
     if group:
         filter_kwargs["group_id"] = group
     if name:
-        filter_kwargs["run_name"] = name
+        filter_kwargs["name"] = name  # Fixed: was "run_name", should be "name"
 
     runs = registry.list_runs(**filter_kwargs)
 
