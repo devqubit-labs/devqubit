@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-qiskit"
-version = "0.1.5"
+version = "0.1.6"
 description = "devqubit adapter for Qiskit"
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "devqubit-engine>=0.1.5,<0.2.0",
+    "devqubit-engine>=0.1.6,<0.2.0",
     "qiskit>=2.2,<3",
     "qiskit-aer>=0.17,<0.18",
     "qiskit-qasm3-import>=0.6,<0.7",

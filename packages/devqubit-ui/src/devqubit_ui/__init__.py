@@ -47,7 +47,7 @@ between versions. For programmatic access, prefer the core ``devqubit``
 API or the JSON endpoints at ``/api/*``.
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 
 from devqubit_ui.app import create_app, run_server

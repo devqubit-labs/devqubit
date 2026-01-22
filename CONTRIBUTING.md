@@ -131,6 +131,14 @@ If you added fragments, you can validate them locally:
 uv run towncrier build --draft
 ```
 
+### Building the changelog for a version
+
+To generate CHANGELOG.md with a specific version heading (and consume/remove the used fragments from changelog.d/), run:
+
+```bash
+uv run towncrier build --version <VERSION>
+```
+
 ## Running tests
 
 Run the full test suite:

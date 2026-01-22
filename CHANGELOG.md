@@ -8,6 +8,22 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.6](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.6) - 2026-01-22
+
+#### Added
+- UEC-first architecture with strict adapter contract enforcement:
+  - `parametric_hash` and `executed_parametric_hash` in `ProgramSnapshot` for VQE support
+  - `canonicalize_bitstrings()` for consistent bit order normalization to `cbit0_right`
+  - `ProgramMatchStatus` enum for detailed comparison reporting
+  - `MissingEnvelopeError` when adapter run missing envelope (use `strict=False` for migration) ([#15](https://github.com/devqubit-labs/devqubit/pull/15))
+
+- Support referencing runs by name via `--project` flag in CLI and `project` parameter in API functions (`diff`, `pack_run`, `verify_baseline`). ([#34](https://github.com/devqubit-labs/devqubit/pull/34))
+
+#### Changed
+- UEC ExecutionEnvelope is now the single source of truth for diffs/verification: adapter runs must emit a schema-valid envelope; “non-strict” fallback/synthesis for adapter runs was removed. Manual/replay runs still synthesize a best-effort envelope. Program comparison now distinguishes structural vs parametric hashes and results are canonicalized across bit orders. ([#16](https://github.com/devqubit-labs/devqubit/pull/16))
+
+- Redesigned public API surface: added high-level `verify_baseline()`, new `devqubit.runs` module for run navigation, `devqubit.errors` for public exceptions, `devqubit.adapters` for extension API, moved low-level symbols to appropriate submodules. ([#17](https://github.com/devqubit-labs/devqubit/pull/17))
+
 ## [0.1.5](https://github.com/devqubit-labs/devqubit/releases/tag/vv0.1.5) - 2026-01-13
 
 #### Changed
