@@ -473,7 +473,7 @@ def circuit_looks_isa(
         True if circuit appears ISA-compatible; False otherwise.
     check_info : dict
         Metadata about the check performed:
-        - method: "trivial", "ibm_is_isa_circuit", or "heuristic_gate_check"
+        - method: "trivial", "ibm_is_isa_circuit", "has_layout", or "heuristic_gate_check"
         - passed: Whether the check passed
         - heuristic: True (always, since full validation is not performed)
     """
@@ -502,7 +502,22 @@ def circuit_looks_isa(
         check_info["passed"] = True
         return True, check_info
 
-    # Try IBM's checker first
+    # If circuit has layout, it was already transpiled by a pass manager.
+    # Verify gates are in basis set - if so, trust it as ISA-compatible.
+    # This handles FakeBackends where IBM's is_isa_circuit can be overly strict.
+    circuit_layout = getattr(circuit, "layout", None)
+    if circuit_layout is not None:
+        if _fallback_gate_check(circuit, target):
+            check_info["method"] = "has_layout_gate_verified"
+            check_info["passed"] = True
+            return True, check_info
+        # Layout present but gates don't match target - unusual, continue to IBM check
+        logger.debug(
+            "Circuit has layout but gates don't match target basis set, "
+            "continuing to IBM ISA check"
+        )
+
+    # Try IBM's checker
     ibm_result = _try_ibm_is_isa_circuit(circuit, target)
 
     if ibm_result is True:
@@ -510,9 +525,17 @@ def circuit_looks_isa(
         check_info["passed"] = True
         return True, check_info
     if ibm_result is False and strict:
-        check_info["method"] = "ibm_is_isa_circuit"
-        check_info["passed"] = False
-        return False, check_info
+        # In strict mode, trust IBM's rejection UNLESS circuit has layout
+        # (layout implies user already transpiled, IBM checker may be wrong for FakeBackends)
+        if circuit_layout is not None:
+            logger.debug(
+                "IBM ISA check failed but circuit has layout - "
+                "falling back to gate check"
+            )
+        else:
+            check_info["method"] = "ibm_is_isa_circuit"
+            check_info["passed"] = False
+            return False, check_info
 
     # Fallback: simple gate-name check
     fallback_result = _fallback_gate_check(circuit, target)

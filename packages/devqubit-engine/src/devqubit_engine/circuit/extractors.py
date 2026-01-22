@@ -29,13 +29,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Format detection patterns: (kind_pattern, CircuitFormat, SDK, is_binary)
+# Format detection patterns for RunRecord scanning: (kind_pattern, CircuitFormat, SDK, is_binary)
+# Note: These patterns use substring matching (pattern in kind.lower())
 _FORMAT_PATTERNS: tuple[tuple[str, CircuitFormat, SDK, bool], ...] = (
     ("qpy", CircuitFormat.QPY, SDK.QISKIT, True),
     ("jaqcd", CircuitFormat.JAQCD, SDK.BRAKET, False),
     ("cirq", CircuitFormat.CIRQ_JSON, SDK.CIRQ, False),
     ("tape", CircuitFormat.TAPE_JSON, SDK.PENNYLANE, False),
 )
+
+# Default format preference order for envelope extraction
+# Native formats first (carry SDK info), then interchange formats
+_DEFAULT_PREFER_FORMATS: list[str] = [
+    "qpy",  # Qiskit native (binary)
+    "jaqcd",  # Braket native
+    "cirq",  # Cirq native
+    "tape",  # PennyLane native (matches "tape", "tapes")
+    "openqasm3",  # Interchange
+    "openqasm",  # Interchange (generic)
+    "qasm",  # Interchange (legacy)
+]
 
 
 def _parse_sdk(sdk_string: str | None) -> SDK:
@@ -302,7 +315,7 @@ def extract_circuit_from_refs(
     store : ObjectStoreProtocol
         Object store to load artifact data from.
     prefer_formats : list of str, optional
-        Preferred format order (e.g., ["openqasm3", "qpy"]).
+        Preferred format order (e.g., ["qpy", "openqasm3"]).
         Defaults to native formats first, then interchange formats.
     sdk_hint : SDK, optional
         SDK hint for interchange formats (OpenQASM) that don't have
@@ -312,21 +325,21 @@ def extract_circuit_from_refs(
     -------
     CircuitData or None
         Extracted circuit data, or None if not found.
+
+    Notes
+    -----
+    This function iterates refs in order and respects prefer_formats
+    as an outer filter. It does not lose refs with duplicate kinds.
+
+    For native formats (QPY, JAQCD, etc.), SDK is determined by the
+    format itself. For interchange formats (OpenQASM), sdk_hint is used.
     """
     if not refs:
         return None
 
     # Default: prefer native formats (which carry SDK info) over interchange
     if prefer_formats is None:
-        prefer_formats = [
-            "qpy",
-            "jaqcd",
-            "cirq",
-            "tape",
-            "openqasm3",
-            "openqasm",
-            "qasm",
-        ]
+        prefer_formats = _DEFAULT_PREFER_FORMATS.copy()
 
     effective_sdk_hint = sdk_hint or SDK.UNKNOWN
 
@@ -369,6 +382,18 @@ def _load_circuit_from_ref(
     -------
     CircuitData or None
         Loaded circuit data, or None if loading fails.
+
+    Notes
+    -----
+    Pattern matching for native formats (SDK determined by format):
+    - "qpy" => Qiskit QPY (binary)
+    - "jaqcd" => Braket JAQCD (JSON)
+    - "cirq" => Cirq JSON (but NOT if it's just generic "circuit")
+    - "tape" => PennyLane tape JSON (matches "tape", "tapes")
+
+    Interchange formats use sdk_hint:
+    - "openqasm3", "qasm3" => OpenQASM 3
+    - "openqasm", "qasm" => OpenQASM (auto-detect version)
     """
     try:
         data = store.get_bytes(ref.digest)
@@ -376,7 +401,7 @@ def _load_circuit_from_ref(
         logger.debug("Failed to load artifact %s: %s", ref.digest[:24], e)
         return None
 
-    # Native formats - SDK determined by format
+    # Qiskit QPY (binary)
     if "qpy" in kind_lower:
         return CircuitData(
             data=data,
@@ -384,6 +409,7 @@ def _load_circuit_from_ref(
             sdk=SDK.QISKIT,
         )
 
+    # Braket JAQCD (JSON)
     if "jaqcd" in kind_lower:
         try:
             text = data.decode("utf-8")
@@ -395,18 +421,7 @@ def _load_circuit_from_ref(
             sdk=SDK.BRAKET,
         )
 
-    if "cirq" in kind_lower and "circuit" not in kind_lower:
-        # Match "cirq" but not generic "circuit"
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
-        return CircuitData(
-            data=text,
-            format=CircuitFormat.CIRQ_JSON,
-            sdk=SDK.CIRQ,
-        )
-
+    # PennyLane tape (JSON) - matches "tape", "tapes", "pennylane.tapes.json"
     if "tape" in kind_lower:
         try:
             text = data.decode("utf-8")
@@ -418,7 +433,20 @@ def _load_circuit_from_ref(
             sdk=SDK.PENNYLANE,
         )
 
-    # Interchange formats - use sdk_hint
+    # Cirq JSON - check for "cirq" but exclude generic "circuit" without "cirq"
+    # Matches: "cirq.circuit.json", "cirq_json", "cirq.json"
+    if "cirq" in kind_lower:
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        return CircuitData(
+            data=text,
+            format=CircuitFormat.CIRQ_JSON,
+            sdk=SDK.CIRQ,
+        )
+
+    # Try to decode as text for interchange formats
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -426,6 +454,7 @@ def _load_circuit_from_ref(
         logger.debug("Unknown binary format for kind: %s", kind_lower)
         return None
 
+    # OpenQASM 3 (explicit)
     if "openqasm3" in kind_lower or "qasm3" in kind_lower:
         return CircuitData(
             data=text,
@@ -433,8 +462,8 @@ def _load_circuit_from_ref(
             sdk=sdk_hint,
         )
 
+    # OpenQASM (auto-detect version from content)
     if "openqasm" in kind_lower or "qasm" in kind_lower:
-        # Auto-detect QASM version from content
         fmt = CircuitFormat.OPENQASM3
         if re.match(r"^\s*OPENQASM\s+2\.", text):
             fmt = CircuitFormat.OPENQASM2
@@ -444,7 +473,7 @@ def _load_circuit_from_ref(
             sdk=sdk_hint,
         )
 
-    # Generic text - assume OpenQASM3 with sdk_hint
+    # Unknown text format - assume OpenQASM3 with sdk_hint
     logger.debug("Unknown text format for kind: %s, assuming OpenQASM3", kind_lower)
     return CircuitData(
         data=text,
