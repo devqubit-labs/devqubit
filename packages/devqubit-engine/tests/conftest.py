@@ -102,6 +102,7 @@ def run_factory() -> Callable[..., RunRecord]:
         backend_type: str = "simulator",
         provider: str = "test_provider",
         status: str = "FINISHED",
+        run_name: str | None = None,
         params: dict[str, Any] | None = None,
         metrics: dict[str, Any] | None = None,
         tags: dict[str, Any] | None = None,
@@ -133,6 +134,8 @@ def run_factory() -> Callable[..., RunRecord]:
             },
         }
 
+        if run_name:
+            record["info"]["run_name"] = run_name
         if group_id:
             record["group_id"] = group_id
         if group_name:

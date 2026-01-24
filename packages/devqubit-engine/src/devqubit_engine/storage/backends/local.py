@@ -688,7 +688,7 @@ class LocalRegistry:
             conditions.append("project = ?")
             params.append(project)
         if name:
-            conditions.append("name = ?")
+            conditions.append("run_name = ?")
             params.append(name)
         if adapter:
             conditions.append("adapter = ?")
@@ -715,7 +715,7 @@ class LocalRegistry:
         with self._get_connection() as conn:
             rows = conn.execute(
                 f"""
-                SELECT run_id, project, adapter, status, created_at, ended_at,
+                SELECT run_id, run_name, project, adapter, status, created_at, ended_at,
                        group_id, group_name, parent_run_id
                 FROM runs {where_clause}
                 ORDER BY created_at DESC
@@ -727,6 +727,7 @@ class LocalRegistry:
         return [
             RunSummary(
                 run_id=row["run_id"],
+                run_name=row["run_name"],
                 project=row["project"],
                 adapter=row["adapter"],
                 status=row["status"],
@@ -988,7 +989,7 @@ class LocalRegistry:
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
-                SELECT run_id, project, adapter, status, created_at, ended_at,
+                SELECT run_id, run_name, project, adapter, status, created_at, ended_at,
                        group_id, group_name, parent_run_id
                 FROM runs
                 WHERE group_id = ?
@@ -1001,6 +1002,7 @@ class LocalRegistry:
         return [
             RunSummary(
                 run_id=row["run_id"],
+                run_name=row["run_name"],
                 project=row["project"],
                 adapter=row["adapter"],
                 status=row["status"],
