@@ -8,6 +8,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.7](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.7) - 2026-01-24
+
+#### Fixed
+- Fix `list_runs` failing with "no such column: name" when filtering by run name due to missing `run_name` column in queries.
+
 ## [0.1.6](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.6) - 2026-01-22
 
 #### Added
