@@ -101,6 +101,64 @@ class TestRegistry:
         assert len(runs) == 2
         assert all(r["project"] == "project_a" for r in runs)
 
+    def test_list_runs_by_name(self, registry, run_factory):
+        """list_runs filters by run name."""
+        registry.save(
+            run_factory(
+                run_id="NAME_A_1",
+                project="proj",
+                run_name="baseline-v1",
+            ).to_dict()
+        )
+        registry.save(
+            run_factory(
+                run_id="NAME_A_2",
+                project="proj",
+                run_name="baseline-v2",
+            ).to_dict()
+        )
+        registry.save(
+            run_factory(
+                run_id="NAME_A_3",
+                project="proj",
+                run_name="experiment-1",
+            ).to_dict()
+        )
+
+        runs = registry.list_runs(project="proj", name="baseline-v1")
+
+        assert len(runs) == 1
+        assert runs[0]["run_id"] == "NAME_A_1"
+
+    def test_list_runs_returns_run_name(self, registry, run_factory):
+        """list_runs includes run_name in results."""
+        registry.save(
+            run_factory(
+                run_id="RNAME001",
+                run_name="my-experiment",
+            ).to_dict()
+        )
+
+        runs = registry.list_runs()
+        run = next(r for r in runs if r["run_id"] == "RNAME001")
+
+        assert run.get("run_name") == "my-experiment"
+
+    def test_list_runs_in_group_returns_run_name(self, registry, run_factory):
+        """list_runs_in_group includes run_name in results."""
+        registry.save(
+            run_factory(
+                run_id="GRPNAME1",
+                run_name="grouped-run",
+                group_id="test_group",
+            ).to_dict()
+        )
+
+        runs = registry.list_runs_in_group("test_group")
+
+        assert len(runs) == 1
+        assert runs[0].get("run_name") == "grouped-run"
+
 
 class TestRegistrySearch:
     """Tests for search_runs query functionality."""

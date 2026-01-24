@@ -514,6 +514,7 @@ class GCSRegistry:
         info = record.get("info", {})
         rec_status = info.get("status", "") if isinstance(info, dict) else ""
         ended_at = info.get("ended_at") if isinstance(info, dict) else None
+        run_name = info.get("run_name") if isinstance(info, dict) else None
 
         # Extract group info
         group_id = record.get("group_id")
@@ -522,6 +523,7 @@ class GCSRegistry:
 
         return RunSummary(
             run_id=run_id,
+            run_name=run_name,
             project=proj_name,
             adapter=rec_adapter,
             status=rec_status,
@@ -565,8 +567,8 @@ class GCSRegistry:
         if project and proj_name != project:
             return False
 
-        # Filter by run name
-        rec_name = record.get("name", "")
+        info = record.get("info", {})
+        rec_name = info.get("run_name", "") if isinstance(info, dict) else ""
         if name and rec_name != name:
             return False
 
@@ -574,7 +576,6 @@ class GCSRegistry:
         if adapter and rec_adapter != adapter:
             return False
 
-        info = record.get("info", {})
         rec_status = info.get("status", "") if isinstance(info, dict) else ""
         if status and rec_status != status:
             return False
