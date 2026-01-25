@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-cirq"
-version = "0.1.7"
+version = "0.1.8"
 description = "devqubit adapter for Cirq"
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,7 +26,7 @@ classifiers = [
 
 dependencies = [
     "cirq>=1.6,<2",
-    "devqubit-engine>=0.1.7,<0.2.0",
+    "devqubit-engine>=0.1.8,<0.2.0",
     "ply>=3.11",
 ]
 

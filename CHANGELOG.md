@@ -8,6 +8,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.8](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.8) - 2026-01-25
+
+#### Added
+- Added ``run_name`` display throughout the web UI. Runs now show human-readable names in tables, detail views, and comparison dropdowns. The ``Run`` class exposes a public ``run_name`` property.
+
 ## [0.1.7](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.7) - 2026-01-24
 
 #### Fixed
