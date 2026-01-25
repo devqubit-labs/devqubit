@@ -208,6 +208,11 @@ class Run:
         return self._run_id
 
     @property
+    def run_name(self) -> str | None:
+        """Get the human-readable run name."""
+        return self._run_name
+
+    @property
     def status(self) -> str:
         """Get the current run status."""
         return self.record.get("info", {}).get("status", "RUNNING")

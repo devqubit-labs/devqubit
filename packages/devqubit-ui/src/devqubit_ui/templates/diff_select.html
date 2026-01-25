@@ -19,7 +19,7 @@
                 <select name="a" id="a" required>
                     <option value="">Select run...</option>
                     {% for run in runs %}
-                    <option value="{{ run.run_id }}">{{ run.run_id | short_id }} - {{ run.project }}</option>
+                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) - {{ run.project }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -28,7 +28,7 @@
                 <select name="b" id="b" required>
                     <option value="">Select run...</option>
                     {% for run in runs %}
-                    <option value="{{ run.run_id }}">{{ run.run_id | short_id }} - {{ run.project }}</option>
+                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) - {{ run.project }}</option>
                     {% endfor %}
                 </select>
             </div>

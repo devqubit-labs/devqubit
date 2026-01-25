@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}Run {{ run.run_id | short_id }} - devqubit{% endblock %}
+{% block title %}Run {{ run.run_id | short_id }}{% if run.run_name %} — {{ run.run_name }}{% endif %} - devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <h1 class="page-title">
-            Run <span class="font-mono">{{ run.run_id | short_id }}</span>
+            {{ run.run_name or 'Unnamed run' }}
             {% if is_baseline %}
             <span class="badge badge-info">Baseline</span>
             {% endif %}
         </h1>
-        <p class="text-muted text-sm">{{ run.run_id }}</p>
+        <p class="text-muted text-sm font-mono">{{ run.run_id }}</p>
     </div>
     <div class="flex gap-1">
         {% if not is_baseline %}
@@ -42,6 +42,8 @@
         <dl class="kv">
             <dt>Project</dt>
             <dd><a href="/runs?project={{ run.project }}">{{ run.project }}</a></dd>
+            <dt>Name</dt>
+            <dd>{{ run.run_name or '—' }}</dd>
             <dt>Adapter</dt>
             <dd>{{ run.adapter or 'N/A' }}</dd>
             <dt>Status</dt>

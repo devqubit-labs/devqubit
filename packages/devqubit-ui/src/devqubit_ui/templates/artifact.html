@@ -7,7 +7,7 @@
     <div>
         <h1 class="page-title">{{ artifact.kind }}</h1>
         <p class="text-muted text-sm">
-            <a href="/runs/{{ run_id }}">← Back to run {{ run_id | short_id }}</a>
+            ← Back to run <a href="/runs/{{ run_id }}">{{ run_id | short_id }}{% if run_name %} — {{ run_name }}{% endif %}</a>
         </p>
     </div>
     <a href="/runs/{{ run_id }}/artifacts/{{ idx }}/raw" class="btn btn-primary">Download</a>

@@ -23,12 +23,14 @@
     <div class="grid grid-2">
         <div>
             <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run A (Baseline)</h3>
-            <p class="font-mono"><a href="/runs/{{ run_a.run_id }}">{{ run_a.run_id | short_id }}</a></p>
+            <p><a href="/runs/{{ run_a.run_id }}">{{ run_a.run_name or 'Unnamed run' }}</a></p>
+            <p class="font-mono text-sm text-muted">{{ run_a.run_id | short_id }}</p>
             <p class="text-muted text-sm">{{ run_a.project }} / {{ run_a.created_at | ago }}</p>
         </div>
         <div>
             <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run B (Candidate)</h3>
-            <p class="font-mono"><a href="/runs/{{ run_b.run_id }}">{{ run_b.run_id | short_id }}</a></p>
+            <p><a href="/runs/{{ run_b.run_id }}">{{ run_b.run_name or 'Unnamed run' }}</a></p>
+            <p class="font-mono text-sm text-muted">{{ run_b.run_id | short_id }}</p>
             <p class="text-muted text-sm">{{ run_b.project }} / {{ run_b.created_at | ago }}</p>
         </div>
     </div>
