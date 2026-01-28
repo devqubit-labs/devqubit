@@ -72,7 +72,7 @@ class RunService:
     """
     Service for run-related operations.
 
-    Encapsulates run listing, filtering, and retrieval logic.
+    Encapsulates run listing, filtering, retrieval, and deletion logic.
 
     Parameters
     ----------
@@ -86,6 +86,7 @@ class RunService:
     >>> service = RunService(registry, store)
     >>> runs = service.list_runs(project="vqe", limit=50)
     >>> run = service.get_run("abc123")
+    >>> service.delete_run("abc123")
     """
 
     def __init__(
@@ -172,6 +173,23 @@ class RunService:
         except Exception as e:
             logger.warning("Run not found: %s", run_id)
             raise KeyError(f"Run not found: {run_id}") from e
+
+    def delete_run(self, run_id: str) -> bool:
+        """
+        Delete a run by ID.
+
+        Parameters
+        ----------
+        run_id : str
+            The run identifier.
+
+        Returns
+        -------
+        bool
+            True if run was deleted, False if it didn't exist.
+        """
+        logger.info("Deleting run: %s", run_id)
+        return self._registry.delete(run_id)
 
     def get_baseline(self, project: str) -> dict[str, Any] | None:
         """

@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Run {{ run.run_id | short_id }}{% if run.run_name %} — {{ run.run_name }}{% endif %} - devqubit{% endblock %}
+{% block title %}Run {{ run.run_id | short_id }}{% if run.run_name %} — {{ run.run_name }}{% endif %} · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <h1 class="page-title">
-            {{ run.run_name or 'Unnamed run' }}
+            {{ run.run_name or 'Unnamed Run' }}
             {% if is_baseline %}
             <span class="badge badge-info">Baseline</span>
             {% endif %}
@@ -28,6 +28,9 @@
             Compare to Baseline
         </a>
         {% endif %}
+        <button onclick="showDeleteModal()" class="btn btn-ghost-danger btn-sm" title="Delete run">
+            Delete
+        </button>
     </div>
 </div>
 
@@ -184,7 +187,7 @@
 {% if errors %}
 <div class="card">
     <div class="card-header">
-        <h3 class="card-title" style="color: var(--danger);">Errors</h3>
+        <h3 class="card-title text-danger">Errors</h3>
     </div>
     {% for error in errors %}
     <div class="mb-1">
@@ -196,4 +199,51 @@
     {% endfor %}
 </div>
 {% endif %}
+
+<!-- Delete Confirmation Modal -->
+<div id="delete-modal" class="modal-backdrop">
+    <div class="modal">
+        <h3 class="modal-title">Delete Run</h3>
+        <div class="modal-body">
+            <p>Are you sure you want to delete this run?</p>
+            <p class="font-mono text-sm mt-1">{{ run.run_id | short_id }}</p>
+            <p class="text-sm text-danger mt-1">This action cannot be undone.</p>
+        </div>
+        <div class="modal-actions">
+            <button onclick="hideDeleteModal()" class="btn btn-secondary">Cancel</button>
+            <button hx-delete="/api/runs/{{ run.run_id }}"
+                    hx-indicator="#delete-spinner"
+                    class="btn btn-danger">
+                <span id="delete-spinner" class="htmx-indicator"><span class="spinner"></span></span>
+                Delete
+            </button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showDeleteModal() {
+    document.getElementById('delete-modal').classList.add('active');
+}
+
+function hideDeleteModal() {
+    document.getElementById('delete-modal').classList.remove('active');
+}
+
+// Close modal on backdrop click
+document.getElementById('delete-modal').addEventListener('click', function(e) {
+    if (e.target === this) {
+        hideDeleteModal();
+    }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        hideDeleteModal();
+    }
+});
+</script>
 {% endblock %}

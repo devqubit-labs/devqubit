@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Compare Runs - devqubit{% endblock %}
+{% block title %}Compare Runs · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -9,7 +9,6 @@
 
 <div class="card">
     <form method="get" action="/diff">
-        <!-- Preserve workspace on compare -->
         {% if current_workspace %}
         <input type="hidden" name="workspace" value="{{ current_workspace.id }}">
         {% endif %}
@@ -19,7 +18,7 @@
                 <select name="a" id="a" required>
                     <option value="">Select run...</option>
                     {% for run in runs %}
-                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) - {{ run.project }}</option>
+                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) — {{ run.project }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -28,7 +27,7 @@
                 <select name="b" id="b" required>
                     <option value="">Select run...</option>
                     {% for run in runs %}
-                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) - {{ run.project }}</option>
+                    <option value="{{ run.run_id }}">{{ run.run_name or 'Unnamed run' }} ({{ run.run_id | short_id }}) — {{ run.project }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -38,10 +37,12 @@
 </div>
 
 <div class="card mt-2">
-    <h3 class="card-title mb-1">Tips</h3>
-    <ul class="text-muted text-sm" style="padding-left: 1.5rem;">
-        <li>Select two runs to compare their parameters, metrics, and artifacts</li>
-        <li>The diff will show which parameters changed and compute TVD for result distributions</li>
+    <div class="card-header">
+        <h3 class="card-title">Tips</h3>
+    </div>
+    <ul class="text-muted text-sm" style="padding-left: 1.5rem; margin: 0;">
+        <li style="margin-bottom: 0.25rem;">Select two runs to compare their parameters, metrics, and artifacts</li>
+        <li style="margin-bottom: 0.25rem;">The diff will show which parameters changed and compute TVD for result distributions</li>
         <li>You can also compare from the run detail page against the project baseline</li>
     </ul>
 </div>

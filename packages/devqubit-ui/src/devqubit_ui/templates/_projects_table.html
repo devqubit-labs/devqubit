@@ -1,3 +1,14 @@
+{#
+Projects Table Fragment
+=======================
+Partial template for displaying a table of projects with their run counts
+and baseline information.
+
+Context variables:
+- projects: List of project dictionaries with name, run_count, baseline
+- current_workspace: Optional workspace context
+#}
+{% if projects %}
 <table>
     <thead>
         <tr>
@@ -37,13 +48,12 @@
                 {% endif %}
             </td>
         </tr>
-        {% else %}
-        <tr>
-            <td colspan="4" class="empty-state">
-                <p>No projects yet</p>
-                <p class="text-sm text-muted mt-1">Projects are created automatically when you log runs</p>
-            </td>
-        </tr>
         {% endfor %}
     </tbody>
 </table>
+{% else %}
+<div class="empty-state">
+    <p>No projects yet</p>
+    <p class="text-sm text-muted mt-1">Projects are created automatically when you log runs</p>
+</div>
+{% endif %}

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Runs - devqubit{% endblock %}
+{% block title %}Runs · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -12,14 +12,17 @@
           hx-target="#runs-table"
           hx-swap="innerHTML"
           hx-indicator="#loading-indicator">
-        <!-- Preserve workspace on HTMX requests -->
         {% if current_workspace %}
         <input type="hidden" name="workspace" value="{{ current_workspace.id }}">
         {% endif %}
         <div class="form-row">
             <div class="form-group">
                 <label for="project">Project</label>
-                <select name="project" id="project" hx-trigger="change" hx-get="/runs" hx-target="#runs-table" hx-include="[name='workspace'], [name='status'], [name='limit'], [name='q']">
+                <select name="project" id="project"
+                        hx-trigger="change"
+                        hx-get="/runs"
+                        hx-target="#runs-table"
+                        hx-include="[name='workspace'], [name='status'], [name='limit'], [name='q']">
                     <option value="">All projects</option>
                     {% for p in projects %}
                     <option value="{{ p }}" {% if filters.project == p %}selected{% endif %}>{{ p }}</option>
@@ -28,7 +31,11 @@
             </div>
             <div class="form-group">
                 <label for="status">Status</label>
-                <select name="status" id="status" hx-trigger="change" hx-get="/runs" hx-target="#runs-table" hx-include="[name='workspace'], [name='project'], [name='limit'], [name='q']">
+                <select name="status" id="status"
+                        hx-trigger="change"
+                        hx-get="/runs"
+                        hx-target="#runs-table"
+                        hx-include="[name='workspace'], [name='project'], [name='limit'], [name='q']">
                     <option value="">All</option>
                     <option value="FINISHED" {% if filters.status == 'FINISHED' %}selected{% endif %}>Finished</option>
                     <option value="FAILED" {% if filters.status == 'FAILED' %}selected{% endif %}>Failed</option>
@@ -56,9 +63,7 @@
                 </select>
             </div>
             <div class="form-group" style="display: flex; align-items: flex-end; gap: 0.5rem;">
-                <button type="submit" class="btn btn-primary">
-                    Filter
-                </button>
+                <button type="submit" class="btn btn-primary">Filter</button>
                 <span id="loading-indicator" class="htmx-indicator">
                     <span class="spinner"></span>
                 </span>
