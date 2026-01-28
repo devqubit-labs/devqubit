@@ -85,6 +85,23 @@ class TestGarbageCollection:
         loaded = registry.load(run_id)
         assert store.exists(loaded.artifacts[0].digest)
 
+    def test_gc_respects_max_runs_limit(self, store, registry, config):
+        """GC respects max_runs parameter to limit scanning."""
+        # Create 5 runs with artifacts
+        for i in range(5):
+            with track(project="limit_test", config=config) as run:
+                run.log_bytes(
+                    kind="test.data",
+                    data=f"content_{i}".encode(),
+                    media_type="text/plain",
+                    role="test",
+                )
+
+        # Scan only 2 runs
+        stats = gc_run(store, registry, max_runs=2, dry_run=True)
+
+        assert stats.runs_scanned == 2
+
 
 class TestPruneRuns:
     """Tests for pruning old or failed runs."""
@@ -226,3 +243,14 @@ class TestWorkspaceHealth:
         health = check_workspace_health(store, registry)
 
         assert health["missing_objects"] == 1
+
+    def test_health_reports_limited_scan(self, store, registry, config):
+        """Health check reports when scan was limited."""
+        for i in range(5):
+            with track(project="limited", config=config):
+                pass
+
+        health = check_workspace_health(store, registry, max_runs=2)
+
+        assert health["limited"] is True
+        assert health["total_runs"] == 2

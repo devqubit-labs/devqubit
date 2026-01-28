@@ -418,10 +418,17 @@ def prune_runs(
     all_summaries: list[RunSummary] = []
     offset = 0
     batch_size = 500
-    scan_limit = max_runs if max_runs is not None else float("inf")
 
-    while len(all_summaries) < scan_limit:
-        remaining = min(batch_size, int(scan_limit - len(all_summaries)))
+    while True:
+        # Check if we've hit the scan limit
+        if max_runs is not None and len(all_summaries) >= max_runs:
+            break
+
+        # Calculate batch size
+        if max_runs is not None:
+            remaining = min(batch_size, max_runs - len(all_summaries))
+        else:
+            remaining = batch_size
         summaries = registry.list_runs(
             limit=remaining,
             offset=offset,
@@ -561,10 +568,17 @@ def check_workspace_health(
     offset = 0
     batch_size = 100
     total_runs = 0
-    runs_limit = max_runs if max_runs is not None else float("inf")
 
-    while total_runs < runs_limit:
-        remaining = min(batch_size, int(runs_limit - total_runs))
+    while True:
+        # Check if we've hit the scan limit
+        if max_runs is not None and total_runs >= max_runs:
+            break
+
+        # Calculate batch size
+        if max_runs is not None:
+            remaining = min(batch_size, max_runs - total_runs)
+        else:
+            remaining = batch_size
         summaries = registry.list_runs(limit=remaining, offset=offset)
         if not summaries:
             break
