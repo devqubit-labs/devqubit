@@ -377,16 +377,58 @@
         </h3>
     </div>
 
-    {% if report.circuit_diff.changes %}
-    <h4 class="text-sm text-muted mb-1">Changes</h4>
-    <ul style="margin: 0; padding-left: 1.5rem;">
-        {% for change in report.circuit_diff.changes[:10] %}
-        <li class="text-sm font-mono" style="margin: 0.25rem 0;">{{ change }}</li>
-        {% endfor %}
-        {% if report.circuit_diff.changes | length > 10 %}
-        <li class="text-sm text-muted">... and {{ report.circuit_diff.changes | length - 10 }} more</li>
-        {% endif %}
-    </ul>
+    {% if report.circuit_diff.changed %}
+    <h4 class="text-sm text-muted mb-1">Changed</h4>
+    <table>
+        <thead>
+            <tr>
+                <th>Property</th>
+                <th>Run A</th>
+                <th>Run B</th>
+                <th>Delta</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for key, values in report.circuit_diff.changed.items() %}
+            <tr>
+                <td>{{ values.label if values.label else key }}</td>
+                <td class="font-mono">{{ values.a }}</td>
+                <td class="font-mono">{{ values.b }}</td>
+                <td class="font-mono">
+                    {% if values.delta is defined %}
+                    {{ "%+d" | format(values.delta) }}{% if values.pct is defined %} ({{ "%+.1f" | format(values.pct) }}%){% endif %}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.circuit_diff.is_clifford_changed %}
+    <h4 class="text-sm text-muted mb-1 mt-2">Clifford Status</h4>
+    <table>
+        <tbody>
+            <tr>
+                <td>Run A</td>
+                <td class="font-mono">{{ report.circuit_diff.is_clifford_a if report.circuit_diff.is_clifford_a is not none else 'unknown' }}</td>
+            </tr>
+            <tr>
+                <td>Run B</td>
+                <td class="font-mono">{{ report.circuit_diff.is_clifford_b if report.circuit_diff.is_clifford_b is not none else 'unknown' }}</td>
+            </tr>
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if report.circuit_diff.added_gates %}
+    <h4 class="text-sm text-muted mb-1 mt-2">New Gate Types (in B)</h4>
+    <p class="font-mono text-sm">{{ report.circuit_diff.added_gates | join(', ') }}</p>
+    {% endif %}
+
+    {% if report.circuit_diff.removed_gates %}
+    <h4 class="text-sm text-muted mb-1 mt-2">Removed Gate Types (from A)</h4>
+    <p class="font-mono text-sm">{{ report.circuit_diff.removed_gates | join(', ') }}</p>
     {% endif %}
 
     {% if report.circuit_diff.match %}

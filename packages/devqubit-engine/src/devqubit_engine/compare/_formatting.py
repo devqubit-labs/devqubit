@@ -415,16 +415,72 @@ class ResultFormatter:
             return []
 
         lines = self.r.section("CIRCUIT DIFFERENCES")
+        cd = result.circuit_diff
 
-        if not result.circuit_diff.changes:
+        # No data available
+        if (
+            not cd.changed
+            and not cd.added_gates
+            and not cd.removed_gates
+            and not cd.is_clifford_changed
+        ):
             lines += self.r.text("Circuits differ (no detailed diff available)")
             return lines
 
-        for i, change in enumerate(result.circuit_diff.changes):
-            if i >= self.opts.max_circuit_changes:
-                lines += self.r.overflow(len(result.circuit_diff.changes) - i)
-                break
-            lines += self.r.text(change)
+        # Format changed properties
+        count = 0
+        for key in sorted(cd.changed):
+            if count >= self.opts.max_circuit_changes:
+                remaining = len(cd.changed) - count
+                if cd.added_gates:
+                    remaining += 1
+                if cd.removed_gates:
+                    remaining += 1
+                lines += self.r.overflow(remaining)
+                return lines
+
+            ch = cd.changed[key]
+            label = ch.get("label", key)
+            val_a = format_value(ch.get("a"))
+            val_b = format_value(ch.get("b"))
+
+            if "pct" in ch:
+                pct = ch["pct"]
+                suffix = f" ({pct:+.1f}%)"
+            else:
+                suffix = ""
+
+            lines += self.r.change(
+                truncate_id(label, self._KEY_WIDTH),
+                val_a,
+                val_b,
+                suffix=suffix,
+                key_width=self._KEY_WIDTH,
+            )
+            count += 1
+
+        # Format Clifford status change
+        if cd.is_clifford_changed:
+            lines += self.r.change(
+                "Clifford",
+                str(cd.is_clifford_a),
+                str(cd.is_clifford_b),
+                key_width=self._KEY_WIDTH,
+            )
+
+        # Format added gates
+        if cd.added_gates:
+            gates_str = ", ".join(cd.added_gates[:5])
+            if len(cd.added_gates) > 5:
+                gates_str += f" (+{len(cd.added_gates) - 5} more)"
+            lines += self.r.kv("New gates:", gates_str)
+
+        # Format removed gates
+        if cd.removed_gates:
+            gates_str = ", ".join(cd.removed_gates[:5])
+            if len(cd.removed_gates) > 5:
+                gates_str += f" (+{len(cd.removed_gates) - 5} more)"
+            lines += self.r.kv("Removed gates:", gates_str)
 
         return lines
 

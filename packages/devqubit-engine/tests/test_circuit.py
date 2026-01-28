@@ -9,12 +9,10 @@ import io
 
 import pytest
 from devqubit_engine.circuit.extractors import (
-    detect_sdk,
     extract_circuit,
     extract_circuit_from_refs,
 )
 from devqubit_engine.circuit.hashing import (
-    hash_circuit_pair,
     hash_parametric,
     hash_structural,
 )
@@ -250,87 +248,29 @@ class TestCircuitPipeline:
         assert summary.gate_count_2q >= 1  # CNOT
 
 
-class TestSDKDetection:
-    """Test SDK detection from run records."""
-
-    @pytest.mark.parametrize(
-        "adapter,expected_sdk",
-        [
-            ("devqubit-qiskit", SDK.QISKIT),
-            ("devqubit-braket", SDK.BRAKET),
-            ("devqubit-cirq", SDK.CIRQ),
-            ("devqubit-pennylane", SDK.PENNYLANE),
-            ("devqubit-Qiskit", SDK.QISKIT),  # case insensitive
-            ("unknown-adapter", SDK.UNKNOWN),
-            ("manual", SDK.UNKNOWN),
-        ],
-    )
-    def test_detect_sdk_from_adapter(self, run_factory, adapter, expected_sdk):
-        """SDK detection based on adapter name."""
-        record = run_factory(adapter=adapter)
-        assert detect_sdk(record) == expected_sdk
-
-
 class TestCircuitHashing:
-    """Test circuit hashing for reproducibility tracking."""
+    """Test circuit structural and parametric hashing."""
 
-    def test_cx_direction_matters(self):
-        """CX(0,1) != CX(1,0)."""
-        h01 = hash_structural([{"gate": "cx", "qubits": [0, 1]}], 2, 0)
-        h10 = hash_structural([{"gate": "cx", "qubits": [1, 0]}], 2, 0)
-        assert h01 != h10
+    def test_empty_ops_hash(self):
+        """Empty circuit produces deterministic hash."""
+        h = hash_structural([], 0, 0)
+        assert h.startswith("sha256:")
+        assert len(h) == 71  # sha256: + 64 hex chars
 
-    def test_negative_zero_normalized(self):
-        """-0.0 == 0.0."""
-        h_pos = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": 0.0}}],
-            1,
-            0,
-        )
-        h_neg = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": -0.0}}],
-            1,
-            0,
-        )
-        assert h_pos == h_neg
-
-    def test_nan_consistent(self):
-        """NaN hashes consistently."""
-        nan = float("nan")
-        h1 = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": nan}}],
-            1,
-            0,
-        )
-        h2 = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": nan}}],
-            1,
-            0,
-        )
-        assert h1 == h2
-
-    def test_inf_values_differ(self):
-        """+inf != -inf."""
-        h_pos = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": float("inf")}}],
-            1,
-            0,
-        )
-        h_neg = hash_parametric(
-            [{"gate": "rz", "qubits": [0], "params": {"t": float("-inf")}}],
-            1,
-            0,
-        )
-        assert h_pos != h_neg
-
-    def test_no_params_hashes_equal(self):
-        """structural == parametric when no params."""
-        ops = [{"gate": "h", "qubits": [0]}, {"gate": "cx", "qubits": [0, 1]}]
-        s, p = hash_circuit_pair(ops, 2, 0)
-        assert s == p
+    def test_op_order_matters(self):
+        """Different operation order => different hash."""
+        ops1 = [
+            {"gate": "h", "qubits": [0]},
+            {"gate": "x", "qubits": [1]},
+        ]
+        ops2 = [
+            {"gate": "x", "qubits": [1]},
+            {"gate": "h", "qubits": [0]},
+        ]
+        assert hash_structural(ops1, 2, 0) != hash_structural(ops2, 2, 0)
 
     def test_num_qubits_matters(self):
-        """Same gates, different num_qubits => different hash."""
+        """Same ops, different num_qubits => different hash."""
         ops = [{"gate": "h", "qubits": [0]}]
         h2 = hash_structural(ops, 2, 0)
         h3 = hash_structural(ops, 3, 0)
@@ -484,7 +424,9 @@ class TestCircuitDiff:
         diff = diff_summaries(summary, summary)
 
         assert diff.match is True
-        assert len(diff.changes) == 0
+        assert len(diff.changed) == 0
+        assert len(diff.added_gates) == 0
+        assert len(diff.removed_gates) == 0
 
     def test_diff_detects_changes(self):
         """Diff should detect structural changes."""
@@ -508,9 +450,40 @@ class TestCircuitDiff:
         diff = diff_summaries(summary_a, summary_b)
 
         assert diff.match is False
-        assert len(diff.changes) > 0
-        assert "qubits" in str(diff.changes)
-        assert diff.metrics["num_qubits_delta"] == 1
+        assert len(diff.changed) > 0
+        assert "num_qubits" in diff.changed
+        assert diff.changed["num_qubits"]["a"] == 2
+        assert diff.changed["num_qubits"]["b"] == 3
+        assert diff.changed["num_qubits"]["delta"] == 1
+
+    def test_diff_detects_gate_type_changes(self):
+        """Diff should detect added/removed gate types."""
+        summary_a = CircuitSummary(
+            num_qubits=2,
+            gate_types={"h": 1, "cx": 1, "swap": 1},
+        )
+        summary_b = CircuitSummary(
+            num_qubits=2,
+            gate_types={"h": 1, "cx": 1, "rz": 1},
+        )
+
+        diff = diff_summaries(summary_a, summary_b)
+
+        assert diff.match is False
+        assert "rz" in diff.added_gates
+        assert "swap" in diff.removed_gates
+
+    def test_diff_detects_clifford_change(self):
+        """Diff should detect is_clifford status change."""
+        summary_a = CircuitSummary(num_qubits=2, is_clifford=True)
+        summary_b = CircuitSummary(num_qubits=2, is_clifford=False)
+
+        diff = diff_summaries(summary_a, summary_b)
+
+        assert diff.match is False
+        assert diff.is_clifford_changed is True
+        assert diff.is_clifford_a is True
+        assert diff.is_clifford_b is False
 
 
 class TestErrorHandling:

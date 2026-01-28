@@ -154,10 +154,18 @@ class CircuitDiff:
     ----------
     match : bool
         True if summaries are semantically equivalent.
-    changes : list of str
-        Human-readable list of changes.
-    metrics : dict
-        Quantitative diff metrics (deltas, percentages).
+    changed : dict
+        Changed numeric fields dict.
+    added_gates : list of str
+        Gate types present in B but not in A.
+    removed_gates : list of str
+        Gate types present in A but not in B.
+    is_clifford_changed : bool
+        Whether is_clifford status changed.
+    is_clifford_a : bool or None
+        is_clifford value for circuit A.
+    is_clifford_b : bool or None
+        is_clifford value for circuit B.
     summary_a : CircuitSummary
         First (baseline) summary.
     summary_b : CircuitSummary
@@ -165,8 +173,12 @@ class CircuitDiff:
     """
 
     match: bool
-    changes: list[str]
-    metrics: dict[str, Any]
+    changed: dict[str, dict[str, Any]]
+    added_gates: list[str]
+    removed_gates: list[str]
+    is_clifford_changed: bool
+    is_clifford_a: bool | None
+    is_clifford_b: bool | None
     summary_a: CircuitSummary
     summary_b: CircuitSummary
 
@@ -181,15 +193,19 @@ class CircuitDiff:
         """
         return {
             "match": self.match,
-            "changes": self.changes.copy(),
-            "metrics": self.metrics.copy(),
+            "changed": {k: dict(v) for k, v in self.changed.items()},
+            "added_gates": self.added_gates.copy(),
+            "removed_gates": self.removed_gates.copy(),
+            "is_clifford_changed": self.is_clifford_changed,
+            "is_clifford_a": self.is_clifford_a,
+            "is_clifford_b": self.is_clifford_b,
             "summary_a": self.summary_a.to_dict(),
             "summary_b": self.summary_b.to_dict(),
         }
 
     def __repr__(self) -> str:
         """Return concise string representation."""
-        status = "match" if self.match else f"{len(self.changes)} changes"
+        status = "match" if self.match else f"{len(self.changed)} changes"
         return f"CircuitDiff({status})"
 
 
@@ -315,18 +331,15 @@ def _detect_sdk_from_circuit(circuit: Any) -> SDK:
 # =============================================================================
 
 
-# Label width for aligned diff output
-_DIFF_LABEL_WIDTH = 14
-
-# Fields to compare with optional percentage display
+# Fields to compare: (attr_name, label, show_percentage)
 _NUMERIC_DIFF_FIELDS = (
-    ("num_qubits", "qubits", False),
-    ("num_clbits", "clbits", False),
-    ("depth", "depth", True),
+    ("num_qubits", "Qubits", False),
+    ("num_clbits", "Classical bits", False),
+    ("depth", "Depth", True),
     ("gate_count_1q", "1Q gates", True),
     ("gate_count_2q", "2Q gates", True),
-    ("gate_count_total", "total gates", True),
-    ("parameter_count", "parameters", False),
+    ("gate_count_total", "Total gates", True),
+    ("parameter_count", "Parameters", False),
 )
 
 
@@ -352,119 +365,54 @@ def diff_summaries(
     CircuitDiff
         Semantic diff with changes and metrics.
     """
-    changes: list[str] = []
-    metrics: dict[str, Any] = {}
+    changed: dict[str, dict[str, Any]] = {}
 
     # Compare numeric fields
     for field_name, label, show_pct in _NUMERIC_DIFF_FIELDS:
         val_a = getattr(summary_a, field_name)
         val_b = getattr(summary_b, field_name)
-        _record_numeric_diff(
-            field_name, label, val_a, val_b, show_pct, changes, metrics
-        )
+
+        if val_a != val_b:
+            delta = val_b - val_a
+            entry: dict[str, Any] = {
+                "label": label,
+                "a": val_a,
+                "b": val_b,
+                "delta": delta,
+            }
+            if show_pct and val_a > 0:
+                entry["pct"] = (delta / val_a) * 100
+            changed[field_name] = entry
 
     # Compare Clifford status
-    if summary_a.is_clifford != summary_b.is_clifford:
-        label = "is_clifford"
-        changes.append(
-            f"{label:<{_DIFF_LABEL_WIDTH}}  "
-            f"{summary_a.is_clifford} => {summary_b.is_clifford}"
-        )
-        metrics["is_clifford_changed"] = True
-        metrics["is_clifford_a"] = summary_a.is_clifford
-        metrics["is_clifford_b"] = summary_b.is_clifford
+    is_clifford_changed = summary_a.is_clifford != summary_b.is_clifford
 
     # Compare gate types
-    _record_gate_type_diff(summary_a, summary_b, changes, metrics)
+    types_a = set(summary_a.gate_types.keys())
+    types_b = set(summary_b.gate_types.keys())
+    added_gates = sorted(types_b - types_a)
+    removed_gates = sorted(types_a - types_b)
+
+    match = (
+        not changed
+        and not is_clifford_changed
+        and not added_gates
+        and not removed_gates
+    )
 
     logger.debug(
         "Compared summaries: %s",
-        "match" if not changes else f"{len(changes)} changes",
+        "match" if match else f"{len(changed)} changes",
     )
 
     return CircuitDiff(
-        match=len(changes) == 0,
-        changes=changes,
-        metrics=metrics,
+        match=match,
+        changed=changed,
+        added_gates=added_gates,
+        removed_gates=removed_gates,
+        is_clifford_changed=is_clifford_changed,
+        is_clifford_a=summary_a.is_clifford,
+        is_clifford_b=summary_b.is_clifford,
         summary_a=summary_a,
         summary_b=summary_b,
     )
-
-
-def _record_numeric_diff(
-    metric_key: str,
-    label: str,
-    val_a: int,
-    val_b: int,
-    show_pct: bool,
-    changes: list[str],
-    metrics: dict[str, Any],
-) -> None:
-    """
-    Compare two numeric values and record changes.
-
-    Parameters
-    ----------
-    metric_key : str
-        Key for metrics dict.
-    label : str
-        Human-readable label.
-    val_a : int
-        Baseline value.
-    val_b : int
-        Comparison value.
-    show_pct : bool
-        Whether to show percentage change.
-    changes : list of str
-        List to append change descriptions to.
-    metrics : dict
-        Dict to record numeric metrics to.
-    """
-    if val_a == val_b:
-        return
-
-    delta = val_b - val_a
-    metrics[f"{metric_key}_delta"] = delta
-
-    if show_pct and val_a > 0:
-        pct = (delta / val_a) * 100
-        metrics[f"{metric_key}_delta_pct"] = pct
-        changes.append(
-            f"{label:<{_DIFF_LABEL_WIDTH}}  {val_a} => {val_b} ({pct:+.1f}%)"
-        )
-    else:
-        changes.append(f"{label:<{_DIFF_LABEL_WIDTH}}  {val_a} => {val_b}")
-
-
-def _record_gate_type_diff(
-    summary_a: CircuitSummary,
-    summary_b: CircuitSummary,
-    changes: list[str],
-    metrics: dict[str, Any],
-) -> None:
-    """
-    Compare gate types between summaries.
-
-    Parameters
-    ----------
-    summary_a : CircuitSummary
-        Baseline summary.
-    summary_b : CircuitSummary
-        Comparison summary.
-    changes : list of str
-        List to append change descriptions to.
-    metrics : dict
-        Dict to record gate type changes to.
-    """
-    types_a = set(summary_a.gate_types.keys())
-    types_b = set(summary_b.gate_types.keys())
-
-    if new_gates := types_b - types_a:
-        sorted_gates = ", ".join(sorted(new_gates))
-        changes.append(f"{'+ gates':<{_DIFF_LABEL_WIDTH}}  {sorted_gates}")
-        metrics["new_gate_types"] = sorted(new_gates)
-
-    if removed_gates := types_a - types_b:
-        sorted_gates = ", ".join(sorted(removed_gates))
-        changes.append(f"{'- gates':<{_DIFF_LABEL_WIDTH}}  {sorted_gates}")
-        metrics["removed_gate_types"] = sorted(removed_gates)
