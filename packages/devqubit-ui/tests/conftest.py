@@ -28,6 +28,7 @@ def mock_registry() -> Mock:
     registry.list_groups.return_value = []
     registry.count_runs.return_value = 0
     registry.get_baseline.return_value = None
+    registry.delete.return_value = True
     return registry
 
 

@@ -186,3 +186,19 @@ class TestApiRouter:
             "/api/projects/test-project/baseline/test-run-123?redirect=false"
         )
         assert response.status_code == 400
+
+    def test_api_delete_run_success(self, client, mock_registry):
+        """Test successful run deletion."""
+        mock_registry.delete.return_value = True
+
+        response = client.delete("/api/runs/test-run-123")
+        assert response.status_code == 200
+        assert response.headers.get("HX-Redirect") == "/runs"
+        mock_registry.delete.assert_called_once_with("test-run-123")
+
+    def test_api_delete_run_not_found(self, client, mock_registry):
+        """Test deletion of non-existent run."""
+        mock_registry.delete.return_value = False
+
+        response = client.delete("/api/runs/nonexistent-id")
+        assert response.status_code == 404
