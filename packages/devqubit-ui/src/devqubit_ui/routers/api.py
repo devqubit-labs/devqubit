@@ -17,6 +17,8 @@ GET /api/runs
     List runs (JSON response).
 GET /api/runs/{run_id}
     Get run details (JSON response).
+DELETE /api/runs/{run_id}
+    Delete a run.
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from typing import Any
 from devqubit_ui.dependencies import RegistryDep
 from devqubit_ui.services import RunService
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 
 logger = logging.getLogger(__name__)
@@ -95,14 +97,6 @@ async def set_baseline(
     HTTPException
         404 if run not found.
         400 if run doesn't belong to the specified project.
-
-    Examples
-    --------
-    From browser form (redirects):
-        POST /api/projects/my-project/baseline/abc123
-
-    From API client (returns JSON):
-        POST /api/projects/my-project/baseline/abc123?redirect=false
     """
     service = RunService(registry)
 
@@ -129,6 +123,49 @@ async def set_baseline(
             "project": project,
             "baseline_run_id": run_id,
         }
+    )
+
+
+@router.delete("/runs/{run_id}")
+async def delete_run(
+    run_id: str,
+    registry: RegistryDep,
+):
+    """
+    Delete a run.
+
+    Permanently removes a run from the registry. This action cannot be undone.
+
+    Parameters
+    ----------
+    run_id : str
+        The run ID to delete.
+    registry : RegistryDep
+        Injected registry dependency.
+
+    Returns
+    -------
+    JSONResponse or HTMLResponse
+        JSON confirmation for API clients, or empty response for HTMX.
+
+    Raises
+    ------
+    HTTPException
+        404 if run not found.
+    """
+    service = RunService(registry)
+
+    deleted = service.delete_run(run_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    logger.info("Deleted run: %s", run_id)
+
+    # Return empty response with HX-Redirect header for HTMX
+    return HTMLResponse(
+        content="",
+        headers={"HX-Redirect": "/runs"},
     )
 
 
@@ -163,14 +200,6 @@ async def api_runs_list(
     -------
     JSONResponse
         List of runs as JSON array.
-
-    Examples
-    --------
-    Get all runs:
-        GET /api/runs
-
-    Filter by project:
-        GET /api/runs?project=vqe&limit=10
     """
     service = RunService(registry)
 
