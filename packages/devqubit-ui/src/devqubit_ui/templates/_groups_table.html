@@ -1,4 +1,12 @@
-{# Groups table fragment - can be loaded independently via HTMX #}
+{#
+Groups Table Fragment
+=====================
+Partial template for displaying a table of run groups. Can be loaded
+independently via HTMX for dynamic filtering.
+
+Context variables:
+- groups: List of group dictionaries with group_id, group_name, project, run_count
+#}
 {% if groups %}
 <table>
     <thead>
@@ -16,7 +24,7 @@
             <td class="font-mono">{{ group.group_id | short_id }}</td>
             <td>{{ group.group_name or '—' }}</td>
             <td>{{ group.project }}</td>
-            <td>{{ group.run_count }}</td>
+            <td><span class="badge badge-gray">{{ group.run_count }}</span></td>
             <td>
                 <a href="/groups/{{ group.group_id }}" class="btn btn-sm btn-secondary">View Runs</a>
             </td>
@@ -27,6 +35,6 @@
 {% else %}
 <div class="empty-state">
     <p>No groups found</p>
-    <p class="text-sm mt-2">Groups are created when runs have a group_id set</p>
+    <p class="text-sm text-muted mt-1">Groups are created when runs have a group_id set</p>
 </div>
 {% endif %}

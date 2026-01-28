@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Diff - devqubit{% endblock %}
+{% block title %}Diff · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -19,23 +19,25 @@
     </div>
 </div>
 
+<!-- Run Headers -->
 <div class="card mb-2">
     <div class="grid grid-2">
         <div>
             <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run A (Baseline)</h3>
-            <p><a href="/runs/{{ run_a.run_id }}">{{ run_a.run_name or 'Unnamed run' }}</a></p>
+            <p><a href="/runs/{{ run_a.run_id }}">{{ run_a.run_name or 'Unnamed Run' }}</a></p>
             <p class="font-mono text-sm text-muted">{{ run_a.run_id | short_id }}</p>
-            <p class="text-muted text-sm">{{ run_a.project }} / {{ run_a.created_at | ago }}</p>
+            <p class="text-muted text-sm">{{ run_a.project }} · {{ run_a.created_at | ago }}</p>
         </div>
         <div>
             <h3 class="text-sm text-muted" style="text-transform: uppercase; letter-spacing: 0.05em;">Run B (Candidate)</h3>
-            <p><a href="/runs/{{ run_b.run_id }}">{{ run_b.run_name or 'Unnamed run' }}</a></p>
+            <p><a href="/runs/{{ run_b.run_id }}">{{ run_b.run_name or 'Unnamed Run' }}</a></p>
             <p class="font-mono text-sm text-muted">{{ run_b.run_id | short_id }}</p>
-            <p class="text-muted text-sm">{{ run_b.project }} / {{ run_b.created_at | ago }}</p>
+            <p class="text-muted text-sm">{{ run_b.project }} · {{ run_b.created_at | ago }}</p>
         </div>
     </div>
 </div>
 
+<!-- Metadata & Fingerprints -->
 <div class="grid grid-2 mb-2">
     <div class="card">
         <div class="card-header">
@@ -104,6 +106,7 @@
     </div>
 </div>
 
+<!-- Program & Device Calibration -->
 <div class="grid grid-2 mb-2">
     <div class="card">
         <div class="card-header">
@@ -179,7 +182,7 @@
         {% endif %}
 
         {% if report.device_drift and report.device_drift.top_drifts %}
-        <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Top Drifting Metrics</h4>
+        <h4 class="text-sm text-muted mb-1 mt-2">Top Drifting Metrics</h4>
         <table>
             <thead>
                 <tr>
@@ -200,6 +203,7 @@
     </div>
 </div>
 
+<!-- Parameters -->
 <div class="card mb-2">
     <div class="card-header">
         <h3 class="card-title">
@@ -235,7 +239,7 @@
     {% endif %}
 
     {% if report.params.removed %}
-    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run A (removed)</h4>
+    <h4 class="text-sm text-muted mb-1 mt-2">Only in Run A</h4>
     <table>
         <thead>
             <tr>
@@ -255,7 +259,7 @@
     {% endif %}
 
     {% if report.params.added %}
-    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run B (added)</h4>
+    <h4 class="text-sm text-muted mb-1 mt-2">Only in Run B</h4>
     <table>
         <thead>
             <tr>
@@ -279,6 +283,7 @@
     {% endif %}
 </div>
 
+<!-- Metrics -->
 <div class="card mb-2">
     <div class="card-header">
         <h3 class="card-title">
@@ -314,7 +319,7 @@
     {% endif %}
 
     {% if report.metrics.removed %}
-    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run A</h4>
+    <h4 class="text-sm text-muted mb-1 mt-2">Only in Run A</h4>
     <table>
         <thead>
             <tr>
@@ -334,7 +339,7 @@
     {% endif %}
 
     {% if report.metrics.added %}
-    <h4 class="text-sm text-muted mb-1" style="margin-top: 1rem;">Only in Run B</h4>
+    <h4 class="text-sm text-muted mb-1 mt-2">Only in Run B</h4>
     <table>
         <thead>
             <tr>
@@ -358,6 +363,7 @@
     {% endif %}
 </div>
 
+<!-- Circuit Diff -->
 {% if report.circuit_diff %}
 <div class="card mb-2">
     <div class="card-header">
@@ -389,6 +395,7 @@
 </div>
 {% endif %}
 
+<!-- Results / TVD -->
 {% if report.tvd is defined and report.tvd is not none %}
 <div class="card mb-2">
     <div class="card-header">
@@ -425,7 +432,6 @@
 
     {% if report.tvd > 0 and report.noise_context %}
     <p class="text-sm mt-2">
-        {# Bootstrap path: use p_value #}
         {% if report.noise_context.p_value is defined and report.noise_context.p_value is not none %}
             {% if report.noise_context.p_value >= 0.10 %}
             <span style="color: var(--success);">✓</span> Consistent with sampling noise — difference is not statistically significant.
@@ -434,7 +440,6 @@
             {% else %}
             <span style="color: var(--danger);">✗</span> Statistically significant difference (p={{ "%.2f" | format(report.noise_context.p_value) }}) — results show meaningful divergence.
             {% endif %}
-        {# Fallback: use noise_ratio heuristic #}
         {% else %}
             {% if report.noise_context.noise_ratio < 1.5 %}
             <span style="color: var(--success);">✓</span> TVD is within expected shot noise range.
@@ -449,6 +454,7 @@
 </div>
 {% endif %}
 
+<!-- Warnings -->
 {% if report.warnings %}
 <div class="card">
     <div class="card-header">

@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Search - devqubit{% endblock %}
+{% block title %}Search · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
@@ -13,7 +13,6 @@
           hx-target="#search-results"
           hx-swap="innerHTML"
           hx-indicator="#search-indicator">
-        <!-- Preserve workspace on search -->
         {% if current_workspace %}
         <input type="hidden" name="workspace" value="{{ current_workspace.id }}">
         {% endif %}
@@ -23,7 +22,7 @@
                    name="q"
                    id="q"
                    placeholder="metric.fidelity > 0.95 and params.shots = 1000"
-                   style="font-family: monospace;"
+                   class="font-mono"
                    hx-trigger="keyup changed delay:500ms"
                    hx-get="/runs"
                    hx-target="#search-results"
@@ -119,7 +118,9 @@
         </tbody>
     </table>
 </div>
+{% endblock %}
 
+{% block scripts %}
 <script>
 // Show results container when search is active
 document.addEventListener('htmx:afterSwap', function(evt) {
