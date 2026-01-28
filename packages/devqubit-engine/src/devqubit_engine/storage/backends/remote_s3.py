@@ -11,24 +11,37 @@ Usage
 -----
 >>> from devqubit_engine.storage import create_store
 >>> store = create_store("s3://my-bucket/prefix")
+
+Notes
+-----
+The S3Registry uses a local SQLite index for efficient querying.
+The index is stored in ``~/.cache/devqubit/s3_index/<bucket>_<prefix>.db``
+and is automatically synchronized with S3.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+import sqlite3
+import threading
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Dict, Iterator, List
 
+from devqubit_engine.storage.errors import ObjectNotFoundError, RunNotFoundError
 from devqubit_engine.storage.types import (
     ArtifactRef,
     BaselineInfo,
-    ObjectNotFoundError,
-    RunNotFoundError,
     RunSummary,
 )
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.utils.common import utc_now_iso
+
+
+logger = logging.getLogger(__name__)
 
 
 class S3Store:
@@ -45,7 +58,9 @@ class S3Store:
         AWS region.
     endpoint_url : str, optional
         Custom endpoint (for MinIO, LocalStack).
-    kwargs : Any
+    max_attempts : int, optional
+        Maximum retry attempts. Default is 10.
+    **kwargs
         Extra keyword args reserved for future use.
     """
 
@@ -245,9 +260,17 @@ class S3Store:
         bool
             True if object was deleted, False if it didn't exist.
         """
-        if not self.exists(digest):
-            return False
+        from botocore.exceptions import ClientError
+
         key = self._key(digest)
+        try:
+            self._client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as e:
+            code = str(e.response.get("Error", {}).get("Code", ""))
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                return False
+            raise
+
         self._client.delete_object(Bucket=self.bucket, Key=key)
         return True
 
@@ -313,19 +336,58 @@ class S3Store:
             raise
 
 
+# -----------------------------------------------------------------------------
+# Local index schema for S3Registry
+# -----------------------------------------------------------------------------
+
+_INDEX_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    project TEXT NOT NULL,
+    adapter TEXT NOT NULL,
+    status TEXT DEFAULT 'RUNNING',
+    created_at TEXT NOT NULL,
+    ended_at TEXT,
+    run_name TEXT,
+    backend_name TEXT,
+    provider TEXT,
+    git_commit TEXT,
+    fingerprint TEXT,
+    program_fingerprint TEXT,
+    group_id TEXT,
+    group_name TEXT,
+    parent_run_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project);
+CREATE INDEX IF NOT EXISTS idx_runs_adapter ON runs(adapter);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_runs_backend ON runs(backend_name);
+CREATE INDEX IF NOT EXISTS idx_runs_fingerprint ON runs(fingerprint);
+CREATE INDEX IF NOT EXISTS idx_runs_git_commit ON runs(git_commit);
+CREATE INDEX IF NOT EXISTS idx_runs_group_id ON runs(group_id);
+CREATE INDEX IF NOT EXISTS idx_runs_parent ON runs(parent_run_id);
+
+CREATE TABLE IF NOT EXISTS baselines (
+    project TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    set_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS index_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+"""
+
+
 class S3Registry:
     """
-    S3-backed run registry using JSON files.
+    S3-backed run registry using JSON files with local SQLite index.
 
-    Notes
-    -----
     This implementation stores each run record as a JSON object at:
-
-        <prefix>/runs/<run_id>.json
-
-    and each project baseline as:
-
-        <prefix>/baselines/<project>.json
+    ``<prefix>/runs/<run_id>.json``. A local SQLite index is maintained
+    for efficient querying without fetching all records from S3.
 
     Parameters
     ----------
@@ -337,7 +399,14 @@ class S3Registry:
         AWS region.
     endpoint_url : str, optional
         Custom endpoint (for MinIO, LocalStack).
-    kwargs : Any
+    max_attempts : int, optional
+        Maximum retry attempts. Default is 10.
+    cache_dir : Path, optional
+        Directory for local index cache. Defaults to
+        ``~/.cache/devqubit/s3_index``.
+    auto_sync : bool, optional
+        Whether to sync index on initialization. Default is True.
+    **kwargs
         Extra keyword args reserved for future use.
     """
 
@@ -348,6 +417,8 @@ class S3Registry:
         region: str | None = None,
         endpoint_url: str | None = None,
         max_attempts: int = 10,
+        cache_dir: Path | None = None,
+        auto_sync: bool = True,
         **kwargs: Any,
     ) -> None:
         try:
@@ -376,6 +447,177 @@ class S3Registry:
         )
 
         self._client = boto3.client("s3", **client_kwargs)
+
+        # Setup local index
+        if cache_dir is None:
+            cache_dir = Path.home() / ".cache" / "devqubit" / "s3_index"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create unique index name based on bucket and prefix
+        safe_prefix = re.sub(r"[^a-zA-Z0-9_-]", "_", self.prefix) or "root"
+        index_name = f"{self.bucket}_{safe_prefix}.db"
+        self._index_path = cache_dir / index_name
+
+        self._local = threading.local()
+        self._init_index()
+
+        if auto_sync:
+            self._sync_index()
+
+        logger.debug(
+            "S3Registry initialized: bucket=%s, prefix=%s, index=%s",
+            bucket,
+            prefix,
+            self._index_path,
+        )
+
+    def _create_index_connection(self) -> sqlite3.Connection:
+        """Create a new index database connection."""
+        conn = sqlite3.connect(str(self._index_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
+
+    @contextmanager
+    def _get_index_connection(self):
+        """Get a thread-local index database connection."""
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            self._local.conn = self._create_index_connection()
+        try:
+            yield self._local.conn
+            self._local.conn.commit()
+        except Exception:
+            self._local.conn.rollback()
+            raise
+
+    def _init_index(self) -> None:
+        """Initialize the local index database schema."""
+        with self._get_index_connection() as conn:
+            conn.executescript(_INDEX_SCHEMA_SQL)
+
+    def _sync_index(self) -> None:
+        """
+        Synchronize local index with S3.
+
+        This is an incremental sync that only fetches new or updated records.
+        """
+        logger.debug("Syncing S3 index for %s/%s", self.bucket, self.prefix)
+
+        # Get all run IDs from S3
+        s3_run_ids = set(self._iter_run_ids_from_s3())
+
+        # Get all run IDs from local index
+        with self._get_index_connection() as conn:
+            rows = conn.execute("SELECT run_id FROM runs").fetchall()
+            local_run_ids = {row["run_id"] for row in rows}
+
+        # Find new runs in S3
+        new_run_ids = s3_run_ids - local_run_ids
+
+        # Find deleted runs (in index but not in S3)
+        deleted_run_ids = local_run_ids - s3_run_ids
+
+        # Remove deleted runs from index
+        if deleted_run_ids:
+            with self._get_index_connection() as conn:
+                for run_id in deleted_run_ids:
+                    conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            logger.debug("Removed %d deleted runs from index", len(deleted_run_ids))
+
+        # Index new runs
+        if new_run_ids:
+            for run_id in new_run_ids:
+                try:
+                    record = self._load_dict_from_s3(run_id)
+                    self._index_record(record)
+                except Exception as e:
+                    logger.warning("Failed to index run %s: %s", run_id, e)
+            logger.debug("Indexed %d new runs", len(new_run_ids))
+
+        logger.debug(
+            "Index sync complete: %d total, %d new, %d deleted",
+            len(s3_run_ids),
+            len(new_run_ids),
+            len(deleted_run_ids),
+        )
+
+    def _index_record(self, record: Dict[str, Any]) -> None:
+        """
+        Add or update a record in the local index.
+
+        Parameters
+        ----------
+        record : dict
+            Run record to index.
+        """
+        proj = record.get("project", {})
+        project_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
+
+        info = record.get("info", {})
+        status = info.get("status", "RUNNING") if isinstance(info, dict) else "RUNNING"
+        ended_at = info.get("ended_at") if isinstance(info, dict) else None
+        run_name = info.get("run_name") if isinstance(info, dict) else None
+
+        backend = record.get("backend") or {}
+        backend_name = backend.get("name") if isinstance(backend, dict) else None
+        provider = backend.get("provider") if isinstance(backend, dict) else None
+
+        provenance = record.get("provenance") or {}
+        git = provenance.get("git") if isinstance(provenance, dict) else None
+        git_commit = git.get("commit") if isinstance(git, dict) else None
+
+        fingerprints = record.get("fingerprints") or {}
+        fingerprint = (
+            fingerprints.get("run") if isinstance(fingerprints, dict) else None
+        )
+        program_fp = (
+            fingerprints.get("program") if isinstance(fingerprints, dict) else None
+        )
+
+        with self._get_index_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO runs (
+                    run_id, project, adapter, status, created_at, ended_at,
+                    run_name, backend_name, provider, git_commit,
+                    fingerprint, program_fingerprint,
+                    group_id, group_name, parent_run_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    project = excluded.project,
+                    adapter = excluded.adapter,
+                    status = excluded.status,
+                    ended_at = excluded.ended_at,
+                    run_name = excluded.run_name,
+                    backend_name = excluded.backend_name,
+                    provider = excluded.provider,
+                    git_commit = excluded.git_commit,
+                    fingerprint = excluded.fingerprint,
+                    program_fingerprint = excluded.program_fingerprint,
+                    group_id = excluded.group_id,
+                    group_name = excluded.group_name,
+                    parent_run_id = excluded.parent_run_id
+                """,
+                (
+                    record["run_id"],
+                    project_name,
+                    record.get("adapter", ""),
+                    status,
+                    record.get("created_at", ""),
+                    ended_at,
+                    run_name,
+                    backend_name,
+                    provider,
+                    git_commit,
+                    fingerprint,
+                    program_fp,
+                    record.get("group_id"),
+                    record.get("group_name"),
+                    record.get("parent_run_id"),
+                ),
+            )
 
     def _run_key(self, run_id: str) -> str:
         """
@@ -444,9 +686,14 @@ class S3Registry:
         data = json.dumps(record, default=str).encode("utf-8")
         self._client.put_object(Bucket=self.bucket, Key=key, Body=data)
 
-    def _load_dict(self, run_id: str) -> Dict[str, Any]:
+        # Update local index
+        self._index_record(record)
+
+        logger.debug("Saved run to S3: %s", run_id)
+
+    def _load_dict_from_s3(self, run_id: str) -> Dict[str, Any]:
         """
-        Load a run record as a raw dictionary.
+        Load a run record as a raw dictionary directly from S3.
 
         Parameters
         ----------
@@ -494,7 +741,7 @@ class S3Registry:
         RunNotFoundError
             If run record does not exist.
         """
-        record_dict = self._load_dict(run_id)
+        record_dict = self._load_dict_from_s3(run_id)
         artifacts = [
             ArtifactRef.from_dict(a)
             for a in record_dict.get("artifacts", [])
@@ -525,6 +772,8 @@ class S3Registry:
         """
         Check if a run record exists.
 
+        Uses local index for fast lookup, falls back to S3 check.
+
         Parameters
         ----------
         run_id : str
@@ -534,12 +783,16 @@ class S3Registry:
         -------
         bool
             True if run record exists.
-
-        Raises
-        ------
-        Exception
-            Re-raises unexpected AWS errors (e.g., permission issues).
         """
+        # Check local index first (fast)
+        with self._get_index_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is not None:
+                return True
+
+        # Fall back to S3 check
         from botocore.exceptions import ClientError
 
         key = self._run_key(run_id)
@@ -566,122 +819,27 @@ class S3Registry:
         bool
             True if deleted, False if it didn't exist.
         """
-        if not self.exists(run_id):
-            return False
+        from botocore.exceptions import ClientError
+
         key = self._run_key(run_id)
+        try:
+            self._client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as e:
+            code = str(e.response.get("Error", {}).get("Code", ""))
+            if code in {"NoSuchKey", "404", "NotFound"}:
+                return False
+            raise
+
         self._client.delete_object(Bucket=self.bucket, Key=key)
+
+        # Remove from local index
+        with self._get_index_connection() as conn:
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+
+        logger.debug("Deleted run from S3: %s", run_id)
         return True
 
-    def _summarize_record(self, run_id: str, record: Dict[str, Any]) -> RunSummary:
-        """
-        Convert a full record to a RunSummary.
-
-        Parameters
-        ----------
-        run_id : str
-            Run identifier.
-        record : dict
-            Full run record.
-
-        Returns
-        -------
-        RunSummary
-            Summary info.
-        """
-        proj = record.get("project", {})
-        proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
-        rec_adapter = record.get("adapter", "")
-        info = record.get("info", {})
-        rec_status = info.get("status", "") if isinstance(info, dict) else ""
-        ended_at = info.get("ended_at") if isinstance(info, dict) else None
-        run_name = info.get("run_name") if isinstance(info, dict) else None
-
-        # Extract group info
-        group_id = record.get("group_id")
-        group_name = record.get("group_name")
-        parent_run_id = record.get("parent_run_id")
-
-        return RunSummary(
-            run_id=run_id,
-            run_name=run_name,
-            project=proj_name,
-            adapter=rec_adapter,
-            status=rec_status,
-            created_at=record.get("created_at", ""),
-            ended_at=ended_at,
-            group_id=group_id,
-            group_name=group_name,
-            parent_run_id=parent_run_id,
-        )
-
-    def _record_matches(
-        self,
-        record: Dict[str, Any],
-        *,
-        project: str | None,
-        adapter: str | None,
-        status: str | None,
-        backend_name: str | None,
-        fingerprint: str | None,
-        git_commit: str | None,
-        group_id: str | None = None,
-        name: str | None = None,
-    ) -> bool:
-        """
-        Apply filters to a record.
-
-        Parameters
-        ----------
-        record : dict
-            Full run record.
-        project, name, adapter, status, backend_name, fingerprint, git_commit, group_id
-            Filter fields.
-
-        Returns
-        -------
-        bool
-            True if record matches all provided filters.
-        """
-        proj = record.get("project", {})
-        proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
-        if project and proj_name != project:
-            return False
-
-        info = record.get("info", {})
-        rec_name = info.get("run_name", "") if isinstance(info, dict) else ""
-        if name and rec_name != name:
-            return False
-
-        rec_adapter = record.get("adapter", "")
-        if adapter and rec_adapter != adapter:
-            return False
-
-        rec_status = info.get("status", "") if isinstance(info, dict) else ""
-        if status and rec_status != status:
-            return False
-
-        backend = record.get("backend") or {}
-        rec_backend_name = backend.get("name") if isinstance(backend, dict) else None
-        if backend_name and rec_backend_name != backend_name:
-            return False
-
-        provenance = record.get("provenance") or {}
-        git = provenance.get("git") if isinstance(provenance, dict) else None
-        rec_git_commit = git.get("commit") if isinstance(git, dict) else None
-        if git_commit and rec_git_commit != git_commit:
-            return False
-
-        fps = record.get("fingerprints") or {}
-        rec_fp = fps.get("run") if isinstance(fps, dict) else None
-        if fingerprint and rec_fp != fingerprint:
-            return False
-
-        if group_id and record.get("group_id") != group_id:
-            return False
-
-        return True
-
-    def _iter_run_ids(self) -> Iterator[str]:
+    def _iter_run_ids_from_s3(self) -> Iterator[str]:
         """
         Iterate all run IDs present in the bucket/prefix.
 
@@ -715,12 +873,14 @@ class S3Registry:
         """
         List runs with optional filtering.
 
+        Uses local SQLite index for efficient querying.
+
         Parameters
         ----------
         limit : int
-            Maximum number of results.
+            Maximum number of results. Default is 100.
         offset : int
-            Number of results to skip.
+            Number of results to skip. Default is 0.
         project : str, optional
             Filter by project name.
         name : str, optional
@@ -743,32 +903,64 @@ class S3Registry:
         list of RunSummary
             Matching runs ordered by created_at descending.
         """
-        all_runs: List[RunSummary] = []
+        conditions: List[str] = []
+        params: List[Any] = []
 
-        for run_id in self._iter_run_ids():
-            try:
-                record = self._load_dict(run_id)
-            except Exception:
-                # Skip corrupted/unreadable entries.
-                continue
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if name:
+            conditions.append("run_name = ?")
+            params.append(name)
+        if adapter:
+            conditions.append("adapter = ?")
+            params.append(adapter)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+        if backend_name:
+            conditions.append("backend_name = ?")
+            params.append(backend_name)
+        if fingerprint:
+            conditions.append("fingerprint = ?")
+            params.append(fingerprint)
+        if git_commit:
+            conditions.append("git_commit = ?")
+            params.append(git_commit)
+        if group_id:
+            conditions.append("group_id = ?")
+            params.append(group_id)
 
-            if not self._record_matches(
-                record,
-                project=project,
-                name=name,
-                adapter=adapter,
-                status=status,
-                backend_name=backend_name,
-                fingerprint=fingerprint,
-                git_commit=git_commit,
-                group_id=group_id,
-            ):
-                continue
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
 
-            all_runs.append(self._summarize_record(run_id, record))
+        with self._get_index_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT run_id, run_name, project, adapter, status, created_at, ended_at,
+                       group_id, group_name, parent_run_id
+                FROM runs {where_clause}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            ).fetchall()
 
-        all_runs.sort(key=lambda r: r.get("created_at", ""), reverse=True)
-        return all_runs[offset : offset + limit]
+        return [
+            RunSummary(
+                run_id=row["run_id"],
+                run_name=row["run_name"],
+                project=row["project"],
+                adapter=row["adapter"],
+                status=row["status"],
+                created_at=row["created_at"],
+                ended_at=row["ended_at"],
+                group_id=row["group_id"],
+                group_name=row["group_name"],
+                parent_run_id=row["parent_run_id"],
+            )
+            for row in rows
+        ]
 
     def list_projects(self) -> List[str]:
         """
@@ -779,12 +971,11 @@ class S3Registry:
         list of str
             Sorted unique project names.
         """
-        projects: set[str] = set()
-        for run in self.list_runs(limit=10**9, offset=0):
-            proj = run.get("project")
-            if proj:
-                projects.add(proj)
-        return sorted(projects)
+        with self._get_index_connection() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT project FROM runs ORDER BY project"
+            ).fetchall()
+        return [row["project"] for row in rows]
 
     def count_runs(
         self,
@@ -794,6 +985,8 @@ class S3Registry:
     ) -> int:
         """
         Count runs matching filters.
+
+        Uses local index for efficient counting.
 
         Parameters
         ----------
@@ -807,14 +1000,23 @@ class S3Registry:
         int
             Count of matching runs.
         """
-        return len(
-            self.list_runs(
-                limit=10**9,
-                offset=0,
-                project=project,
-                status=status,
-            )
-        )
+        conditions: List[str] = []
+        params: List[Any] = []
+
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if status:
+            conditions.append("status = ?")
+            params.append(status)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+        with self._get_index_connection() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) as cnt FROM runs {where_clause}", params
+            ).fetchone()
+        return row["cnt"] if row else 0
 
     def search_runs(
         self,
@@ -833,13 +1035,13 @@ class S3Registry:
         query : str
             Query expression (e.g., "metric.fidelity > 0.95 and params.shots = 1000").
         limit : int
-            Maximum results to return.
+            Maximum results to return. Default is 100.
         offset : int
-            Number of results to skip.
+            Number of results to skip. Default is 0.
         sort_by : str, optional
             Field to sort by.
         descending : bool
-            Sort in descending order.
+            Sort in descending order. Default is True.
 
         Returns
         -------
@@ -848,8 +1050,8 @@ class S3Registry:
 
         Notes
         -----
-        Remote search iterates all runs and filters in memory.
-        For large datasets, consider using a local cache or hosted search service.
+        Uses local index to get candidate run IDs, then fetches and
+        filters full records from S3.
         """
         from devqubit_engine.query import (
             _resolve_field,
@@ -858,44 +1060,66 @@ class S3Registry:
         )
 
         parsed = parse_query(query)
-        results: List[RunRecord] = []
 
-        for run_id in self._iter_run_ids():
+        # Get candidate run IDs from index (ordered by created_at)
+        with self._get_index_connection() as conn:
+            rows = conn.execute(
+                "SELECT run_id FROM runs ORDER BY created_at DESC"
+            ).fetchall()
+        candidate_ids = [row["run_id"] for row in rows]
+
+        # If no sort_by: stream and stop early
+        if sort_by is None:
+            results: List[RunRecord] = []
+            matched = 0
+            for run_id in candidate_ids:
+                try:
+                    record_dict = self._load_dict_from_s3(run_id)
+                    if matches_query(record_dict, parsed):
+                        if matched >= offset:
+                            artifacts = [
+                                ArtifactRef.from_dict(a)
+                                for a in record_dict.get("artifacts", [])
+                                if isinstance(a, dict)
+                            ]
+                            results.append(
+                                RunRecord(record=record_dict, artifacts=artifacts)
+                            )
+                            if len(results) >= limit:
+                                break
+                        matched += 1
+                except Exception:
+                    continue
+            return results
+
+        # If sort_by requested: collect all matches, then sort
+        all_matches: List[RunRecord] = []
+        for run_id in candidate_ids:
             try:
-                record_dict = self._load_dict(run_id)
+                record_dict = self._load_dict_from_s3(run_id)
+                if matches_query(record_dict, parsed):
+                    artifacts = [
+                        ArtifactRef.from_dict(a)
+                        for a in record_dict.get("artifacts", [])
+                        if isinstance(a, dict)
+                    ]
+                    all_matches.append(
+                        RunRecord(record=record_dict, artifacts=artifacts)
+                    )
             except Exception:
                 continue
 
-            # Apply query
-            if matches_query(record_dict, parsed):
-                artifacts = [
-                    ArtifactRef.from_dict(a)
-                    for a in record_dict.get("artifacts", [])
-                    if isinstance(a, dict)
-                ]
-                results.append(RunRecord(record=record_dict, artifacts=artifacts))
+        def sort_key(rec: RunRecord) -> Any:
+            found, val = _resolve_field(rec.record, sort_by)
+            if not found or val is None:
+                return (1, 0)
+            try:
+                return (0, float(val))
+            except (ValueError, TypeError):
+                return (0, str(val))
 
-        # Sort
-        if sort_by:
-
-            def sort_key(rec: RunRecord) -> Any:
-                found, val = _resolve_field(rec.record, sort_by)
-                if not found or val is None:
-                    return (1, 0)
-                try:
-                    return (0, float(val))
-                except (ValueError, TypeError):
-                    return (0, str(val))
-
-            results.sort(key=sort_key, reverse=descending)
-        else:
-            results.sort(
-                key=lambda r: r.record.get("created_at", ""),
-                reverse=descending,
-            )
-
-        # Apply limit/offset
-        return results[offset : offset + limit]
+        all_matches.sort(key=sort_key, reverse=descending)
+        return all_matches[offset : offset + limit]
 
     def list_groups(
         self,
@@ -912,64 +1136,54 @@ class S3Registry:
         project : str, optional
             Filter by project.
         limit : int
-            Maximum groups to return.
+            Maximum groups to return. Default is 100.
         offset : int
-            Number of groups to skip.
+            Number of groups to skip. Default is 0.
 
         Returns
         -------
         list of dict
             Group summaries with group_id, group_name, run_count, first_run, last_run.
         """
-        groups: Dict[str, Dict[str, Any]] = {}
+        conditions: List[str] = ["group_id IS NOT NULL"]
+        params: List[Any] = []
 
-        for run_id in self._iter_run_ids():
-            try:
-                record = self._load_dict(run_id)
-            except Exception:
-                continue
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
 
-            # Apply project filter
-            if project:
-                proj = record.get("project", {})
-                proj_name = (
-                    proj.get("name", "") if isinstance(proj, dict) else str(proj)
-                )
-                if proj_name != project:
-                    continue
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        params.extend([limit, offset])
 
-            group_id = record.get("group_id")
-            if not group_id:
-                continue
+        with self._get_index_connection() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT group_id,
+                       MAX(group_name) as group_name,
+                       project,
+                       COUNT(*) as run_count,
+                       MIN(created_at) as first_run,
+                       MAX(created_at) as last_run
+                FROM runs
+                {where_clause}
+                GROUP BY project, group_id
+                ORDER BY last_run DESC
+                LIMIT ? OFFSET ?
+                """,
+                params,
+            ).fetchall()
 
-            # Extract project name for storage
-            proj = record.get("project", {})
-            proj_name = proj.get("name", "") if isinstance(proj, dict) else str(proj)
-
-            if group_id not in groups:
-                groups[group_id] = {
-                    "group_id": group_id,
-                    "group_name": record.get("group_name"),
-                    "project": proj_name,
-                    "run_count": 0,
-                    "first_run": record.get("created_at", ""),
-                    "last_run": record.get("created_at", ""),
-                }
-
-            groups[group_id]["run_count"] += 1
-            created = record.get("created_at", "")
-            if created < groups[group_id]["first_run"]:
-                groups[group_id]["first_run"] = created
-            if created > groups[group_id]["last_run"]:
-                groups[group_id]["last_run"] = created
-
-        # Sort by last_run descending
-        result = sorted(
-            groups.values(),
-            key=lambda g: g["last_run"],
-            reverse=True,
-        )
-        return result[offset : offset + limit]
+        return [
+            {
+                "group_id": row["group_id"],
+                "group_name": row["group_name"],
+                "project": row["project"],
+                "run_count": row["run_count"],
+                "first_run": row["first_run"],
+                "last_run": row["last_run"],
+            }
+            for row in rows
+        ]
 
     def list_runs_in_group(
         self,
@@ -986,9 +1200,9 @@ class S3Registry:
         group_id : str
             Group identifier.
         limit : int
-            Maximum results.
+            Maximum results. Default is 100.
         offset : int
-            Results to skip.
+            Results to skip. Default is 0.
 
         Returns
         -------
@@ -1009,14 +1223,28 @@ class S3Registry:
             Run identifier to set as baseline.
         """
         key = self._baseline_key(project)
-        data = json.dumps(
-            {
-                "project": project,
-                "run_id": run_id,
-                "set_at": utc_now_iso(),
-            }
-        ).encode("utf-8")
+        baseline_data = {
+            "project": project,
+            "run_id": run_id,
+            "set_at": utc_now_iso(),
+        }
+        data = json.dumps(baseline_data).encode("utf-8")
         self._client.put_object(Bucket=self.bucket, Key=key, Body=data)
+
+        # Update local index
+        with self._get_index_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO baselines (project, run_id, set_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(project) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    set_at = excluded.set_at
+                """,
+                (project, run_id, baseline_data["set_at"]),
+            )
+
+        logger.info("Set baseline for %s: %s", project, run_id)
 
     def get_baseline(self, project: str) -> BaselineInfo | None:
         """
@@ -1032,6 +1260,20 @@ class S3Registry:
         BaselineInfo or None
             Baseline info if set, else None.
         """
+        # Try local index first
+        with self._get_index_connection() as conn:
+            row = conn.execute(
+                "SELECT project, run_id, set_at FROM baselines WHERE project = ?",
+                (project,),
+            ).fetchone()
+            if row:
+                return BaselineInfo(
+                    project=row["project"],
+                    run_id=row["run_id"],
+                    set_at=row["set_at"],
+                )
+
+        # Fall back to S3
         from botocore.exceptions import ClientError
 
         key = self._baseline_key(project)
@@ -1063,7 +1305,34 @@ class S3Registry:
         key = self._baseline_key(project)
         try:
             self._client.head_object(Bucket=self.bucket, Key=key)
-            self._client.delete_object(Bucket=self.bucket, Key=key)
-            return True
         except ClientError:
             return False
+
+        self._client.delete_object(Bucket=self.bucket, Key=key)
+
+        # Remove from local index
+        with self._get_index_connection() as conn:
+            conn.execute("DELETE FROM baselines WHERE project = ?", (project,))
+
+        logger.info("Cleared baseline for %s", project)
+        return True
+
+    def sync_index(self) -> None:
+        """
+        Manually synchronize local index with S3.
+
+        Call this if you suspect the index is out of sync, e.g., after
+        external modifications to S3.
+        """
+        self._sync_index()
+
+    def close(self) -> None:
+        """
+        Close the thread-local index database connection.
+
+        This is optional - connections are automatically closed when
+        the thread terminates.
+        """
+        if hasattr(self._local, "conn") and self._local.conn is not None:
+            self._local.conn.close()
+            self._local.conn = None

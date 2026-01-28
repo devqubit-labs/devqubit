@@ -21,6 +21,8 @@ import os
 import re
 import sqlite3
 import tempfile
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -356,7 +358,8 @@ class LocalRegistry:
     SQLite-backed run registry.
 
     Provides efficient storage and querying of run metadata with
-    indexed fields for common query patterns.
+    indexed fields for common query patterns. Uses thread-local
+    connection pooling for better performance.
 
     Parameters
     ----------
@@ -371,17 +374,18 @@ class LocalRegistry:
         self.root.mkdir(parents=True, exist_ok=True)
         self.db_path = self.root / "registry.db"
         self._timeout = timeout
+        self._local = threading.local()
         self._init_db()
         logger.debug("LocalRegistry initialized at %s", self.db_path)
 
-    def _get_connection(self) -> sqlite3.Connection:
+    def _create_connection(self) -> sqlite3.Connection:
         """
-        Get a database connection with standard settings.
+        Create a new database connection with standard settings.
 
         Returns
         -------
         sqlite3.Connection
-            Connection with row_factory set to sqlite3.Row.
+            New connection with row_factory set to sqlite3.Row.
         """
         conn = sqlite3.connect(self.db_path, timeout=self._timeout)
         conn.row_factory = sqlite3.Row
@@ -389,6 +393,28 @@ class LocalRegistry:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
         return conn
+
+    @contextmanager
+    def _get_connection(self):
+        """
+        Get a thread-local database connection.
+
+        Uses connection pooling per thread for better performance.
+        Connections are reused within the same thread.
+
+        Yields
+        ------
+        sqlite3.Connection
+            Database connection.
+        """
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            self._local.conn = self._create_connection()
+        try:
+            yield self._local.conn
+            self._local.conn.commit()
+        except Exception:
+            self._local.conn.rollback()
+            raise
 
     def _init_db(self) -> None:
         """Initialize database schema."""
@@ -1144,6 +1170,17 @@ class LocalRegistry:
             return True
         return False
 
+    def close(self) -> None:
+        """
+        Close the thread-local database connection if open.
+
+        This is optional - connections are automatically closed when
+        the thread terminates.
+        """
+        if hasattr(self._local, "conn") and self._local.conn is not None:
+            self._local.conn.close()
+            self._local.conn = None
+
 
 class LocalWorkspace:
     """
@@ -1196,8 +1233,8 @@ class LocalWorkspace:
         return self._registry
 
     def close(self) -> None:
-        """Close the workspace (no-op for local storage)."""
-        pass
+        """Close the workspace and release resources."""
+        self._registry.close()
 
     def __enter__(self) -> LocalWorkspace:
         """Enter context manager."""
