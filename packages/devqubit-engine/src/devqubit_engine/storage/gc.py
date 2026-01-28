@@ -64,8 +64,9 @@ def _collect_referenced_digests(
     registry: RegistryProtocol,
     *,
     project: str | None = None,
+    max_runs: int | None = None,
     errors: list[str] | None = None,
-) -> set[str]:
+) -> tuple[set[str], int]:
     """
     Collect all artifact digests referenced by runs.
 
@@ -75,23 +76,35 @@ def _collect_referenced_digests(
         Run registry.
     project : str, optional
         Limit to specific project.
+    max_runs : int, optional
+        Maximum number of runs to scan. None means no limit.
     errors : list of str, optional
         List to append error messages to.
 
     Returns
     -------
-    set of str
-        All referenced digests.
+    tuple of (set of str, int)
+        Tuple of (referenced digests, runs scanned count).
     """
     referenced: set[str] = set()
+    runs_scanned = 0
 
-    # Paginate through all runs
+    # Paginate through runs
     offset = 0
     batch_size = 100
 
     while True:
+        # Check max_runs limit
+        if max_runs is not None and runs_scanned >= max_runs:
+            break
+
+        # Adjust batch size if approaching limit
+        remaining = batch_size
+        if max_runs is not None:
+            remaining = min(batch_size, max_runs - runs_scanned)
+
         summaries = registry.list_runs(
-            limit=batch_size,
+            limit=remaining,
             offset=offset,
             project=project,
         )
@@ -106,22 +119,34 @@ def _collect_referenced_digests(
                 if record.artifacts is None:
                     if errors is not None:
                         errors.append(f"Run {run_id}: artifacts is None")
+                    runs_scanned += 1
                     continue
 
                 for art in record.artifacts:
                     if art.digest.startswith("sha256:"):
                         referenced.add(art.digest)
 
+                runs_scanned += 1
+
             except Exception as e:
                 if errors is not None:
                     errors.append(f"Run {run_id}: failed to load: {e}")
                 logger.warning("Failed to load run %s: %s", run_id, e)
+                runs_scanned += 1
                 continue
 
         offset += len(summaries)
 
-    logger.debug("Collected %d referenced digests from runs", len(referenced))
-    return referenced
+        # If we got fewer results than requested, we've reached the end
+        if len(summaries) < remaining:
+            break
+
+    logger.debug(
+        "Collected %d referenced digests from %d runs",
+        len(referenced),
+        runs_scanned,
+    )
+    return referenced, runs_scanned
 
 
 def gc_plan(
@@ -129,12 +154,14 @@ def gc_plan(
     registry: RegistryProtocol,
     *,
     project: str | None = None,
+    max_runs: int | None = None,
+    max_objects: int | None = None,
 ) -> GCStats:
     """
     Plan garbage collection without deleting anything.
 
-    Scans all runs to find referenced objects, then identifies
-    orphaned objects that could be safely deleted.
+    Scans runs to find referenced objects, then identifies orphaned
+    objects that could be safely deleted.
 
     Parameters
     ----------
@@ -144,6 +171,11 @@ def gc_plan(
         Run registry.
     project : str, optional
         Limit scan to a specific project.
+    max_runs : int, optional
+        Maximum number of runs to scan. Useful for large registries
+        to limit the operation duration.
+    max_objects : int, optional
+        Maximum number of objects to check. Useful for large stores.
 
     Returns
     -------
@@ -161,14 +193,20 @@ def gc_plan(
     stats = GCStats()
 
     # Collect referenced digests
-    referenced = _collect_referenced_digests(
-        registry, project=project, errors=stats.errors
+    referenced, runs_scanned = _collect_referenced_digests(
+        registry, project=project, max_runs=max_runs, errors=stats.errors
     )
     stats.referenced_objects = len(referenced)
-    stats.runs_scanned = registry.count_runs(project=project)
+    stats.runs_scanned = runs_scanned
 
     # Find unreferenced objects
+    objects_checked = 0
     for digest in store.list_digests():
+        if max_objects is not None and objects_checked >= max_objects:
+            break
+
+        objects_checked += 1
+
         if digest not in referenced:
             stats.unreferenced_objects += 1
             try:
@@ -177,10 +215,12 @@ def gc_plan(
                 pass
 
     logger.info(
-        "GC plan: %d referenced, %d orphaned, %d bytes reclaimable",
+        "GC plan: %d referenced, %d orphaned, %d bytes reclaimable (scanned %d runs, %d objects)",
         stats.referenced_objects,
         stats.unreferenced_objects,
         stats.bytes_reclaimable,
+        stats.runs_scanned,
+        objects_checked,
     )
 
     return stats
@@ -191,6 +231,8 @@ def gc_run(
     registry: RegistryProtocol,
     *,
     project: str | None = None,
+    max_runs: int | None = None,
+    max_objects: int | None = None,
     dry_run: bool = True,
 ) -> GCStats:
     """
@@ -204,6 +246,10 @@ def gc_run(
         Run registry.
     project : str, optional
         Limit to a specific project.
+    max_runs : int, optional
+        Maximum number of runs to scan for references.
+    max_objects : int, optional
+        Maximum number of objects to process.
     dry_run : bool, optional
         If True (default), only report what would be deleted without
         actually deleting anything.
@@ -227,16 +273,22 @@ def gc_run(
     stats = GCStats()
 
     # Collect referenced digests
-    referenced = _collect_referenced_digests(
-        registry, project=project, errors=stats.errors
+    referenced, runs_scanned = _collect_referenced_digests(
+        registry, project=project, max_runs=max_runs, errors=stats.errors
     )
     stats.referenced_objects = len(referenced)
-    stats.runs_scanned = registry.count_runs(project=project)
+    stats.runs_scanned = runs_scanned
 
     # Find and optionally delete unreferenced objects
     to_delete: list[tuple[str, int]] = []  # (digest, size)
+    objects_checked = 0
 
     for digest in store.list_digests():
+        if max_objects is not None and objects_checked >= max_objects:
+            break
+
+        objects_checked += 1
+
         if digest not in referenced:
             stats.unreferenced_objects += 1
             try:
@@ -300,6 +352,7 @@ def prune_runs(
     status: str | None = None,
     older_than_days: int | None = None,
     keep_latest: int = 10,
+    max_runs: int | None = None,
     dry_run: bool = True,
 ) -> PruneStats:
     """
@@ -318,6 +371,9 @@ def prune_runs(
     keep_latest : int, optional
         Always keep at least this many runs per project, regardless
         of age or status. Default is 10.
+    max_runs : int, optional
+        Maximum number of runs to scan. Useful for very large registries.
+        Default is None (scan all).
     dry_run : bool, optional
         If True (default), only report what would be pruned without
         actually deleting anything.
@@ -344,11 +400,12 @@ def prune_runs(
     ... )
     """
     logger.info(
-        "Pruning runs (project=%s, status=%s, older_than=%s days, keep=%d, dry_run=%s)",
+        "Pruning runs (project=%s, status=%s, older_than=%s days, keep=%d, max_runs=%s, dry_run=%s)",
         project,
         status,
         older_than_days,
         keep_latest,
+        max_runs,
         dry_run,
     )
 
@@ -357,13 +414,28 @@ def prune_runs(
     if keep_latest < 0:
         raise ValueError(f"keep_latest must be >= 0, got {keep_latest}")
 
-    # Get runs to consider
-    summaries = registry.list_runs(
-        limit=10000,  # Reasonable max for MVP
-        project=project,
-        status=status,
-    )
-    stats.runs_scanned = len(summaries)
+    # Get runs to consider with pagination
+    all_summaries: list[RunSummary] = []
+    offset = 0
+    batch_size = 500
+    scan_limit = max_runs if max_runs is not None else float("inf")
+
+    while len(all_summaries) < scan_limit:
+        remaining = min(batch_size, int(scan_limit - len(all_summaries)))
+        summaries = registry.list_runs(
+            limit=remaining,
+            offset=offset,
+            project=project,
+            status=status,
+        )
+        if not summaries:
+            break
+        all_summaries.extend(summaries)
+        offset += len(summaries)
+        if len(summaries) < remaining:
+            break
+
+    stats.runs_scanned = len(all_summaries)
 
     # Calculate age cutoff
     cutoff: datetime | None = None
@@ -372,7 +444,7 @@ def prune_runs(
 
     # Group by project for keep_latest logic
     by_project: dict[str, list[RunSummary]] = {}
-    for s in summaries:
+    for s in all_summaries:
         proj = s.get("project", "")
         by_project.setdefault(proj, []).append(s)
 
@@ -418,6 +490,9 @@ def prune_runs(
 def check_workspace_health(
     store: ObjectStoreProtocol,
     registry: RegistryProtocol,
+    *,
+    max_runs: int | None = None,
+    max_objects: int | None = None,
 ) -> dict[str, Any]:
     """
     Check workspace health and return diagnostics.
@@ -435,14 +510,18 @@ def check_workspace_health(
         Object store to check.
     registry : RegistryProtocol
         Run registry to check.
+    max_runs : int, optional
+        Maximum number of runs to scan. Useful for large registries.
+    max_objects : int, optional
+        Maximum number of objects to check. Useful for large stores.
 
     Returns
     -------
     dict
         Health report containing:
 
-        - ``total_runs``: Number of runs in registry
-        - ``total_objects``: Number of objects in store
+        - ``total_runs``: Number of runs in registry (scanned)
+        - ``total_objects``: Number of objects in store (scanned)
         - ``referenced_objects``: Number of objects referenced by runs
         - ``orphaned_objects``: Number of unreferenced objects
         - ``missing_objects``: Number of referenced but missing objects
@@ -450,6 +529,7 @@ def check_workspace_health(
         - ``status_counts``: Dict of status -> count
         - ``errors``: List of error messages
         - ``healthy``: True if no missing objects and no errors
+        - ``limited``: True if scan was limited by max_runs/max_objects
 
     Examples
     --------
@@ -463,10 +543,14 @@ def check_workspace_health(
     """
     logger.info("Checking workspace health")
 
-    # Collect all objects in store
+    # Collect all objects in store (with optional limit)
     all_objects: set[str] = set()
+    objects_scanned = 0
     for digest in store.list_digests():
+        if max_objects is not None and objects_scanned >= max_objects:
+            break
         all_objects.add(digest)
+        objects_scanned += 1
 
     # Scan runs for references
     referenced: set[str] = set()
@@ -477,9 +561,11 @@ def check_workspace_health(
     offset = 0
     batch_size = 100
     total_runs = 0
+    runs_limit = max_runs if max_runs is not None else float("inf")
 
-    while True:
-        summaries = registry.list_runs(limit=batch_size, offset=offset)
+    while total_runs < runs_limit:
+        remaining = min(batch_size, int(runs_limit - total_runs))
+        summaries = registry.list_runs(limit=remaining, offset=offset)
         if not summaries:
             break
 
@@ -506,8 +592,13 @@ def check_workspace_health(
                 continue
 
         offset += len(summaries)
+        if len(summaries) < remaining:
+            break
 
     orphaned = all_objects - referenced
+    limited = (max_runs is not None and total_runs >= max_runs) or (
+        max_objects is not None and objects_scanned >= max_objects
+    )
 
     health = {
         "total_runs": total_runs,
@@ -519,6 +610,7 @@ def check_workspace_health(
         "status_counts": status_counts,
         "errors": errors,
         "healthy": len(missing) == 0 and len(errors) == 0,
+        "limited": limited,
     }
 
     if health["healthy"]:
