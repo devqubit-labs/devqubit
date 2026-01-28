@@ -141,11 +141,14 @@ devqubit ui
 ```
 
 <p align="center">
-  <img src="docs/assets/ui_runs.png" alt="Runs list" width="45%"/>
+  <a href="docs/assets/ui_runs.png">
+    <img src="docs/assets/ui_runs.png" alt="Runs list" width="45%"/>
+  </a>
   &nbsp;&nbsp;
-  <img src="docs/assets/ui_run_view.png" alt="Run comparison" width="45%"/>
+  <a href="docs/assets/ui_run_view.png">
+    <img src="docs/assets/ui_run_view.png" alt="Run comparison" width="45%"/>
+  </a>
 </p>
-
 
 Browse runs, view artifacts, compare experiments, and manage baselines.
 
