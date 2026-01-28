@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-ui"
-version = "0.1.8"
+version = "0.1.9"
 description = "Web interface for devqubit experiment tracking"
 readme = "README.md"
 license = "Apache-2.0"
@@ -27,7 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "devqubit-engine>=0.1.8,<0.2.0",
+    "devqubit-engine>=0.1.9,<0.2.0",
     "fastapi>=0.128.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",

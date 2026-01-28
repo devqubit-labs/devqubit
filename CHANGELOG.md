@@ -8,6 +8,14 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.9](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.9) - 2026-01-28
+
+#### Added
+- Add run deletion from UI via detail page modal or inline table buttons. ([#37](https://github.com/devqubit-labs/devqubit/pull/37))
+
+#### Changed
+- Optimized storage backends for scale (S3/GCS local index, SQLite connection pooling, GC pagination). ([#38](https://github.com/devqubit-labs/devqubit/pull/38))
+
 ## [0.1.8](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.8) - 2026-01-25
 
 #### Added
