@@ -6,7 +6,7 @@
 
 # devqubit
 
-**Local-first experiment tracking for quantum computing.** Capture circuits, backend context, and configuration so runs are reproducible, comparable, and easy to share.
+**Local-first experiment tracking for quantum computing.** Capture circuits, backend state, and configuration — runs are reproducible, comparable, and easy to share. Access your data via Python API, CLI, or Web UI.
 
 > **Status:** Alpha – APIs may evolve in `0.x` releases.
 
@@ -16,23 +16,23 @@ General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great fo
 
 | Challenge | MLflow / W&B / DVC | devqubit |
 |-----------|-------------------|----------|
-| **Circuit artifacts** | Generic file logging | Automatic OpenQASM 3, and SDK-native formats (first-class) |
-| **Device context** | Must be done manually | Automatic backend snapshots, calibration/noise context (first-class) |
-| **Reproducibility** | Depends on what you choose to log | Automatic program + device + execution fingerprints to detect what changed |
-| **Result comparison** | Metric/table-oriented comparisons | Distribution/structural/drift-aware diffs |
-| **Noise-aware verification** | Require custom logic | Configurable policies with noise tolerance |
-| **Portable sharing** | Artifact/version workflows exist | Self-contained run bundles (manifest + SHA-256 digests) |
+| **Circuit artifacts** | manual file logging | OpenQASM 3 + SDK-native formats (automatic) |
+| **Device context** | manual | backend snapshots, calibration/noise context (automatic) |
+| **Reproducibility** | depends on what you log | "program + device + config fingerprints (automatic)" |
+| **Result comparison** | metric/table-oriented comparisons | distribution/structural/drift-aware diffs |
+| **Noise-aware verification** | requires custom logic | configurable policies with noise tolerance |
+| **Portable sharing** | artifact/version workflows exist | self-contained run bundles (manifest + SHA-256 digests) |
 
-**devqubit is quantum-first:** the same circuit on different backends (or the same backend on different days) can produce different distributions - devqubit helps you track *why*.
+**devqubit is quantum-first:** same circuit, same backend, different day — different results. **devqubit** helps you track *why*.
 
 ## Features
 
-- **Automatic circuit capture** – QPY, OpenQASM 3, and native SDK formats
-- **SDK adapters** – Qiskit, Qiskit Runtime, Amazon Braket, Cirq, PennyLane
+- **Automatic circuit capture** – QPY, OpenQASM 3, SDK-native formats
+- **Multi-SDK support** – Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane
 - **Content-addressable storage** – deduplicated artifacts with SHA-256 digests
-- **Reproducibility fingerprints** – detect changes in program, device, or configuration
-- **Run comparison** – TVD analysis, structural diff, drift detection
-- **CI/CD verification** – verify runs against baselines with configurable policies
+- **Reproducibility fingerprints** – detect changes in program, device, or config
+- **Run comparison** – TVD analysis, structural diff, calibration drift
+- **CI/CD verification** – baselines with configurable noise-aware policies
 - **Portable bundles** – export/import runs as self-contained ZIPs
 
 ## Documentation
