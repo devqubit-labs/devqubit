@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}Group {{ group_id | short_id }} - devqubit{% endblock %}
+{% block title %}Group {{ group_id | short_id }} · devqubit{% endblock %}
 
 {% block content %}
 <div class="page-header">
     <div>
         <h1 class="page-title">Group <span class="font-mono">{{ group_id | short_id }}</span></h1>
-        <p class="text-muted text-sm">{{ group_id }}</p>
+        <p class="text-muted text-sm font-mono">{{ group_id }}</p>
     </div>
 </div>
 
@@ -19,7 +19,7 @@
         <thead>
             <tr>
                 <th>Run ID</th>
-                <th>Run Name</th>
+                <th>Name</th>
                 <th>Project</th>
                 <th>Status</th>
                 <th>Created</th>
@@ -28,7 +28,7 @@
         </thead>
         <tbody>
             {% for run in runs %}
-            <tr>
+            <tr id="run-row-{{ run.run_id }}">
                 <td>
                     <a href="/runs/{{ run.run_id }}" class="font-mono">
                         {{ run.run_id | short_id }}
@@ -41,13 +41,25 @@
                     <span class="badge badge-success">{{ run.status }}</span>
                     {% elif run.status == 'FAILED' %}
                     <span class="badge badge-danger">{{ run.status }}</span>
+                    {% elif run.status == 'RUNNING' %}
+                    <span class="badge badge-warning">{{ run.status }}</span>
                     {% else %}
                     <span class="badge badge-gray">{{ run.status }}</span>
                     {% endif %}
                 </td>
                 <td class="text-muted">{{ run.created_at | ago }}</td>
                 <td>
-                    <a href="/runs/{{ run.run_id }}" class="btn btn-sm btn-secondary">View</a>
+                    <div class="flex gap-1">
+                        <a href="/runs/{{ run.run_id }}" class="btn btn-sm btn-secondary">View</a>
+                        <button hx-delete="/api/runs/{{ run.run_id }}"
+                                hx-confirm="Delete run {{ run.run_id | short_id }}? This cannot be undone."
+                                hx-target="#run-row-{{ run.run_id }}"
+                                hx-swap="delete"
+                                class="btn btn-sm btn-ghost-danger"
+                                title="Delete run">
+                            Delete
+                        </button>
+                    </div>
                 </td>
             </tr>
             {% endfor %}
