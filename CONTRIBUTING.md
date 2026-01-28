@@ -1,49 +1,41 @@
 # Contributing to devqubit
 
-Thanks for your interest in contributing to **devqubit**! This guide keeps contributions easy, safe, and predictable.
+Thanks for your interest in devqubit! 🎉
 
-- Please follow our community rules in **CODE_OF_CONDUCT.md**.
-- For security issues, **do not** open a public issue (see [Security](#security)).
-- Questions / support: prefer **GitHub Discussions** (Issues are for actionable bugs/requests).
+Whether it's a typo fix, bug report, new adapter, or a wild feature idea — we appreciate it all. This guide will get you set up quickly.
 
-## Project tooling
+- Follow our community standards in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- For security issues, **do not** open a public issue — see [Security](#security)
+- Questions or support: use [GitHub Discussions](https://github.com/devqubit-labs/devqubit/discussions) (Issues are for actionable bugs/requests)
 
-This repository uses:
+## Where to start?
 
-- **uv** for dependency management and **workspaces** (monorepo)
-- **pre-commit** for formatting/linting and repository hygiene checks
-- **pytest** for tests
-- **towncrier** for changelog fragments (only for user-facing changes)
-
-CI runs:
-- `pre-commit` (lint/format)
-- `pytest` on multiple Python versions (matrix)
-
+- Browse [open issues](https://github.com/devqubit-labs/devqubit/issues) for bugs or feature requests
+- Propose an idea or ask questions in [Discussions](https://github.com/devqubit-labs/devqubit/discussions)
+- Pick anything that interests you — even small fixes matter
 ## Quickstart
 
 ```bash
 git clone https://github.com/devqubit-labs/devqubit.git
 cd devqubit
 
-# Create/update .venv and install the workspace environment from uv.lock.
-# --all-packages installs all workspace members.
-# dev dependencies are synced by default (unless you opt out
+# Install all workspace packages
 uv sync --locked --all-packages
 
-# OPTIONAL: install all extras (optional dependencies) as well
+# (Optional) Include all extras (adapters, UI, etc.)
 uv sync --locked --all-packages --all-extras
 
 # Install git hooks (required)
 uv run pre-commit install
 
-# Run checks + tests (this should match CI)
+# Run checks and tests
 uv run pre-commit run --all-files
 uv run pytest
 ```
 
-### Faster local setup (optional)
+### Minimal setup (faster)
 
-If you only want the core packages and want to avoid heavy adapter/UI dependencies:
+If you only need core packages without heavy adapter/UI dependencies:
 
 ```bash
 uv sync --locked --all-packages
@@ -53,107 +45,80 @@ uv run pytest
 ## Prerequisites
 
 - Git
-- A supported Python version (see `requires-python` in `pyproject.toml`)
-- uv (installation docs): https://docs.astral.sh/uv/getting-started/installation/
+- Python (see `requires-python` in `pyproject.toml` for supported versions)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-## Workspace (monorepo) notes
+## Project structure
 
-This repo is a **uv workspace** (multiple packages managed together). By default:
-
-- `uv sync --all-packages` installs the workspace root and all workspace members.
-- `uv run <cmd>` runs a command inside the workspace virtual environment.
-
-Run commands against a specific workspace member (optional):
-
-```bash
-uv run --package <PACKAGE_NAME> <command>
+```
+devqubit/                    # Metapackage (re-exports from engine)
+packages/
+├── devqubit-engine/         # Core: tracking, storage, comparison, CLI
+├── devqubit-ui/             # FastAPI web interface
+├── devqubit-qiskit/         # Qiskit adapter
+├── devqubit-qiskit-runtime/ # IBM Runtime adapter
+├── devqubit-braket/         # Amazon Braket adapter
+├── devqubit-cirq/           # Google Cirq adapter
+└── devqubit-pennylane/      # PennyLane adapter
 ```
 
-Examples:
+## Project tooling
+
+| Tool | Purpose |
+|------|---------|
+| **uv** | Dependency management, workspaces (monorepo) |
+| **pre-commit** | Formatting, linting, repo hygiene |
+| **pytest** | Testing |
+| **towncrier** | Changelog generation |
+
+CI runs `pre-commit` and `pytest` across multiple Python versions.
+
+## Workspace (monorepo)
+
+This repo uses **uv workspaces** — multiple packages managed together.
 
 ```bash
+# Install all packages
+uv sync --all-packages
+
+# Run command in workspace environment
+uv run <cmd>
+
+# Run command for a specific package
 uv run --package devqubit-engine pytest
 uv run --package devqubit-engine python -m devqubit --help
 ```
 
-## Pre-commit (required)
+## Pre-commit hooks
 
-Install the git hook (runs on every commit):
+Pre-commit is **required**. Install once:
 
 ```bash
 uv run pre-commit install
 ```
 
-Run all hooks manually (this should match CI):
+Run manually (matches CI):
 
 ```bash
 uv run pre-commit run --all-files
 ```
 
-Run a single hook or file:
+Run a specific hook:
 
 ```bash
 uv run pre-commit run <hook_id> --files path/to/file.py
 ```
 
-## Changelog (towncrier) — only for user-facing changes
-
-We keep `CHANGELOG.md` generated by **towncrier** from fragments in `changelog.d/`.
-
-### When to add a fragment
-
-Add a fragment **only** if the change is user-facing, for example:
-
-- New API/CLI features or options
-- Behavior changes (including breaking changes)
-- Bug fixes that users would notice
-- Deprecations / removals
-- Security fixes
-
-Do **not** add a fragment for internal refactors, tests, CI, formatting-only changes, etc.
-
-### Where to put it
-
-Fragments go in `changelog.d/` with the type in the filename:
-
-- `changelog.d/<PR_NUMBER>.<type>.md` (e.g. `changelog.d/123.fixed.md`)
-- For orphan fragments: `changelog.d/+<description>.<type>.md` (e.g. `changelog.d/+workspace-selector.added.md`)
-
-Available types: `added`, `changed`, `fixed`, `deprecated`, `removed`, `security`
-
-Keep fragments short (1–3 lines) and user-facing (what changed for the user, not how it was implemented).
-
-### Validating fragments (optional)
-
-If you added fragments, you can validate them locally:
-
-```bash
-uv run towncrier build --draft
-```
-
-### Building the changelog for a version
-
-To generate CHANGELOG.md with a specific version heading (and consume/remove the used fragments from changelog.d/), run:
-
-```bash
-uv run towncrier build --version <VERSION>
-```
-
 ## Running tests
 
-Run the full test suite:
-
 ```bash
+# Full suite
 uv run pytest
-```
 
-Useful variants:
-
-```bash
-# stop on first failure
+# Stop on first failure
 uv run pytest -x
 
-# run a single file or test
+# Single file or test
 uv run pytest path/to/test_file.py
 uv run pytest -k test_name_substring
 ```
@@ -162,71 +127,95 @@ uv run pytest -k test_name_substring
 
 ### Branching
 
-Create a branch from `main`:
+Branch from `main`:
 
-- `feat/<short-description>` for features
-- `fix/<short-description>` for bug fixes
-- `docs/<short-description>` for documentation changes
+- `feat/<short-description>` — features
+- `fix/<short-description>` — bug fixes
+- `docs/<short-description>` — documentation
 
-### Pull requests
+### Pull request checklist
 
-Keep PRs focused and small when possible. If a change is large, split it into incremental PRs.
+Before requesting review:
 
-**Before requesting review, ensure:**
+- [ ] `uv run pre-commit run --all-files` passes
+- [ ] `uv run pytest` passes
+- [ ] New/changed behavior is covered by tests
+- [ ] User-facing changes include a changelog fragment
+- [ ] User-facing changes are documented (README/docs/examples)
 
-- `uv run pre-commit run --all-files` passes
-- `uv run pytest` passes
-- New/changed behavior is covered by tests
-- User-facing changes include a towncrier fragment in `changelog.d/`
-- User-facing changes are documented (README/docs/examples) when applicable
+### Code style
 
-### Style and compatibility
+- Prefer clear, readable code over clever code
+- Avoid breaking public APIs without discussion
+- Keep changes compatible with supported Python versions
 
-- Prefer clear, readable code over clever code.
-- Avoid breaking public APIs without discussion.
-- Keep changes compatible with the supported Python versions in `pyproject.toml`.
+## Changelog (towncrier)
 
-## Adding or updating dependencies
+We generate `CHANGELOG.md` from fragments in `changelog.d/`.
 
-If you change dependencies:
+### When to add a fragment
 
-1. Update the relevant `pyproject.toml` (or use `uv add` / `uv remove`)
-2. Update the lockfile and re-sync:
+Add a fragment **only** for user-facing changes:
+
+- New API/CLI features
+- Behavior changes (including breaking)
+- Bug fixes users would notice
+- Deprecations, removals
+- Security fixes
+
+**Skip** for: internal refactors, tests, CI, formatting.
+
+### Fragment format
+
+```
+changelog.d/<PR_NUMBER>.<type>.md
+changelog.d/+<description>.<type>.md  # orphan (no PR yet)
+```
+
+Types: `added`, `changed`, `fixed`, `deprecated`, `removed`, `security`
+
+Keep fragments short (1–3 lines), user-focused.
+
+### Validate locally
 
 ```bash
+uv run towncrier build --draft
+```
+
+## Dependencies
+
+When changing dependencies:
+
+```bash
+# Update pyproject.toml (or use uv add / uv remove)
 uv lock
 uv sync --locked --all-packages
 ```
 
-If you want to upgrade locked versions:
+Upgrade all locked versions:
 
 ```bash
 uv lock --upgrade
 uv sync --locked --all-packages
 ```
 
-Tip: If `uv sync --locked` fails, it usually means uv.lock is out of date - run `uv lock` and commit the updated lockfile.
-
-## Documentation
-
-- If your change affects the CLI, update help text, docs, or examples.
-- If your change affects the output format (bundles/artifacts), document it clearly and add tests.
+> **Tip:** If `uv sync --locked` fails, run `uv lock` and commit the updated lockfile.
 
 ## Reporting bugs
 
-When filing a bug report, please include:
+Include:
 
-- What you expected vs what happened
-- Your OS and Python version
-- devqubit version / git commit
-- A minimal reproduction (ideally a small snippet or command)
+- What you expected vs. what happened
+- OS and Python version
+- devqubit version or git commit
+- Minimal reproduction (code snippet or command)
 
 ## Security
 
-Please do **not** report security vulnerabilities via public GitHub issues.
+**Do not** report security vulnerabilities via public GitHub issues.
 
-Use GitHub “Report a vulnerability” (Private Vulnerability Reporting).
+Use GitHub's [Private Vulnerability Reporting](https://github.com/devqubit-labs/devqubit/security/advisories/new).
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the project’s license (Apache-2.0), unless explicitly stated otherwise.
+By contributing, you agree that your contributions are licensed under [Apache-2.0](LICENSE).

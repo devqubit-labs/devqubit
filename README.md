@@ -1,4 +1,4 @@
-[![CI](https://github.com/devqubit-labs/devqubit/actions/workflows/ci.yaml/badge.svg?branch=main)](...)
+[![CI](https://github.com/devqubit-labs/devqubit/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/devqubit-labs/devqubit/actions/workflows/ci.yaml)
 [![PyPI](https://img.shields.io/pypi/v/devqubit)](https://pypi.org/project/devqubit/)
 [![Python](https://img.shields.io/pypi/pyversions/devqubit)](https://pypi.org/project/devqubit/)
 [![Docs](https://readthedocs.org/projects/devqubit/badge/?version=latest)](https://devqubit.readthedocs.io)
@@ -8,40 +8,40 @@
 
 **Local-first experiment tracking for quantum computing.** Capture circuits, backend state, and configuration — runs are reproducible, comparable, and easy to share. Access your data via Python API, CLI, or Web UI.
 
-> **Status:** Alpha – APIs may evolve in `0.x` releases.
+> **Status:** Alpha — APIs may evolve in `0.x` releases.
 
 ## Why devqubit?
 
-General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads often need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
+General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
 
 | Challenge | MLflow / W&B / DVC | devqubit |
 |-----------|-------------------|----------|
 | **Circuit artifacts** | manual file logging | OpenQASM 3 + SDK-native formats (automatic) |
 | **Device context** | manual | backend snapshots, calibration/noise context (automatic) |
-| **Reproducibility** | depends on what you log | "program + device + config fingerprints (automatic)" |
-| **Result comparison** | metric/table-oriented comparisons | distribution/structural/drift-aware diffs |
+| **Reproducibility** | depends on what you log | program + device + config fingerprints (automatic) |
+| **Result comparison** | metric/table-oriented | distribution-aware, structural diff, drift detection |
 | **Noise-aware verification** | requires custom logic | configurable policies with noise tolerance |
-| **Portable sharing** | artifact/version workflows exist | self-contained run bundles (manifest + SHA-256 digests) |
+| **Portable sharing** | artifact/version workflows | self-contained bundles (manifest + SHA-256 digests) |
 
-**devqubit is quantum-first:** same circuit, same backend, different day — different results. **devqubit** helps you track *why*.
+**devqubit is quantum-first:** same circuit, same backend, different day — different results. devqubit helps you track *why*.
 
 ## Features
 
-- **Automatic circuit capture** – QPY, OpenQASM 3, SDK-native formats
-- **Multi-SDK support** – Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane
-- **Content-addressable storage** – deduplicated artifacts with SHA-256 digests
-- **Reproducibility fingerprints** – detect changes in program, device, or config
-- **Run comparison** – TVD analysis, structural diff, calibration drift
-- **CI/CD verification** – baselines with configurable noise-aware policies
-- **Portable bundles** – export/import runs as self-contained ZIPs
+- **Automatic circuit capture** — QPY, OpenQASM 3, SDK-native formats
+- **Multi-SDK support** — Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane
+- **Content-addressable storage** — deduplicated artifacts with SHA-256 digests
+- **Reproducibility fingerprints** — detect changes in program, device, or config
+- **Run comparison** — TVD analysis, structural diff, calibration drift
+- **CI/CD verification** — baselines with configurable noise-aware policies
+- **Portable bundles** — export/import runs as self-contained ZIPs
 
 ## Documentation
 
-📚 **https://devqubit.readthedocs.io**
+📚 **<https://devqubit.readthedocs.io>**
 
 ## Installation
 
-**Requirements:** Python 3.11+ (tested on 3.11–3.13)
+**Requirements:** Python 3.11+
 
 ```bash
 pip install devqubit
@@ -72,7 +72,7 @@ qc.h(0)
 qc.cx(0, 1)
 qc.measure_all()
 
-with track(project="bell-state", name="baseline-v1") as run:
+with track(project="bell-state", run_name="baseline-v1") as run:
     backend = run.wrap(AerSimulator())
     job = backend.run(qc, shots=1000)
     counts = job.result().get_counts()
@@ -80,21 +80,17 @@ with track(project="bell-state", name="baseline-v1") as run:
     run.log_param("shots", 1000)
     run.log_metric("p00", counts.get("00", 0) / 1000)
 
-print(f"Run saved: {run.run_id}")  # or use run.name
+print(f"Run saved: {run.run_id}")
 ```
 
-The adapter captures: circuit (QPY + QASM3), backend config, job metadata, and results.
+The adapter automatically captures: circuit (QPY + QASM3), backend config, job metadata, and results.
 
-## Comparing runs
+### Compare runs
 
 ```python
 from devqubit.compare import diff
 
-# By run name (with project context)
 result = diff("baseline-v1", "experiment-v2", project="bell-state")
-
-# Or by run ID
-result = diff("01JD7X...", "01JD8Y...")
 
 print(result.identical)           # False
 print(result.program.match_mode)  # "structural"
@@ -107,48 +103,35 @@ Or via CLI:
 devqubit diff baseline-v1 experiment-v2 --project bell-state
 ```
 
-## CI/CD verification
-
-Verify that a run matches an established baseline:
+### CI/CD verification
 
 ```python
 from devqubit.compare import verify_baseline, VerifyPolicy
 
-policy = VerifyPolicy(
-    tvd_threshold=0.05,
-    require_same_device=False,
-)
-
 result = verify_baseline(
-    "nightly-run",  # run name or ID
+    "nightly-run",
     project="vqe-hydrogen",
-    policy=policy,
+    policy=VerifyPolicy(tvd_threshold=0.05),
 )
 
 assert result.ok, result.reason
 ```
 
-In CI pipelines, use the CLI with JUnit output:
-
 ```bash
+# With JUnit output for CI pipelines
 devqubit verify nightly-run --project vqe-hydrogen --junit results.xml
 ```
 
-## CLI reference
+## CLI
 
 ```bash
-devqubit list                                       # List recent runs
-devqubit show <run>                                 # Show run details
-devqubit diff <run_a> <run_b> --project myproj      # Compare two runs
-devqubit verify <run> --project myproj              # Verify against baseline
-devqubit pack <run> -o bundle.zip --project myproj  # Export portable bundle
-devqubit unpack bundle.zip                          # Import bundle
-devqubit ui                                         # Start web UI
+devqubit list                          # List runs
+devqubit show <run> --project myproj   # Run details
+devqubit diff <a> <b> --project myproj # Compare runs
+devqubit ui                            # Web interface
 ```
 
-> **Note:** `<run>` can be a run ID or run name. When using names, provide `--project` for disambiguation.
-
-See [CLI reference](https://devqubit.readthedocs.io/en/latest/reference/cli.html) for full interface information.
+See [CLI reference](https://devqubit.readthedocs.io/en/latest/reference/cli.html) for all commands.
 
 ## Web UI
 
@@ -157,51 +140,39 @@ devqubit ui
 # → http://127.0.0.1:8080
 ```
 
-Browse runs, view artifacts, compare experiments, and set baselines.
+<p align="center">
+  <img src="docs/assets/ui_runs.png" alt="Runs list" width="45%"/>
+  &nbsp;&nbsp;
+  <img src="docs/assets/ui_run_view.png" alt="Run comparison" width="45%"/>
+</p>
 
-## Configuration
 
-| Environment variable | Default | Description |
-|---------------------|---------|-------------|
-| `DEVQUBIT_HOME` | `~/.devqubit` | Workspace directory |
-| `DEVQUBIT_CAPTURE_GIT` | `true` | Capture git commit/branch/remote |
-| `DEVQUBIT_CAPTURE_PIP` | `true` | Capture installed packages |
-| `DEVQUBIT_VALIDATE` | `true` | Validate records against schema |
-
-See [configuration guide](https://devqubit.readthedocs.io/en/latest/guides/configuration.html) for advanced options.
-
-## Project structure
-
-```
-devqubit/                    # Metapackage (re-exports from engine)
-packages/
-├── devqubit-engine/         # Core: tracking, storage, comparison, CLI
-├── devqubit-ui/             # FastAPI web interface
-├── devqubit-qiskit/         # Qiskit adapter
-├── devqubit-qiskit-runtime/ # IBM Runtime adapter
-├── devqubit-braket/         # Amazon Braket adapter
-├── devqubit-cirq/           # Google Cirq adapter
-└── devqubit-pennylane/      # PennyLane adapter
-```
+Browse runs, view artifacts, compare experiments, and manage baselines.
 
 ## Contributing
 
-1. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
-2. Clone and sync:
-   ```bash
-   git clone https://github.com/devqubit-labs/devqubit.git
-   cd devqubit
-   uv sync --all-packages --all-extras
-   ```
-3. Install hooks and run checks:
-   ```bash
-   uv run pre-commit install
-   uv run pre-commit run --all-files
-   uv run pytest
-   ```
+We welcome contributions of all kinds — bug fixes, docs, new adapters, or feature ideas.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
+1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines
+2. Check [open issues](https://github.com/devqubit-labs/devqubit/issues) or start a [discussion](https://github.com/devqubit-labs/devqubit/discussions)
+3. Fork, branch, and submit a PR
+
+```bash
+git clone https://github.com/devqubit-labs/devqubit.git
+cd devqubit
+uv sync --all-packages
+uv run pre-commit install
+uv run pytest
+```
+
+Early project = high impact contributions. Jump in!
+
+## Community
+
+- 💬 [Discussions](https://github.com/devqubit-labs/devqubit/discussions) — questions, ideas, feedback
+- 🐛 [Issues](https://github.com/devqubit-labs/devqubit/issues) — bug reports, feature requests
+- 📚 [Docs](https://devqubit.readthedocs.io) — guides and API reference
 
 ## License
 
-Apache 2.0 – see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE).
