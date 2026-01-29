@@ -223,14 +223,28 @@ def _run_in_thread(
 
     Used when running in Jupyter notebooks or other environments
     with an existing asyncio event loop.
+
+    Note: We create our own event loop instead of using server.run()
+    to avoid compatibility issues with nest_asyncio and newer uvicorn
+    versions that pass loop_factory to asyncio.run().
     """
+    import asyncio
     import threading
     import time
 
     config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
     server = uvicorn.Server(config)
 
-    thread = threading.Thread(target=server.run, daemon=True)
+    def run_server() -> None:
+        """Run server with its own event loop."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(server.serve())
+        finally:
+            loop.close()
+
+    thread = threading.Thread(target=run_server, daemon=True, name="devqubit-ui")
     thread.start()
 
     # Wait briefly for server to start and get actual port
