@@ -237,6 +237,7 @@ class RunService:
         """Convert RunRecord to dictionary."""
         return {
             "run_id": record.run_id,
+            "run_name": record.run_name,
             "project": record.project,
             "adapter": record.adapter,
             "status": record.status,

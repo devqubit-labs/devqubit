@@ -1,12 +1,13 @@
 /**
- * DevQubit UI Search Page
+ * Search Page
  */
 
-import { useState, useCallback } from 'react';
-import { Layout, PageHeader } from '../components/Layout';
+import { useState } from 'react';
+import { Layout } from '../components/Layout';
 import {
-  Card, CardHeader, CardTitle, Button, FormGroup, Label, Input,
+  Card, CardHeader, CardTitle, Button, Spinner,
   Table, TableHead, TableBody, TableRow, TableHeader, TableCell,
+  FormGroup, Label, Input,
 } from '../components';
 import { RunsTable } from '../components/RunsTable';
 import { useApp, useMutation } from '../hooks';
@@ -16,40 +17,35 @@ export function SearchPage() {
   const { api } = useApp();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<RunSummary[] | null>(null);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [searched, setSearched] = useState(false);
 
-  const searchMutation = useMutation(async (q: string) => {
-    const data = await api.listRuns({ q, limit: 100 });
-    return data.runs;
+  const { mutate: search, loading } = useMutation(async () => {
+    const data = await api.listRuns({ q: query, limit: 100 });
+    setResults(data.runs);
+    setSearched(true);
+    return data;
   });
 
-  const handleSearch = useCallback(async (e?: React.FormEvent) => {
-    e?.preventDefault();
-    if (!query.trim()) return;
-    const runs = await searchMutation.mutate(query);
-    setResults(runs);
-    setHasSearched(true);
-  }, [query, searchMutation]);
-
-  const deleteMutation = useMutation((runId: string) => api.deleteRun(runId));
-
-  const handleDelete = useCallback(async (runId: string) => {
-    await deleteMutation.mutate(runId);
-    if (results) {
-      setResults(results.filter((r) => r.run_id !== runId));
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (query.trim()) {
+      search();
     }
-  }, [deleteMutation, results]);
+  };
 
   return (
     <Layout>
-      <PageHeader title="Search Runs" />
+      <div className="page-header">
+        <h1 className="page-title">Search Runs</h1>
+      </div>
 
       <Card className="mb-4">
-        <form onSubmit={handleSearch}>
+        <form onSubmit={handleSubmit}>
           <FormGroup>
             <Label htmlFor="q">Query</Label>
             <Input
               id="q"
+              type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="metric.fidelity > 0.95 and params.shots = 1000"
@@ -57,22 +53,22 @@ export function SearchPage() {
             />
           </FormGroup>
           <div className="flex gap-2 items-center">
-            <Button type="submit" variant="primary" loading={searchMutation.loading}>
+            <Button type="submit" variant="primary" disabled={loading || !query.trim()}>
+              {loading && <Spinner />}
               Search
             </Button>
-            {searchMutation.loading && <span className="text-muted text-sm">Searching...</span>}
+            {loading && <span className="text-muted text-sm">Searching...</span>}
           </div>
         </form>
       </Card>
 
-      {hasSearched && results && (
+      {searched && results && (
         <Card className="mb-4">
-          <RunsTable
-            runs={results}
-            onDelete={handleDelete}
-            loading={deleteMutation.loading}
-            emptyHint="No runs match your query"
-          />
+          {results.length > 0 ? (
+            <RunsTable runs={results} />
+          ) : (
+            <p className="text-muted text-center py-8">No runs match your query</p>
+          )}
         </Card>
       )}
 

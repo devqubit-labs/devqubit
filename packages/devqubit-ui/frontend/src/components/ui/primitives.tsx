@@ -145,3 +145,29 @@ export function Modal({ open, onClose, title, children, actions }: ModalProps) {
     </div>
   );
 }
+
+/* Toast */
+export type ToastVariant = 'success' | 'error' | 'info';
+
+export interface ToastProps {
+  message: string;
+  variant?: ToastVariant;
+  visible: boolean;
+  onClose: () => void;
+}
+
+export function Toast({ message, variant = 'info', visible, onClose }: ToastProps) {
+  if (!visible) return null;
+
+  const variantClass = {
+    success: 'bg-success-bg text-[#065f46] border-[#a7f3d0]',
+    error: 'bg-danger-bg text-[#991b1b] border-[#fecaca]',
+    info: 'bg-info-bg text-[#1e40af] border-[#bfdbfe]',
+  }[variant];
+
+  return (
+    <div className={cn('toast', variantClass)} onClick={onClose}>
+      {message}
+    </div>
+  );
+}
