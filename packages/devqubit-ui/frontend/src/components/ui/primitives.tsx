@@ -1,16 +1,11 @@
 /**
  * DevQubit UI Primitive Components
- *
- * Reusable UI building blocks styled according to the design system.
  */
 
 import { forwardRef, type ButtonHTMLAttributes, type HTMLAttributes } from 'react';
 import { cn } from '../../utils';
 
-/* =========================================================================
-   Badge
-   ========================================================================= */
-
+/* Badge */
 export type BadgeVariant = 'success' | 'danger' | 'warning' | 'info' | 'gray' | 'neutral';
 
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
@@ -25,10 +20,7 @@ export function Badge({ variant = 'gray', className, children, ...props }: Badge
   );
 }
 
-/* =========================================================================
-   Button
-   ========================================================================= */
-
+/* Button */
 export type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'ghost-danger';
 export type ButtonSize = 'default' | 'sm';
 
@@ -60,44 +52,24 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 );
 Button.displayName = 'Button';
 
-/* =========================================================================
-   Card
-   ========================================================================= */
-
-export interface CardProps extends HTMLAttributes<HTMLDivElement> {}
+/* Card */
+type CardProps = HTMLAttributes<HTMLDivElement>;
+type CardHeaderProps = HTMLAttributes<HTMLDivElement>;
+type CardTitleProps = HTMLAttributes<HTMLHeadingElement>;
 
 export function Card({ className, children, ...props }: CardProps) {
-  return (
-    <div className={cn('card', className)} {...props}>
-      {children}
-    </div>
-  );
+  return <div className={cn('card', className)} {...props}>{children}</div>;
 }
-
-export interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {}
 
 export function CardHeader({ className, children, ...props }: CardHeaderProps) {
-  return (
-    <div className={cn('card-header', className)} {...props}>
-      {children}
-    </div>
-  );
+  return <div className={cn('card-header', className)} {...props}>{children}</div>;
 }
-
-export interface CardTitleProps extends HTMLAttributes<HTMLHeadingElement> {}
 
 export function CardTitle({ className, children, ...props }: CardTitleProps) {
-  return (
-    <h3 className={cn('card-title', className)} {...props}>
-      {children}
-    </h3>
-  );
+  return <h3 className={cn('card-title', className)} {...props}>{children}</h3>;
 }
 
-/* =========================================================================
-   Alert
-   ========================================================================= */
-
+/* Alert */
 export type AlertVariant = 'success' | 'danger' | 'warning' | 'info';
 
 export interface AlertProps extends HTMLAttributes<HTMLDivElement> {
@@ -105,27 +77,17 @@ export interface AlertProps extends HTMLAttributes<HTMLDivElement> {
 }
 
 export function Alert({ variant = 'info', className, children, ...props }: AlertProps) {
-  return (
-    <div className={cn('alert', `alert-${variant}`, className)} {...props}>
-      {children}
-    </div>
-  );
+  return <div className={cn('alert', `alert-${variant}`, className)} {...props}>{children}</div>;
 }
 
-/* =========================================================================
-   Spinner
-   ========================================================================= */
-
-export interface SpinnerProps extends HTMLAttributes<HTMLSpanElement> {}
+/* Spinner */
+type SpinnerProps = HTMLAttributes<HTMLSpanElement>;
 
 export function Spinner({ className, ...props }: SpinnerProps) {
   return <span className={cn('spinner', className)} {...props} />;
 }
 
-/* =========================================================================
-   Empty State
-   ========================================================================= */
-
+/* Empty State */
 export interface EmptyStateProps extends HTMLAttributes<HTMLDivElement> {
   message: string;
   hint?: string;
@@ -140,10 +102,7 @@ export function EmptyState({ message, hint, className, ...props }: EmptyStatePro
   );
 }
 
-/* =========================================================================
-   Key-Value List
-   ========================================================================= */
-
+/* KVList */
 export interface KVListProps extends HTMLAttributes<HTMLDListElement> {
   items: Array<{ label: string; value: React.ReactNode }>;
 }
@@ -161,10 +120,7 @@ export function KVList({ items, className, ...props }: KVListProps) {
   );
 }
 
-/* =========================================================================
-   Modal
-   ========================================================================= */
-
+/* Modal */
 export interface ModalProps {
   open: boolean;
   onClose: () => void;

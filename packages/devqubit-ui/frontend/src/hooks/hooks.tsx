@@ -80,11 +80,13 @@ function useAsync<T>(
     error: null,
   });
   const mountedRef = useRef(true);
+  const fetcherRef = useRef(fetcher);
+  fetcherRef.current = fetcher;
 
   const fetch = useCallback(async () => {
     setState(s => ({ ...s, loading: true, error: null }));
     try {
-      const data = await fetcher();
+      const data = await fetcherRef.current();
       if (mountedRef.current) {
         setState({ data, loading: false, error: null });
       }
@@ -97,13 +99,14 @@ function useAsync<T>(
         });
       }
     }
-  }, deps);
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
     fetch();
     return () => { mountedRef.current = false; };
-  }, [fetch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
 
   return { ...state, refetch: fetch };
 }

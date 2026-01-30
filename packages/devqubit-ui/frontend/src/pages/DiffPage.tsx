@@ -71,6 +71,14 @@ function DiffSelect() {
   );
 }
 
+function DiffCell({ match }: { match: boolean }) {
+  return (
+    <span className={match ? 'diff-match' : 'diff-mismatch'}>
+      {match ? '✓ Match' : '✗ Different'}
+    </span>
+  );
+}
+
 function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
   const { data, loading, error } = useDiff(runIdA, runIdB);
 
@@ -78,12 +86,6 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
   if (error || !data) return <Card><EmptyState message="Failed to load diff" hint={error?.message} /></Card>;
 
   const { run_a, run_b, report } = data;
-
-  const DiffCell = ({ match }: { match: boolean }) => (
-    <span className={match ? 'diff-match' : 'diff-mismatch'}>
-      {match ? '✓ Match' : '✗ Different'}
-    </span>
-  );
 
   return (
     <>
