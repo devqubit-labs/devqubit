@@ -1,11 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-FastAPI dependency injection utilities.
-
-Provides dependency functions for injecting common services into route handlers.
-"""
+"""FastAPI dependency injection utilities."""
 
 from __future__ import annotations
 
@@ -23,7 +19,7 @@ def get_config(request: Request) -> Config:
 
 def get_registry(request: Request) -> RegistryProtocol:
     """Get the registry instance from application state."""
-    return request.app.state.registry_factory()
+    return request.app.state.registry
 
 
 def get_store(request: Request) -> ObjectStoreProtocol:
@@ -45,7 +41,7 @@ def get_capabilities(request: Request) -> dict[str, Any]:
     )
 
 
-# Type aliases for cleaner dependency injection
+# Type aliases
 ConfigDep = Annotated["Config", Depends(get_config)]
 RegistryDep = Annotated["RegistryProtocol", Depends(get_registry)]
 StoreDep = Annotated["ObjectStoreProtocol", Depends(get_store)]
