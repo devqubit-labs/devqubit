@@ -1,14 +1,9 @@
 /**
  * DevQubit UI Type Definitions
- *
- * Core TypeScript interfaces for the devqubit UI package.
- * These types mirror the Python backend models.
  */
 
-/** Run status enum values */
 export type RunStatus = 'RUNNING' | 'FINISHED' | 'FAILED' | 'UNKNOWN';
 
-/** Artifact metadata */
 export interface Artifact {
   kind: string;
   role: string;
@@ -16,13 +11,11 @@ export interface Artifact {
   digest: string;
 }
 
-/** Run fingerprints for content-based identification */
 export interface Fingerprints {
   run?: string;
   program?: string;
 }
 
-/** Run summary for list views */
 export interface RunSummary {
   run_id: string;
   run_name?: string;
@@ -33,7 +26,6 @@ export interface RunSummary {
   fingerprints?: Fingerprints;
 }
 
-/** Full run record with all details */
 export interface RunRecord extends RunSummary {
   data?: {
     params?: Record<string, unknown>;
@@ -54,7 +46,6 @@ export interface RunRecord extends RunSummary {
   }>;
 }
 
-/** Project summary with run count and baseline */
 export interface Project {
   name: string;
   description?: string;
@@ -65,7 +56,6 @@ export interface Project {
   };
 }
 
-/** Group summary */
 export interface Group {
   group_id: string;
   group_name?: string;
@@ -73,7 +63,6 @@ export interface Group {
   run_count: number;
 }
 
-/** Filter state for runs list */
 export interface RunFilters {
   project?: string;
   status?: RunStatus | '';
@@ -81,12 +70,10 @@ export interface RunFilters {
   limit: number;
 }
 
-/** Filter state for groups list */
 export interface GroupFilters {
   project?: string;
 }
 
-/** Server capabilities response */
 export interface Capabilities {
   mode: 'local' | 'hub';
   version: string;
@@ -98,7 +85,6 @@ export interface Capabilities {
   };
 }
 
-/** Diff report comparing two runs */
 export interface DiffReport {
   identical: boolean;
   metadata: {
@@ -163,32 +149,24 @@ export interface DiffReport {
   warnings?: string[];
 }
 
-/** Workspace context (for hub extension) */
 export interface Workspace {
   id: string;
   name: string;
 }
 
-/** Navigation link configuration */
 export interface NavLink {
   href: string;
   label: string;
   matchPaths?: string[];
 }
 
-/** Layout configuration for extensibility */
 export interface LayoutConfig {
-  /** Custom logo (replaces default) */
   logo?: {
     text: string;
     icon?: string;
   };
-  /** Replace all nav links (overrides default) */
   navLinks?: NavLink[];
-  /** Add links before default nav */
   prependNavLinks?: NavLink[];
-  /** Add links after default nav */
   appendNavLinks?: NavLink[];
-  /** Content for header right side (workspace selector, user menu, etc.) */
   headerRight?: React.ReactNode;
 }

@@ -1,8 +1,5 @@
 /**
  * DevQubit UI Layout Component
- *
- * Main layout wrapper with header, navigation, and content area.
- * Designed for extension by devqubit-hub.
  */
 
 import { Link, useLocation } from 'react-router-dom';
@@ -10,7 +7,6 @@ import { createContext, useContext } from 'react';
 import { cn } from '../../utils';
 import type { LayoutConfig, NavLink } from '../../types';
 
-/** Default navigation links */
 const DEFAULT_NAV_LINKS: NavLink[] = [
   { href: '/runs', label: 'Runs', matchPaths: ['/runs'] },
   { href: '/projects', label: 'Projects', matchPaths: ['/projects'] },
@@ -19,10 +15,8 @@ const DEFAULT_NAV_LINKS: NavLink[] = [
   { href: '/search', label: 'Search', matchPaths: ['/search'] },
 ];
 
-/** Layout config context for global configuration */
 const LayoutConfigContext = createContext<LayoutConfig | null>(null);
 
-/** Provider for global layout config (used by hub) */
 export function LayoutConfigProvider({
   config,
   children
@@ -37,35 +31,20 @@ export function LayoutConfigProvider({
   );
 }
 
-/** Hook to access layout config */
 export function useLayoutConfig(): LayoutConfig | null {
   return useContext(LayoutConfigContext);
 }
 
 export interface LayoutProps {
   children: React.ReactNode;
-  /** Local config overrides global layoutConfig */
   config?: LayoutConfig;
 }
 
-/**
- * Main layout component with header and navigation.
- *
- * Parameters
- * ----------
- * children : ReactNode
- *     Page content to render in main area.
- * config : LayoutConfig, optional
- *     Local config (merges with global layoutConfig from AppProvider).
- */
 export function Layout({ children, config: localConfig }: LayoutProps) {
   const location = useLocation();
   const globalConfig = useLayoutConfig();
-
-  // Merge configs: local overrides global
   const config = { ...globalConfig, ...localConfig };
 
-  // Build nav links: prepend + (custom or default) + append
   const baseLinks = config?.navLinks ?? DEFAULT_NAV_LINKS;
   const navLinks = [
     ...(config?.prependNavLinks ?? []),
@@ -127,9 +106,6 @@ export interface PageHeaderProps {
   actions?: React.ReactNode;
 }
 
-/**
- * Page header with title and optional actions.
- */
 export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
   return (
     <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
