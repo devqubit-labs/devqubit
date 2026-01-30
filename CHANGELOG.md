@@ -8,6 +8,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.10](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.10) - 2026-01-30
+
+#### Changed
+- Migrated web UI from Jinja/HTMX to React + TypeScript for improved maintainability. ([#41](https://github.com/devqubit-labs/devqubit/pull/41))
+
 ## [0.1.9](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.9) - 2026-01-28
 
 #### Added

@@ -62,7 +62,7 @@ export function Layout({ children, config: localConfig }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-primary-bg">
       <header className="bg-gray-900 h-14 sticky top-0 z-50">
         <div className="max-w-container mx-auto px-6 h-full flex items-center justify-between">
           <div className="flex items-center gap-8">

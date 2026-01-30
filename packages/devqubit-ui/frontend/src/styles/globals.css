@@ -20,7 +20,7 @@
   }
 
   body {
-    @apply font-sans text-base leading-normal bg-gray-50 text-gray-900 min-h-screen;
+    @apply font-sans text-base leading-normal bg-primary-bg text-gray-900 min-h-screen;
   }
 
   a {

@@ -744,7 +744,7 @@ wheels = [
 
 [[package]]
 name = "devqubit"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "." }
 dependencies = [
     { name = "devqubit-engine" },
@@ -838,7 +838,7 @@ docs = [
 
 [[package]]
 name = "devqubit-braket"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-braket" }
 dependencies = [
     { name = "amazon-braket-sdk" },
@@ -853,7 +853,7 @@ requires-dist = [
 
 [[package]]
 name = "devqubit-cirq"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-cirq" }
 dependencies = [
     { name = "cirq" },
@@ -870,7 +870,7 @@ requires-dist = [
 
 [[package]]
 name = "devqubit-engine"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-engine" }
 dependencies = [
     { name = "click" },
@@ -900,7 +900,7 @@ provides-extras = ["s3", "gcs"]
 
 [[package]]
 name = "devqubit-pennylane"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-pennylane" }
 dependencies = [
     { name = "devqubit-engine" },
@@ -915,7 +915,7 @@ requires-dist = [
 
 [[package]]
 name = "devqubit-qiskit"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-qiskit" }
 dependencies = [
     { name = "devqubit-engine" },
@@ -934,7 +934,7 @@ requires-dist = [
 
 [[package]]
 name = "devqubit-qiskit-runtime"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-qiskit-runtime" }
 dependencies = [
     { name = "devqubit-engine" },
@@ -951,7 +951,7 @@ requires-dist = [
 
 [[package]]
 name = "devqubit-ui"
-version = "0.1.9"
+version = "0.1.10"
 source = { editable = "packages/devqubit-ui" }
 dependencies = [
     { name = "devqubit-engine" },
