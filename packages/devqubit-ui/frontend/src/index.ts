@@ -8,11 +8,11 @@
  * -----
  * ```tsx
  * import { App, Layout, RunsTable, api } from '@devqubit/ui';
- * import '@devqubit/ui/styles.css';
+ * import '@devqubit/ui/style.css';
  * ```
  */
 
-// Styles - consumers must import separately: import '@devqubit/ui/styles.css'
+// Styles - consumers must import separately: import '@devqubit/ui/style.css'
 import './styles/globals.css';
 
 // Main App
