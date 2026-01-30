@@ -1,6 +1,6 @@
 # @devqubit/ui
 
-React frontend for devqubit experiment tracking UI.
+React frontend for devqubit experiment tracking UI (open-core).
 
 ## Tech Stack
 
@@ -15,29 +15,16 @@ React frontend for devqubit experiment tracking UI.
 npm install
 npm run dev      # Start dev server (localhost:5173)
 npm run build    # Build for production
+npm run build:lib # Build as npm library
 npm run lint     # Run ESLint
+npm run typecheck # TypeScript type check
 ```
 
 Dev server proxies `/api` requests to `localhost:8000`.
-
-## Package Exports
-
-```tsx
-import {
-  App,
-  Layout,
-  LayoutConfigProvider,
-  ApiClient,
-  coreRoutes,
-  useRuns,
-  RunsTable,
-} from '@devqubit/ui';
-import '@devqubit/ui/styles.css';
-```
 
 ## Build for Python Package
 
 ```bash
 npm run build
-cp -r dist/* ../python/src/devqubit_ui/static/
+cp -r dist/* ../src/devqubit_ui/static/
 ```

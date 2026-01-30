@@ -73,38 +73,13 @@ function DiffSelect() {
   );
 }
 
-interface CircuitDiff {
-  match: boolean;
-  changed?: Record<string, { label?: string; a: unknown; b: unknown; delta?: number; pct?: number }>;
-  is_clifford_changed?: boolean;
-  is_clifford_a?: boolean;
-  is_clifford_b?: boolean;
-  added_gates?: string[];
-  removed_gates?: string[];
-}
-
-interface DiffReport {
-  identical: boolean;
-  metadata: { project_match: boolean; backend_match: boolean; project_a?: string; project_b?: string; backend_a?: string; backend_b?: string };
-  fingerprints: { a: string; b: string };
-  program: { exact_match: boolean; structural_match: boolean };
-  device_drift?: { significant_drift: boolean; has_calibration_data: boolean };
-  params: { match: boolean; changed?: Record<string, { a: unknown; b: unknown }> };
-  metrics: { match: boolean; changed?: Record<string, { a: number; b: number }> };
-  circuit_diff?: CircuitDiff;
-  tvd?: number;
-  shots?: { a: number; b: number };
-  noise_context?: { noise_p95?: number; expected_noise?: number; p_value?: number; noise_ratio?: number };
-  warnings?: string[];
-}
-
 function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
   const { data, loading, error } = useDiff(runIdA, runIdB);
 
   if (loading) return <div className="flex justify-center py-12"><Spinner /></div>;
   if (error || !data) return <Card><EmptyState message="Failed to load diff" hint={error?.message} /></Card>;
 
-  const { run_a, run_b, report } = data as { run_a: RunSummary; run_b: RunSummary; report: DiffReport };
+  const { run_a, run_b, report } = data;
 
   return (
     <>

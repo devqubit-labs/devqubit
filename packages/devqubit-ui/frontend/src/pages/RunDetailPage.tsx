@@ -6,30 +6,13 @@ import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Layout } from '../components/Layout';
 import {
-  Card, CardHeader, CardTitle, Badge, Button, Spinner, EmptyState,
+  Card, CardHeader, CardTitle, Badge, Button, Spinner, EmptyState, KVList,
   Table, TableHead, TableBody, TableRow, TableHeader, TableCell, Modal, Toast,
 } from '../components';
+import { StatusBadge } from '../components/RunsTable';
 import { useRun, useApp, useMutation } from '../hooks';
 import { shortId, shortDigest, timeAgo, formatNumber } from '../utils';
 import type { Artifact } from '../types';
-
-function StatusBadge({ status }: { status: string }) {
-  const variant = status === 'FINISHED' ? 'success' : status === 'FAILED' ? 'danger' : 'gray';
-  return <Badge variant={variant}>{status}</Badge>;
-}
-
-function KVList({ items }: { items: Array<{ label: string; value: React.ReactNode }> }) {
-  return (
-    <dl className="kv">
-      {items.map(({ label, value }) => (
-        <div key={label} style={{ display: 'contents' }}>
-          <dt>{label}</dt>
-          <dd>{value}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
