@@ -14,7 +14,7 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from devqubit_ui.plugins import PluginManager
+from devqubit_ui.plugins import load_ui_plugins
 from devqubit_ui.routers import api
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 def create_app(
     registry_factory: Callable | None = None,
-    plugin_manager: PluginManager | None = None,
 ) -> FastAPI:
     """
     Create and configure the FastAPI application.
@@ -37,8 +36,6 @@ def create_app(
     registry_factory : Callable, optional
         Factory function that returns a RunRegistry instance.
         If not provided, uses default from devqubit.
-    plugin_manager : PluginManager, optional
-        Plugin manager for extending functionality.
 
     Returns
     -------
@@ -67,10 +64,8 @@ def create_app(
         registry_factory = get_registry
     app.state.registry_factory = registry_factory
 
-    # Store plugin manager
-    if plugin_manager is None:
-        plugin_manager = PluginManager()
-    app.state.plugin_manager = plugin_manager
+    # Load plugins
+    load_ui_plugins(app)
 
     # Include API router
     app.include_router(api.router, prefix="/api", tags=["api"])
@@ -85,13 +80,7 @@ def create_app(
 
         @app.get("/{full_path:path}", response_class=HTMLResponse)
         async def serve_spa(request: Request, full_path: str):
-            """
-            Serve React SPA for all non-API routes.
-
-            This catch-all handler serves index.html for client-side routing.
-            API routes are handled by the router above.
-            """
-            # Don't serve SPA for API routes (should be handled by router)
+            """Serve React SPA for all non-API routes."""
             if full_path.startswith("api/"):
                 return HTMLResponse(status_code=404, content="Not found")
             return FileResponse(static_dir / "index.html")
@@ -105,3 +94,31 @@ def create_app(
         )
 
     return app
+
+
+def run_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    debug: bool = False,
+) -> None:
+    """
+    Run the development server.
+
+    Parameters
+    ----------
+    host : str
+        Host to bind to.
+    port : int
+        Port to bind to.
+    debug : bool
+        Enable debug mode with auto-reload.
+    """
+    import uvicorn
+
+    uvicorn.run(
+        "devqubit_ui.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=debug,
+    )

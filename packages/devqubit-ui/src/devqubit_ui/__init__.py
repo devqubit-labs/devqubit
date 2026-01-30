@@ -46,38 +46,12 @@ between versions. For programmatic access, prefer the core ``devqubit``
 API or the JSON endpoints at ``/api/*``.
 """
 
-__version__ = "0.1.9"
+from importlib.metadata import version
+
+from devqubit_ui.app import create_app, run_server
 
 
-from devqubit_ui.app import create_app
-
-
-def run_server(
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    debug: bool = False,
-) -> None:
-    """
-    Run the development server.
-
-    Parameters
-    ----------
-    host : str
-        Host to bind to.
-    port : int
-        Port to bind to.
-    debug : bool
-        Enable debug mode with auto-reload.
-    """
-    import uvicorn
-
-    uvicorn.run(
-        "devqubit_ui.app:create_app",
-        factory=True,
-        host=host,
-        port=port,
-        reload=debug,
-    )
+__version__ = version("devqubit-ui")
 
 
 __all__ = [
