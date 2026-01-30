@@ -1,0 +1,295 @@
+/**
+ * DevQubit UI Global Styles
+ *
+ * Core stylesheet with Tailwind CSS directives and custom design system.
+ * This file is bundled as styles.css in the npm package.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================================
+   Base Styles
+   ========================================================================= */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    @apply font-sans text-base leading-normal bg-gray-50 text-gray-900 min-h-screen;
+  }
+
+  a {
+    @apply text-primary no-underline;
+  }
+
+  a:hover {
+    @apply text-primary-dark;
+  }
+}
+
+/* =========================================================================
+   Components
+   ========================================================================= */
+@layer components {
+  /* Card */
+  .card {
+    @apply bg-white border border-gray-200 rounded-lg p-5;
+  }
+
+  .card-header {
+    @apply flex items-center justify-between mb-4 pb-3 border-b border-gray-100;
+  }
+
+  .card-title {
+    @apply text-lg font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md border border-transparent cursor-pointer transition-all duration-150 no-underline whitespace-nowrap;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-white border-primary hover:bg-primary-dark hover:border-primary-dark hover:text-white hover:no-underline;
+  }
+
+  .btn-secondary {
+    @apply bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400 hover:no-underline;
+  }
+
+  .btn-danger {
+    @apply bg-danger text-white border-danger hover:bg-danger-dark hover:border-danger-dark hover:text-white hover:no-underline;
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-gray-600 border-transparent hover:bg-gray-100 hover:text-gray-900;
+  }
+
+  .btn-ghost-danger {
+    @apply bg-transparent text-gray-500 border-transparent hover:bg-danger-bg hover:text-danger;
+  }
+
+  .btn-sm {
+    @apply px-3 py-1.5 text-[0.8125rem];
+  }
+
+  .btn:disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  /* Badges */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded whitespace-nowrap;
+  }
+
+  .badge-success {
+    @apply bg-success-bg text-[#065f46];
+  }
+
+  .badge-danger {
+    @apply bg-danger-bg text-[#991b1b];
+  }
+
+  .badge-warning {
+    @apply bg-warning-bg text-[#92400e];
+  }
+
+  .badge-info {
+    @apply bg-info-bg text-[#1e40af];
+  }
+
+  .badge-gray {
+    @apply bg-gray-100 text-gray-600;
+  }
+
+  .badge-neutral {
+    @apply bg-gray-200 text-gray-700;
+  }
+
+  /* Forms */
+  .form-group {
+    @apply mb-4;
+  }
+
+  .form-label {
+    @apply block font-medium mb-1.5 text-sm text-gray-700;
+  }
+
+  .form-input {
+    @apply w-full px-3 py-2 border border-gray-300 rounded-md text-sm transition-all duration-150 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15;
+  }
+
+  .form-row {
+    @apply flex flex-wrap gap-4 items-end;
+  }
+
+  .form-row .form-group {
+    @apply flex-1 min-w-[150px] mb-0;
+  }
+
+  /* Alerts */
+  .alert {
+    @apply px-4 py-3 rounded-md mb-4 text-sm;
+  }
+
+  .alert-success {
+    @apply bg-success-bg text-[#065f46] border border-[#a7f3d0];
+  }
+
+  .alert-danger {
+    @apply bg-danger-bg text-[#991b1b] border border-[#fecaca];
+  }
+
+  .alert-warning {
+    @apply bg-warning-bg text-[#92400e] border border-[#fde68a];
+  }
+
+  .alert-info {
+    @apply bg-info-bg text-[#1e40af] border border-[#bfdbfe];
+  }
+
+  /* Tables */
+  .table {
+    @apply w-full border-collapse;
+  }
+
+  .table th,
+  .table td {
+    @apply px-4 py-3 text-left border-b border-gray-100;
+  }
+
+  .table th {
+    @apply font-semibold text-xs uppercase tracking-wider text-gray-500 bg-gray-50;
+  }
+
+  .table tbody tr:hover td {
+    @apply bg-gray-50;
+  }
+
+  .table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  /* Key-Value List */
+  .kv-list {
+    @apply grid gap-y-2 gap-x-4;
+    grid-template-columns: minmax(120px, auto) 1fr;
+    align-items: baseline;
+  }
+
+  .kv-list dt {
+    @apply font-medium text-gray-500 text-sm;
+  }
+
+  .kv-list dd {
+    @apply text-gray-900 break-words;
+  }
+
+  /* Empty State */
+  .empty-state {
+    @apply text-center py-12 px-4 text-gray-500;
+  }
+
+  /* Diff Styles */
+  .diff-match {
+    @apply text-[#065f46] font-medium;
+  }
+
+  .diff-mismatch {
+    @apply text-[#92400e] font-medium;
+  }
+
+  /* Code */
+  code {
+    @apply font-mono text-[0.875em] bg-gray-100 px-1.5 py-0.5 rounded;
+  }
+
+  pre {
+    @apply bg-gray-900 text-gray-100 p-4 rounded-md overflow-x-auto text-[0.8125rem] leading-relaxed;
+  }
+
+  pre code {
+    @apply bg-transparent p-0;
+  }
+
+  /* Modal */
+  .modal-backdrop {
+    @apply fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] opacity-0 invisible transition-all duration-150;
+  }
+
+  .modal-backdrop.active {
+    @apply opacity-100 visible;
+  }
+
+  .modal {
+    @apply bg-white rounded-lg p-6 max-w-[400px] w-[90%] shadow-xl scale-95 transition-transform duration-150;
+  }
+
+  .modal-backdrop.active .modal {
+    @apply scale-100;
+  }
+
+  .modal-title {
+    @apply text-lg font-semibold mb-2;
+  }
+
+  .modal-body {
+    @apply text-gray-600 mb-6;
+  }
+
+  .modal-actions {
+    @apply flex gap-2 justify-end;
+  }
+
+  /* Spinner */
+  .spinner {
+    @apply w-4 h-4 border-2 border-gray-200 border-t-primary rounded-full animate-spin;
+  }
+}
+
+/* =========================================================================
+   Utilities
+   ========================================================================= */
+@layer utilities {
+  .text-muted {
+    @apply text-gray-500;
+  }
+
+  .truncate-id {
+    @apply overflow-hidden text-ellipsis whitespace-nowrap max-w-[200px];
+  }
+}
+
+/* =========================================================================
+   Custom Scrollbar
+   ========================================================================= */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-100;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 rounded;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
+}
+
+/* =========================================================================
+   Animations
+   ========================================================================= */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
