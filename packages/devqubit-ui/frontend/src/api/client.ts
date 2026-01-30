@@ -187,7 +187,7 @@ export class ApiClient {
    * Get artifact download URL.
    */
   getArtifactDownloadUrl(runId: string, index: number): string {
-    return `${this.baseUrl}/runs/${runId}/artifacts/${index}/raw`;
+    return `${this.baseUrl}/api/runs/${runId}/artifacts/${index}/raw`;
   }
 }
 
