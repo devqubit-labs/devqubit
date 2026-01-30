@@ -53,9 +53,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 Button.displayName = 'Button';
 
 /* Card */
-type CardProps = HTMLAttributes<HTMLDivElement>;
-type CardHeaderProps = HTMLAttributes<HTMLDivElement>;
-type CardTitleProps = HTMLAttributes<HTMLHeadingElement>;
+export type CardProps = HTMLAttributes<HTMLDivElement>;
+export type CardHeaderProps = HTMLAttributes<HTMLDivElement>;
+export type CardTitleProps = HTMLAttributes<HTMLHeadingElement>;
 
 export function Card({ className, children, ...props }: CardProps) {
   return <div className={cn('card', className)} {...props}>{children}</div>;
@@ -81,7 +81,7 @@ export function Alert({ variant = 'info', className, children, ...props }: Alert
 }
 
 /* Spinner */
-type SpinnerProps = HTMLAttributes<HTMLSpanElement>;
+export type SpinnerProps = HTMLAttributes<HTMLSpanElement>;
 
 export function Spinner({ className, ...props }: SpinnerProps) {
   return <span className={cn('spinner', className)} {...props} />;

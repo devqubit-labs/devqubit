@@ -4,12 +4,12 @@
 
 import { cn } from '../../utils';
 
-type TableProps = React.TableHTMLAttributes<HTMLTableElement>;
-type TableHeadProps = React.HTMLAttributes<HTMLTableSectionElement>;
-type TableBodyProps = React.HTMLAttributes<HTMLTableSectionElement>;
-type TableRowProps = React.HTMLAttributes<HTMLTableRowElement>;
-type TableHeaderProps = React.ThHTMLAttributes<HTMLTableCellElement>;
-type TableCellProps = React.TdHTMLAttributes<HTMLTableCellElement>;
+export type TableProps = React.TableHTMLAttributes<HTMLTableElement>;
+export type TableHeadProps = React.HTMLAttributes<HTMLTableSectionElement>;
+export type TableBodyProps = React.HTMLAttributes<HTMLTableSectionElement>;
+export type TableRowProps = React.HTMLAttributes<HTMLTableRowElement>;
+export type TableHeaderProps = React.ThHTMLAttributes<HTMLTableCellElement>;
+export type TableCellProps = React.TdHTMLAttributes<HTMLTableCellElement>;
 
 export function Table({ className, children, ...props }: TableProps) {
   return (

@@ -12,6 +12,7 @@ import {
 import { StatusBadge } from '../components/RunsTable';
 import { useRun, useApp, useMutation } from '../hooks';
 import { shortId, shortDigest, timeAgo, formatNumber } from '../utils';
+import type { Artifact } from '../types';
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
@@ -144,7 +145,7 @@ export function RunDetailPage() {
           {Object.keys(tags).length ? (
             <div className="flex flex-wrap gap-2">
               {Object.entries(tags).map(([k, v]) => (
-                <Badge key={k} variant="gray">{k}: {v}</Badge>
+                <Badge key={k} variant="gray">{k}: {String(v)}</Badge>
               ))}
             </div>
           ) : (
@@ -169,7 +170,7 @@ export function RunDetailPage() {
               </TableRow>
             </TableHead>
             <TableBody>
-              {artifacts.map((artifact, idx) => (
+              {artifacts.map((artifact: Artifact, idx: number) => (
                 <TableRow key={idx}>
                   <TableCell>{idx}</TableCell>
                   <TableCell className="font-mono text-sm">{artifact.kind}</TableCell>
@@ -199,7 +200,7 @@ export function RunDetailPage() {
       {errors.length > 0 && (
         <Card>
           <CardHeader><CardTitle className="text-danger">Errors</CardTitle></CardHeader>
-          {errors.map((err, idx) => (
+          {errors.map((err: { type: string; message: string; traceback?: string }, idx: number) => (
             <div key={idx} className="mb-4 last:mb-0">
               <strong>{err.type}</strong>: {err.message}
               {err.traceback && <pre className="mt-2">{err.traceback}</pre>}

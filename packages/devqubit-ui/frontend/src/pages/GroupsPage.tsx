@@ -8,6 +8,7 @@ import { Layout, PageHeader } from '../components/Layout';
 import { Card, Button, Spinner, FormGroup, FormRow, Label, Select } from '../components/ui';
 import { GroupsTable } from '../components/GroupsTable';
 import { useGroups, useProjects } from '../hooks';
+import type { Project } from '../types';
 
 export function GroupsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -41,7 +42,7 @@ export function GroupsPage() {
               onChange={(e) => updateProject(e.target.value)}
             >
               <option value="">All projects</option>
-              {projectsData?.map((p) => (
+              {projectsData?.map((p: Project) => (
                 <option key={p.name} value={p.name}>{p.name}</option>
               ))}
             </Select>

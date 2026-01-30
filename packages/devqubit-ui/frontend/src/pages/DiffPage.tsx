@@ -11,6 +11,7 @@ import {
 } from '../components';
 import { useDiff, useRuns } from '../hooks';
 import { shortId, shortDigest, timeAgo } from '../utils';
+import type { RunSummary } from '../types';
 
 function DiffSelect() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -36,7 +37,7 @@ function DiffSelect() {
               <Label htmlFor="a">Run A (Baseline)</Label>
               <Select id="a" value={runA} onChange={(e) => setRunA(e.target.value)} required>
                 <option value="">Select run...</option>
-                {runs.map((run) => (
+                {runs.map((run: RunSummary) => (
                   <option key={run.run_id} value={run.run_id}>
                     {run.run_name || 'Unnamed run'} ({shortId(run.run_id)}) — {run.project}
                   </option>
@@ -47,7 +48,7 @@ function DiffSelect() {
               <Label htmlFor="b">Run B (Candidate)</Label>
               <Select id="b" value={runB} onChange={(e) => setRunB(e.target.value)} required>
                 <option value="">Select run...</option>
-                {runs.map((run) => (
+                {runs.map((run: RunSummary) => (
                   <option key={run.run_id} value={run.run_id}>
                     {run.run_name || 'Unnamed run'} ({shortId(run.run_id)}) — {run.project}
                   </option>
@@ -59,14 +60,11 @@ function DiffSelect() {
         </form>
       </Card>
 
-      <Card className="mt-4">
-        <CardHeader><CardTitle>Tips</CardTitle></CardHeader>
-        <ul className="text-muted text-sm list-disc pl-5 space-y-1">
-          <li>Select two runs to compare their parameters, metrics, and artifacts</li>
-          <li>The diff will show which parameters changed and compute TVD for result distributions</li>
-          <li>You can also compare from the run detail page against the project baseline</li>
-        </ul>
-      </Card>
+      {runs.length === 0 && (
+        <Card className="mt-4">
+          <EmptyState message="No runs available" hint="Create some runs first" />
+        </Card>
+      )}
     </>
   );
 }
@@ -93,112 +91,123 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
       <Card className="mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <h3 className="text-xs text-muted uppercase tracking-wider mb-1">Run A (Baseline)</h3>
-            <p><Link to={`/runs/${run_a.run_id}`}>{run_a.run_name || 'Unnamed Run'}</Link></p>
-            <p className="font-mono text-sm text-muted">{shortId(run_a.run_id)}</p>
-            <p className="text-muted text-sm">{run_a.project} · {timeAgo(run_a.created_at)}</p>
+            <h3 className="text-sm text-muted mb-2">Run A (Baseline)</h3>
+            <Link to={`/runs/${run_a.run_id}`} className="text-primary hover:underline font-medium">
+              {run_a.run_name || 'Unnamed run'}
+            </Link>
+            <p className="text-xs text-muted mt-1">
+              {shortId(run_a.run_id)} • {run_a.project} • {timeAgo(run_a.created_at)}
+            </p>
           </div>
           <div>
-            <h3 className="text-xs text-muted uppercase tracking-wider mb-1">Run B (Candidate)</h3>
-            <p><Link to={`/runs/${run_b.run_id}`}>{run_b.run_name || 'Unnamed Run'}</Link></p>
-            <p className="font-mono text-sm text-muted">{shortId(run_b.run_id)}</p>
-            <p className="text-muted text-sm">{run_b.project} · {timeAgo(run_b.created_at)}</p>
+            <h3 className="text-sm text-muted mb-2">Run B (Candidate)</h3>
+            <Link to={`/runs/${run_b.run_id}`} className="text-primary hover:underline font-medium">
+              {run_b.run_name || 'Unnamed run'}
+            </Link>
+            <p className="text-xs text-muted mt-1">
+              {shortId(run_b.run_id)} • {run_b.project} • {timeAgo(run_b.created_at)}
+            </p>
           </div>
         </div>
       </Card>
 
-      {/* Metadata & Fingerprints */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <Card>
-          <CardHeader><CardTitle>Metadata</CardTitle></CardHeader>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="text-muted font-medium w-2/5">Project</TableCell>
-                <TableCell><DiffCell match={report.metadata.project_match} /></TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted font-medium">Backend</TableCell>
-                <TableCell><DiffCell match={report.metadata.backend_match} /></TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </Card>
+      {/* Metadata */}
+      <Card className="mb-4">
+        <CardHeader><CardTitle>Metadata</CardTitle></CardHeader>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="text-muted font-medium w-2/5">Project</TableCell>
+              <TableCell><DiffCell match={report.metadata.project_match} /></TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted font-medium">Backend</TableCell>
+              <TableCell><DiffCell match={report.metadata.backend_match} /></TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Card>
 
-        <Card>
-          <CardHeader><CardTitle>Fingerprints</CardTitle></CardHeader>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="text-muted font-medium w-1/3">Run A</TableCell>
-                <TableCell className="font-mono text-sm">{shortDigest(report.fingerprints.a)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted font-medium">Run B</TableCell>
-                <TableCell className="font-mono text-sm">{shortDigest(report.fingerprints.b)}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted font-medium">Match</TableCell>
-                <TableCell><DiffCell match={report.fingerprints.a === report.fingerprints.b} /></TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </Card>
-      </div>
+      {/* Fingerprints */}
+      <Card className="mb-4">
+        <CardHeader><CardTitle>Fingerprints</CardTitle></CardHeader>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="text-muted font-medium w-2/5">Run A</TableCell>
+              <TableCell className="font-mono text-xs">{shortDigest(report.fingerprints.a)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted font-medium">Run B</TableCell>
+              <TableCell className="font-mono text-xs">{shortDigest(report.fingerprints.b)}</TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted font-medium">Match</TableCell>
+              <TableCell><DiffCell match={report.fingerprints.a === report.fingerprints.b} /></TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Card>
 
-      {/* Program & Device Calibration */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              Program
-              {report.program.exact_match ? (
-                <Badge variant="success">Exact Match</Badge>
-              ) : report.program.structural_match ? (
-                <Badge variant="info">Structural Match</Badge>
-              ) : (
-                <Badge variant="warning">Different</Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <Table>
-            <TableBody>
-              <TableRow>
-                <TableCell className="text-muted font-medium w-2/5">Exact Match</TableCell>
-                <TableCell><DiffCell match={report.program.exact_match} /></TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="text-muted font-medium">Structural Match</TableCell>
-                <TableCell><DiffCell match={report.program.structural_match} /></TableCell>
-              </TableRow>
-            </TableBody>
-          </Table>
-        </Card>
+      {/* Program */}
+      <Card className="mb-4">
+        <CardHeader>
+          <CardTitle>
+            Program
+            <Badge variant={report.program.exact_match ? 'success' : 'warning'}>
+              {report.program.exact_match ? 'Exact Match' : 'Different'}
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <Table>
+          <TableBody>
+            <TableRow>
+              <TableCell className="text-muted font-medium w-2/5">Exact Match</TableCell>
+              <TableCell><DiffCell match={report.program.exact_match} /></TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell className="text-muted font-medium">Structural Match</TableCell>
+              <TableCell><DiffCell match={report.program.structural_match} /></TableCell>
+            </TableRow>
+          </TableBody>
+        </Table>
+      </Card>
 
-        <Card>
+      {/* Device Drift */}
+      {report.device_drift && (
+        <Card className="mb-4">
           <CardHeader>
             <CardTitle>
               Device Calibration
-              {report.device_drift?.significant_drift ? (
-                <Badge variant="warning">Drifted</Badge>
-              ) : report.device_drift?.has_calibration_data ? (
-                <Badge variant="success">Stable</Badge>
-              ) : (
-                <Badge variant="gray">N/A</Badge>
-              )}
+              <Badge variant={report.device_drift.significant_drift ? 'warning' : 'success'}>
+                {report.device_drift.significant_drift ? 'Significant Drift' : 'Stable'}
+              </Badge>
             </CardTitle>
           </CardHeader>
-          {report.device_drift?.significant_drift ? (
-            <p className="text-sm text-warning">⚠ Significant calibration drift detected.</p>
-          ) : !report.device_drift?.has_calibration_data ? (
-            <p className="text-muted">No calibration data available</p>
-          ) : (
-            <p className="text-muted">Calibration within acceptable thresholds</p>
+          {report.device_drift.top_drifts && report.device_drift.top_drifts.length > 0 && (
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableHeader>Metric</TableHeader>
+                  <TableHeader>Change</TableHeader>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {report.device_drift.top_drifts.map((drift: { metric: string; percent_change?: number }) => (
+                  <TableRow key={drift.metric}>
+                    <TableCell>{drift.metric}</TableCell>
+                    <TableCell className="font-mono">
+                      {drift.percent_change !== undefined ? `${drift.percent_change.toFixed(1)}%` : 'N/A'}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           )}
         </Card>
-      </div>
+      )}
 
-      {/* Parameters */}
+      {/* Params */}
       <Card className="mb-4">
         <CardHeader>
           <CardTitle>
@@ -227,8 +236,8 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
                     {Object.entries(report.params.changed).map(([key, values]) => (
                       <TableRow key={key}>
                         <TableCell>{key}</TableCell>
-                        <TableCell className="font-mono">{String(values.a)}</TableCell>
-                        <TableCell className="font-mono">{String(values.b)}</TableCell>
+                        <TableCell className="font-mono">{String((values as { a: unknown; b: unknown }).a)}</TableCell>
+                        <TableCell className="font-mono">{String((values as { a: unknown; b: unknown }).b)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -268,8 +277,8 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
                     {Object.entries(report.metrics.changed).map(([key, values]) => (
                       <TableRow key={key}>
                         <TableCell>{key}</TableCell>
-                        <TableCell className="font-mono">{values.a}</TableCell>
-                        <TableCell className="font-mono">{values.b}</TableCell>
+                        <TableCell className="font-mono">{(values as { a: number; b: number }).a}</TableCell>
+                        <TableCell className="font-mono">{(values as { a: number; b: number }).b}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -280,21 +289,27 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
         )}
       </Card>
 
-      {/* TVD Results */}
-      {report.tvd !== undefined && report.tvd !== null && (
+      {/* TVD */}
+      {report.tvd !== undefined && (
         <Card className="mb-4">
-          <CardHeader><CardTitle>Results</CardTitle></CardHeader>
+          <CardHeader><CardTitle>Total Variation Distance</CardTitle></CardHeader>
           <Table>
             <TableBody>
               <TableRow>
-                <TableCell className="text-muted font-medium w-2/5">Total Variation Distance (TVD)</TableCell>
+                <TableCell className="text-muted font-medium">TVD</TableCell>
                 <TableCell className="font-mono">{report.tvd.toFixed(6)}</TableCell>
               </TableRow>
               {report.shots && (
-                <TableRow>
-                  <TableCell className="text-muted font-medium">Total Shots (A / B)</TableCell>
-                  <TableCell className="font-mono">{report.shots.a} / {report.shots.b}</TableCell>
-                </TableRow>
+                <>
+                  <TableRow>
+                    <TableCell className="text-muted font-medium">Shots A</TableCell>
+                    <TableCell className="font-mono">{report.shots.a}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted font-medium">Shots B</TableCell>
+                    <TableCell className="font-mono">{report.shots.b}</TableCell>
+                  </TableRow>
+                </>
               )}
             </TableBody>
           </Table>
@@ -306,7 +321,7 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
         <Card>
           <CardHeader><CardTitle>Warnings</CardTitle></CardHeader>
           <ul className="list-disc pl-5 space-y-1">
-            {report.warnings.map((warning, idx) => (
+            {report.warnings.map((warning: string, idx: number) => (
               <li key={idx} className="text-sm text-warning">{warning}</li>
             ))}
           </ul>

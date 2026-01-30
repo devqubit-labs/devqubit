@@ -5,9 +5,9 @@
 import { forwardRef, type InputHTMLAttributes, type SelectHTMLAttributes, type LabelHTMLAttributes } from 'react';
 import { cn } from '../../utils';
 
-type LabelProps = LabelHTMLAttributes<HTMLLabelElement>;
-type InputProps = InputHTMLAttributes<HTMLInputElement>;
-type SelectProps = SelectHTMLAttributes<HTMLSelectElement>;
+export type LabelProps = LabelHTMLAttributes<HTMLLabelElement>;
+export type InputProps = InputHTMLAttributes<HTMLInputElement>;
+export type SelectProps = SelectHTMLAttributes<HTMLSelectElement>;
 
 export interface FormGroupProps {
   children: React.ReactNode;

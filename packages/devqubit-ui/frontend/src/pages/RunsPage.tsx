@@ -8,7 +8,7 @@ import { Layout, PageHeader } from '../components/Layout';
 import { Card, Button, Spinner, FormGroup, FormRow, Label, Input, Select } from '../components/ui';
 import { RunsTable } from '../components/RunsTable';
 import { useRuns, useProjects, useApp, useMutation } from '../hooks';
-import type { RunFilters, RunStatus } from '../types';
+import type { RunFilters, RunStatus, Project } from '../types';
 
 export function RunsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -55,7 +55,7 @@ export function RunsPage() {
               onChange={(e) => updateFilter('project', e.target.value)}
             >
               <option value="">All projects</option>
-              {projectsData?.map((p) => (
+              {projectsData?.map((p: Project) => (
                 <option key={p.name} value={p.name}>{p.name}</option>
               ))}
             </Select>
