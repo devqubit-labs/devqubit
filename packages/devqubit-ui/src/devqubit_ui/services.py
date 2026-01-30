@@ -18,10 +18,10 @@ Using services in a route:
 >>> from devqubit_ui.services import RunService
 >>>
 >>> @router.get("/runs/{run_id}")
->>> async def run_detail(run_id: str, registry: RegistryDep, store: StoreDep):
-...     service = RunService(registry, store)
+>>> async def run_detail(run_id: str, registry: RegistryDep):
+...     service = RunService(registry)
 ...     run = service.get_run(run_id)
-...     return templates.TemplateResponse("run_detail.html", {"run": run})
+...     return JSONResponse(content={"run": run})
 """
 
 from __future__ import annotations

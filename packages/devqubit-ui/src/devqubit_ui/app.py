@@ -2,357 +2,106 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-devqubit UI FastAPI application factory.
+DevQubit UI Application Factory.
 
-This module provides the app factory and server runner for the devqubit
-web interface. Built on FastAPI with Jinja2 templates and HTMX for
-progressive enhancement.
-
-Examples
---------
-Create app with default configuration:
-
->>> app = create_app()
-
-Create app with custom workspace:
-
->>> app = create_app(workspace="/path/to/workspace")
-
-Run development server:
-
->>> run_server(debug=True, port=8080)
+Creates and configures the FastAPI application with API routers
+and static file serving for the React frontend.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from contextlib import asynccontextmanager
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as get_version
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Callable
 
-import uvicorn
-from devqubit_engine.config import Config
-from devqubit_engine.storage.factory import create_registry, create_store
-from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
-from devqubit_ui.filters import register_filters
-from devqubit_ui.plugins import load_ui_plugins
-from fastapi import FastAPI
+from devqubit_ui.plugins import PluginManager
+from devqubit_ui.routers import api
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 
 
 logger = logging.getLogger(__name__)
 
-# Template engine - initialized once, shared across requests
-_templates_dir = Path(__file__).parent / "templates"
-templates = Jinja2Templates(directory=str(_templates_dir))
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """
-    Application lifespan context manager.
-
-    Handles startup and shutdown events for the FastAPI application.
-    Currently logs initialization; can be extended for connection pooling,
-    background tasks, etc.
-
-    Parameters
-    ----------
-    app : FastAPI
-        The FastAPI application instance.
-
-    Yields
-    ------
-    None
-        Control returns to the application during its lifetime.
-    """
-    logger.info(
-        "devqubit UI started - workspace: %s",
-        getattr(app.state, "workspace", "unknown"),
-    )
-    yield
-    logger.info("devqubit UI shutting down")
-
 
 def create_app(
-    workspace: str | Path | None = None,
-    config: Config | None = None,
-    registry: "RegistryProtocol | None" = None,
-    store: "ObjectStoreProtocol | None" = None,
+    registry_factory: Callable | None = None,
+    plugin_manager: PluginManager | None = None,
 ) -> FastAPI:
     """
-    Create the devqubit UI FastAPI application.
-
-    Factory function that creates and configures a FastAPI application
-    with all routes, templates, and dependencies.
+    Create and configure the FastAPI application.
 
     Parameters
     ----------
-    workspace : str or Path, optional
-        Workspace directory containing devqubit data.
-        Defaults to ``~/.devqubit`` or ``DEVQUBIT_HOME`` environment variable.
-    config : Config, optional
-        Pre-configured Config object. If not provided, one is created
-        from the workspace path.
-    registry : RegistryProtocol, optional
-        Pre-configured registry instance. Useful for testing with mocks.
-    store : ObjectStoreProtocol, optional
-        Pre-configured object store instance. Useful for testing with mocks.
+    registry_factory : Callable, optional
+        Factory function that returns a RunRegistry instance.
+        If not provided, uses default from devqubit.
+    plugin_manager : PluginManager, optional
+        Plugin manager for extending functionality.
 
     Returns
     -------
     FastAPI
-        Fully configured FastAPI application ready to serve requests.
-
-    Examples
-    --------
-    Basic usage with defaults:
-
-    >>> app = create_app()
-    >>> # app is now ready for uvicorn
-
-    Testing with mock dependencies:
-
-    >>> from unittest.mock import Mock
-    >>> mock_registry = Mock()
-    >>> app = create_app(registry=mock_registry)
-
-    Notes
-    -----
-    The application stores dependencies in ``app.state`` for access in routes:
-
-    - ``app.state.config`` - Configuration object
-    - ``app.state.registry`` - Run registry
-    - ``app.state.store`` - Object store
-    - ``app.state.workspace`` - Workspace path string
+        Configured application instance.
     """
-    try:
-        _version = get_version("devqubit-ui")
-    except PackageNotFoundError:
-        _version = "0.0.0"
-
     app = FastAPI(
         title="devqubit UI",
-        description="Web interface for devqubit experiment tracking",
-        version=_version,
-        lifespan=lifespan,
+        description="Experiment tracking UI for quantum computing",
+        version="0.1.9",
     )
 
-    # Initialize configuration
-    if config is None:
-        if workspace:
-            ws_path = Path(workspace).expanduser()
-        else:
-            ws_path = Path(os.environ.get("DEVQUBIT_HOME", "~/.devqubit")).expanduser()
-        config = Config(root_dir=ws_path)
-
-    # Initialize storage backends
-    if registry is None:
-        registry = create_registry(config=config)
-    if store is None:
-        store = create_store(config=config)
-
-    # Store dependencies in app.state for route access
-    app.state.config = config
-    app.state.registry = registry
-    app.state.store = store
-    app.state.workspace = str(config.root_dir)
-
-    # Mount static files
-    static_dir = Path(__file__).parent / "static"
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    # Register Jinja2 template filters
-    register_filters(templates)
-
-    # Register API routers
-    _register_routers(app)
-
-    # Load plugins (enterprise extensions, community plugins)
-    load_ui_plugins(app)
-
-    logger.info("devqubit UI initialized - workspace: %s", config.root_dir)
-
-    return app
-
-
-def _register_routers(app: FastAPI) -> None:
-    """
-    Register all API routers with the application.
-
-    Internal function that imports and includes all route modules.
-
-    Parameters
-    ----------
-    app : FastAPI
-        The FastAPI application to register routes with.
-    """
-    from devqubit_ui.routers import (
-        api,
-        artifacts,
-        diff,
-        groups,
-        projects,
-        runs,
+    # CORS for development
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
-    # Core page routes
-    app.include_router(runs.router, tags=["runs"])
-    app.include_router(projects.router, tags=["projects"])
-    app.include_router(groups.router, tags=["groups"])
-    app.include_router(diff.router, tags=["diff"])
-    app.include_router(artifacts.router, tags=["artifacts"])
+    # Store registry factory in app state
+    if registry_factory is None:
+        from devqubit import get_registry
 
-    # API routes (JSON endpoints)
+        registry_factory = get_registry
+    app.state.registry_factory = registry_factory
+
+    # Store plugin manager
+    if plugin_manager is None:
+        plugin_manager = PluginManager()
+    app.state.plugin_manager = plugin_manager
+
+    # Include API router
     app.include_router(api.router, prefix="/api", tags=["api"])
 
+    # Serve React frontend
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists() and (static_dir / "index.html").exists():
+        # Mount assets directory for JS/CSS bundles
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-def _run_in_thread(
-    app: FastAPI,
-    host: str,
-    port: int,
-    log_level: str,
-) -> None:
-    """
-    Run uvicorn server in a background thread.
+        @app.get("/{full_path:path}", response_class=HTMLResponse)
+        async def serve_spa(request: Request, full_path: str):
+            """
+            Serve React SPA for all non-API routes.
 
-    Used when running in Jupyter notebooks or other environments
-    with an existing asyncio event loop.
+            This catch-all handler serves index.html for client-side routing.
+            API routes are handled by the router above.
+            """
+            # Don't serve SPA for API routes (should be handled by router)
+            if full_path.startswith("api/"):
+                return HTMLResponse(status_code=404, content="Not found")
+            return FileResponse(static_dir / "index.html")
 
-    Note: We create our own event loop instead of using server.run()
-    to avoid compatibility issues with nest_asyncio and newer uvicorn
-    versions that pass loop_factory to asyncio.run().
-    """
-    import asyncio
-    import threading
-    import time
-
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
-    server = uvicorn.Server(config)
-
-    def run_server() -> None:
-        """Run server with its own event loop."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(server.serve())
-        finally:
-            loop.close()
-
-    thread = threading.Thread(target=run_server, daemon=True, name="devqubit-ui")
-    thread.start()
-
-    # Wait briefly for server to start and get actual port
-    time.sleep(0.5)
-
-    # Try to get the actual bound port
-    actual_port = port
-    if hasattr(server, "servers") and server.servers:
-        for s in server.servers:
-            if s.sockets:
-                actual_port = s.sockets[0].getsockname()[1]
-                break
-
-    print(f"\n  devqubit UI: http://{host}:{actual_port}")
-    print(f"  Workspace: {app.state.workspace}")
-    print("  Running in background thread (Jupyter mode)")
-    print("  Restart kernel to stop\n")
-
-
-def run_server(
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    workspace: str | None = None,
-    config: Config | None = None,
-    debug: bool = False,
-    reload: bool = False,
-) -> None:
-    """
-    Run the devqubit UI server.
-
-    Convenience function to start the server with uvicorn. For production
-    deployments, use uvicorn directly or a production ASGI server.
-
-    Parameters
-    ----------
-    host : str, default="127.0.0.1"
-        Host address to bind to. Use "0.0.0.0" for all interfaces.
-    port : int, default=8080
-        Port number to listen on.
-    workspace : str, optional
-        Workspace directory path.
-    config : Config, optional
-        Pre-configured Config object.
-    debug : bool, default=False
-        Enable debug mode with verbose logging.
-    reload : bool, default=False
-        Enable auto-reload on code changes (development only).
-
-    Examples
-    --------
-    Start development server:
-
-    >>> run_server(debug=True, reload=True)
-
-    Start on all interfaces:
-
-    >>> run_server(host="0.0.0.0", port=80)
-
-    Notes
-    -----
-    For production, use:
-
-    .. code-block:: bash
-
-        uvicorn devqubit_ui.app:create_app --factory --host 0.0.0.0 --port 8080
-    """
-    import asyncio
-
-    # Configure logging
-    log_level = "debug" if debug else "info"
-    logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
-
-    # For reload mode, uvicorn needs factory pattern
-    if reload:
-        if workspace:
-            os.environ["DEVQUBIT_HOME"] = workspace
-        uvicorn.run(
-            "devqubit_ui.app:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            reload=True,
-            log_level=log_level,
-        )
-        return
-
-    app = create_app(workspace=workspace, config=config)
-
-    # Check if we're in a running event loop (e.g., Jupyter)
-    try:
-        asyncio.get_running_loop()
-        in_async_context = True
-    except RuntimeError:
-        in_async_context = False
-
-    if in_async_context:
-        # Run in background thread for Jupyter/async contexts
-        _run_in_thread(app, host, port, log_level)
+        logger.info("Serving React frontend from %s", static_dir)
     else:
-        # Normal blocking run
-        print(f"\n  devqubit UI: http://{host}:{port}")
-        print(f"  Workspace: {app.state.workspace}")
-        print("  Press Ctrl+C to stop\n")
-        uvicorn.run(app, host=host, port=port, log_level=log_level)
+        logger.warning(
+            "Static frontend not found at %s. "
+            "Run 'npm run build' in frontend/ and copy dist/ to static/",
+            static_dir,
+        )
 
-
-if __name__ == "__main__":
-    run_server(debug=True)
+    return app
