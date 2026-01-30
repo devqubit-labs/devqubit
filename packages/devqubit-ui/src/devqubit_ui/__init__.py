@@ -5,8 +5,7 @@
 devqubit Web UI.
 
 A modern web interface for browsing experiment runs, viewing artifacts,
-and comparing results. Built on FastAPI with Jinja2 templates and HTMX
-for progressive enhancement.
+and comparing results. Built on FastAPI with a React frontend.
 
 This package provides:
 
@@ -33,11 +32,11 @@ Architecture
 The UI follows a modular architecture:
 
 - ``app.py`` - Application factory and server runner
-- ``routers/`` - FastAPI route handlers (one per feature area)
-- ``templates/`` - Jinja2 templates with HTMX integration
-- ``filters.py`` - Custom Jinja2 template filters
+- ``routers/api.py`` - JSON API endpoints for the React frontend
+- ``static/`` - Built React SPA (served automatically)
 - ``plugins.py`` - Plugin discovery and loading
 - ``dependencies.py`` - FastAPI dependency injection utilities
+- ``services.py`` - Service layer for business logic
 
 Notes
 -----
@@ -47,10 +46,12 @@ between versions. For programmatic access, prefer the core ``devqubit``
 API or the JSON endpoints at ``/api/*``.
 """
 
-__version__ = "0.1.9"
-
+from importlib.metadata import version
 
 from devqubit_ui.app import create_app, run_server
+
+
+__version__ = version("devqubit-ui")
 
 
 __all__ = [

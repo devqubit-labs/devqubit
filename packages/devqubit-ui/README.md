@@ -34,15 +34,16 @@ run_server(port=8080)
 
 ## Features
 
-- **Run browser** — List, filter, search runs with live HTMX updates
+- **Run browser** — List, filter, and search runs
 - **Run details** — Parameters, metrics, tags, artifacts
-- **Artifact viewer** — View JSON/text; large files (>2MB) download-only
+- **Artifact viewer** — View JSON/text; large files download-only
 - **Diff view** — Compare runs side-by-side with TVD analysis
 - **Projects & groups** — Organize and navigate experiments
 - **REST API** — JSON endpoints at `/api/*` for programmatic access
 - **Plugin system** — Extend UI via entry points
 
 ## Production
+
 ```bash
 uvicorn devqubit_ui.app:create_app --factory --host 0.0.0.0 --port 8080
 ```

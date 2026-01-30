@@ -12,7 +12,7 @@ license-files = ["LICENSE*"]
 requires-python = ">=3.11,<3.14"
 
 authors = [{ name = "devqubit" }]
-keywords = ["devqubit", "experiment-tracking", "web-ui", "fastapi"]
+keywords = ["devqubit", "experiment-tracking", "web-ui", "fastapi", "react"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -30,7 +30,6 @@ dependencies = [
     "devqubit-engine>=0.1.9,<0.2.0",
     "fastapi>=0.128.0",
     "httpx>=0.28.1",
-    "jinja2>=3.1.6",
     "uvicorn[standard]>=0.40.0",
 ]
 
@@ -39,6 +38,9 @@ ui = "devqubit_ui._plugin:register"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/devqubit_ui"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
 
 [tool.uv.sources]
 devqubit-engine = { workspace = true }

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Pytest configuration and shared fixtures for devqubit UI tests."""
+"""Pytest fixtures for devqubit UI tests."""
 
 from __future__ import annotations
 
@@ -14,14 +14,7 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def mock_registry() -> Mock:
-    """
-    Create a mock registry for testing.
-
-    Returns
-    -------
-    Mock
-        Mock registry with common methods stubbed.
-    """
+    """Create a mock registry."""
     registry = Mock()
     registry.list_runs.return_value = []
     registry.list_projects.return_value = []
@@ -29,19 +22,13 @@ def mock_registry() -> Mock:
     registry.count_runs.return_value = 0
     registry.get_baseline.return_value = None
     registry.delete.return_value = True
+    registry.search_runs.return_value = []
     return registry
 
 
 @pytest.fixture
 def mock_store() -> Mock:
-    """
-    Create a mock object store for testing.
-
-    Returns
-    -------
-    Mock
-        Mock store with common methods stubbed.
-    """
+    """Create a mock object store."""
     store = Mock()
     store.get_bytes.return_value = b'{"test": "data"}'
     return store
@@ -49,14 +36,7 @@ def mock_store() -> Mock:
 
 @pytest.fixture
 def mock_config() -> Mock:
-    """
-    Create a mock configuration for testing.
-
-    Returns
-    -------
-    Mock
-        Mock config with root_dir set.
-    """
+    """Create a mock configuration."""
     config = Mock()
     config.root_dir = "/tmp/devqubit-test"
     return config
@@ -64,24 +44,7 @@ def mock_config() -> Mock:
 
 @pytest.fixture
 def app(mock_registry: Mock, mock_store: Mock, mock_config: Mock) -> Any:
-    """
-    Create a test FastAPI application with mocked dependencies.
-
-    Parameters
-    ----------
-    mock_registry : Mock
-        Mocked registry.
-    mock_store : Mock
-        Mocked object store.
-    mock_config : Mock
-        Mocked configuration.
-
-    Returns
-    -------
-    FastAPI
-        Configured FastAPI application for testing.
-    """
-    # Import here to avoid issues if devqubit is not installed
+    """Create test FastAPI application."""
     try:
         from devqubit_ui.app import create_app
 
@@ -91,23 +54,11 @@ def app(mock_registry: Mock, mock_store: Mock, mock_config: Mock) -> Any:
             store=mock_store,
         )
     except ImportError:
-        pytest.skip("devqubit not installed")
+        pytest.skip("devqubit-ui not installed")
 
 
 @pytest.fixture
 def client(app: Any) -> Generator[TestClient, None, None]:
-    """
-    Create a test client for the FastAPI application.
-
-    Parameters
-    ----------
-    app : FastAPI
-        The FastAPI application.
-
-    Yields
-    ------
-    TestClient
-        HTTP test client.
-    """
-    with TestClient(app) as client:
-        yield client
+    """Create test client."""
+    with TestClient(app) as c:
+        yield c
