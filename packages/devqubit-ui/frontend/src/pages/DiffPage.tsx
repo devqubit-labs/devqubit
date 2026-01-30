@@ -1,5 +1,5 @@
 /**
- * DevQubit UI Diff Page
+ * DevQubit UI Diff Page - matching original diff.html
  */
 
 import { useState } from 'react';
@@ -60,19 +60,22 @@ function DiffSelect() {
         </form>
       </Card>
 
-      {runs.length === 0 && (
-        <Card className="mt-4">
-          <EmptyState message="No runs available" hint="Create some runs first" />
-        </Card>
-      )}
+      <Card className="mt-4">
+        <CardHeader><CardTitle>Tips</CardTitle></CardHeader>
+        <ul className="text-muted text-sm list-disc pl-6 space-y-1">
+          <li>Select two runs to compare their parameters, metrics, and artifacts</li>
+          <li>The diff will show which parameters changed and compute TVD for result distributions</li>
+          <li>You can also compare from the run detail page against the project baseline</li>
+        </ul>
+      </Card>
     </>
   );
 }
 
-function DiffCell({ match }: { match: boolean }) {
+function DiffCell({ match, yesText = '✓ Match', noText = '✗ Different' }: { match: boolean; yesText?: string; noText?: string }) {
   return (
     <span className={match ? 'diff-match' : 'diff-mismatch'}>
-      {match ? '✓ Match' : '✗ Different'}
+      {match ? yesText : noText}
     </span>
   );
 }
@@ -91,123 +94,177 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
       <Card className="mb-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <h3 className="text-sm text-muted mb-2">Run A (Baseline)</h3>
-            <Link to={`/runs/${run_a.run_id}`} className="text-primary hover:underline font-medium">
-              {run_a.run_name || 'Unnamed run'}
-            </Link>
-            <p className="text-xs text-muted mt-1">
-              {shortId(run_a.run_id)} • {run_a.project} • {timeAgo(run_a.created_at)}
-            </p>
+            <h3 className="text-sm text-muted uppercase tracking-wider mb-1">Run A (Baseline)</h3>
+            <p><Link to={`/runs/${run_a.run_id}`} className="text-primary hover:underline">{run_a.run_name || 'Unnamed Run'}</Link></p>
+            <p className="font-mono text-sm text-muted">{shortId(run_a.run_id)}</p>
+            <p className="text-muted text-sm">{run_a.project} · {timeAgo(run_a.created_at)}</p>
           </div>
           <div>
-            <h3 className="text-sm text-muted mb-2">Run B (Candidate)</h3>
-            <Link to={`/runs/${run_b.run_id}`} className="text-primary hover:underline font-medium">
-              {run_b.run_name || 'Unnamed run'}
-            </Link>
-            <p className="text-xs text-muted mt-1">
-              {shortId(run_b.run_id)} • {run_b.project} • {timeAgo(run_b.created_at)}
-            </p>
+            <h3 className="text-sm text-muted uppercase tracking-wider mb-1">Run B (Candidate)</h3>
+            <p><Link to={`/runs/${run_b.run_id}`} className="text-primary hover:underline">{run_b.run_name || 'Unnamed Run'}</Link></p>
+            <p className="font-mono text-sm text-muted">{shortId(run_b.run_id)}</p>
+            <p className="text-muted text-sm">{run_b.project} · {timeAgo(run_b.created_at)}</p>
           </div>
         </div>
       </Card>
 
-      {/* Metadata */}
-      <Card className="mb-4">
-        <CardHeader><CardTitle>Metadata</CardTitle></CardHeader>
-        <Table>
-          <TableBody>
-            <TableRow>
-              <TableCell className="text-muted font-medium w-2/5">Project</TableCell>
-              <TableCell><DiffCell match={report.metadata.project_match} /></TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className="text-muted font-medium">Backend</TableCell>
-              <TableCell><DiffCell match={report.metadata.backend_match} /></TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </Card>
+      {/* Metadata & Fingerprints */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <Card>
+          <CardHeader><CardTitle>Metadata</CardTitle></CardHeader>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell className="text-muted">Project</TableCell>
+                <TableCell><DiffCell match={report.metadata.project_match} /></TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted">Backend</TableCell>
+                <TableCell><DiffCell match={report.metadata.backend_match} /></TableCell>
+              </TableRow>
+              {!report.metadata.project_match && (
+                <>
+                  <TableRow>
+                    <TableCell className="text-muted text-sm">Project A</TableCell>
+                    <TableCell className="font-mono text-sm">{report.metadata.project_a || 'N/A'}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted text-sm">Project B</TableCell>
+                    <TableCell className="font-mono text-sm">{report.metadata.project_b || 'N/A'}</TableCell>
+                  </TableRow>
+                </>
+              )}
+              {!report.metadata.backend_match && (
+                <>
+                  <TableRow>
+                    <TableCell className="text-muted text-sm">Backend A</TableCell>
+                    <TableCell className="font-mono text-sm">{report.metadata.backend_a || 'N/A'}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted text-sm">Backend B</TableCell>
+                    <TableCell className="font-mono text-sm">{report.metadata.backend_b || 'N/A'}</TableCell>
+                  </TableRow>
+                </>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
 
-      {/* Fingerprints */}
-      <Card className="mb-4">
-        <CardHeader><CardTitle>Fingerprints</CardTitle></CardHeader>
-        <Table>
-          <TableBody>
-            <TableRow>
-              <TableCell className="text-muted font-medium w-2/5">Run A</TableCell>
-              <TableCell className="font-mono text-xs">{shortDigest(report.fingerprints.a)}</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className="text-muted font-medium">Run B</TableCell>
-              <TableCell className="font-mono text-xs">{shortDigest(report.fingerprints.b)}</TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className="text-muted font-medium">Match</TableCell>
-              <TableCell><DiffCell match={report.fingerprints.a === report.fingerprints.b} /></TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </Card>
+        <Card>
+          <CardHeader><CardTitle>Fingerprints</CardTitle></CardHeader>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell className="text-muted">Run A</TableCell>
+                <TableCell className="font-mono text-sm">{shortDigest(report.fingerprints.a)}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted">Run B</TableCell>
+                <TableCell className="font-mono text-sm">{shortDigest(report.fingerprints.b)}</TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted">Match</TableCell>
+                <TableCell><DiffCell match={report.fingerprints.a === report.fingerprints.b} yesText="✓ Yes" noText="✗ No" /></TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </Card>
+      </div>
 
-      {/* Program */}
-      <Card className="mb-4">
-        <CardHeader>
-          <CardTitle>
-            Program
-            <Badge variant={report.program.exact_match ? 'success' : 'warning'}>
-              {report.program.exact_match ? 'Exact Match' : 'Different'}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <Table>
-          <TableBody>
-            <TableRow>
-              <TableCell className="text-muted font-medium w-2/5">Exact Match</TableCell>
-              <TableCell><DiffCell match={report.program.exact_match} /></TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell className="text-muted font-medium">Structural Match</TableCell>
-              <TableCell><DiffCell match={report.program.structural_match} /></TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
-      </Card>
+      {/* Program & Device Calibration */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <Card>
+          <CardHeader>
+            <CardTitle>
+              Program
+              {report.program.exact_match ? (
+                <Badge variant="success">Exact Match</Badge>
+              ) : report.program.structural_match ? (
+                <Badge variant="info">Structural Match</Badge>
+              ) : (
+                <Badge variant="warning">Different</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <Table>
+            <TableBody>
+              <TableRow>
+                <TableCell className="text-muted">Exact Match</TableCell>
+                <TableCell><DiffCell match={report.program.exact_match} yesText="✓ Yes" noText="✗ No" /></TableCell>
+              </TableRow>
+              <TableRow>
+                <TableCell className="text-muted">Structural Match</TableCell>
+                <TableCell><DiffCell match={report.program.structural_match} yesText="✓ Yes" noText="✗ No" /></TableCell>
+              </TableRow>
+              {(report.program.circuit_hash_a || report.program.circuit_hash_b) && (
+                <>
+                  <TableRow>
+                    <TableCell className="text-muted">Circuit Hash A</TableCell>
+                    <TableCell className="font-mono text-sm">{shortDigest(report.program.circuit_hash_a)}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell className="text-muted">Circuit Hash B</TableCell>
+                    <TableCell className="font-mono text-sm">{shortDigest(report.program.circuit_hash_b)}</TableCell>
+                  </TableRow>
+                </>
+              )}
+            </TableBody>
+          </Table>
+          {report.program.structural_only_match && (
+            <p className="text-sm text-muted mt-2">ℹ Same circuit structure with different parameter values (typical for VQE/QAOA).</p>
+          )}
+          {!report.program.exact_match && !report.program.structural_match && (
+            <p className="text-sm text-warning mt-2">⚠ Program artifacts differ between runs.</p>
+          )}
+        </Card>
 
-      {/* Device Drift */}
-      {report.device_drift && (
-        <Card className="mb-4">
+        <Card>
           <CardHeader>
             <CardTitle>
               Device Calibration
-              <Badge variant={report.device_drift.significant_drift ? 'warning' : 'success'}>
-                {report.device_drift.significant_drift ? 'Significant Drift' : 'Stable'}
-              </Badge>
+              {report.device_drift?.significant_drift ? (
+                <Badge variant="warning">Drifted</Badge>
+              ) : report.device_drift?.has_calibration_data ? (
+                <Badge variant="success">Stable</Badge>
+              ) : (
+                <Badge variant="gray">N/A</Badge>
+              )}
             </CardTitle>
           </CardHeader>
-          {report.device_drift.top_drifts && report.device_drift.top_drifts.length > 0 && (
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableHeader>Metric</TableHeader>
-                  <TableHeader>Change</TableHeader>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {report.device_drift.top_drifts.map((drift: { metric: string; percent_change?: number }) => (
-                  <TableRow key={drift.metric}>
-                    <TableCell>{drift.metric}</TableCell>
-                    <TableCell className="font-mono">
-                      {drift.percent_change !== undefined ? `${drift.percent_change.toFixed(1)}%` : 'N/A'}
-                    </TableCell>
+          {report.device_drift?.significant_drift ? (
+            <p className="text-sm text-warning">⚠ Significant calibration drift detected. Results may not be directly comparable.</p>
+          ) : report.device_drift && !report.device_drift.has_calibration_data ? (
+            <p className="text-muted">No calibration data available</p>
+          ) : report.device_drift?.has_calibration_data ? (
+            <p className="text-muted">Calibration within acceptable thresholds</p>
+          ) : (
+            <p className="text-muted">No calibration data available</p>
+          )}
+          {report.device_drift?.top_drifts && report.device_drift.top_drifts.length > 0 && (
+            <>
+              <h4 className="text-sm text-muted mb-2 mt-4">Top Drifting Metrics</h4>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableHeader>Metric</TableHeader>
+                    <TableHeader>Change</TableHeader>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHead>
+                <TableBody>
+                  {report.device_drift.top_drifts.slice(0, 5).map((d: { metric: string; percent_change?: number }) => (
+                    <TableRow key={d.metric}>
+                      <TableCell>{d.metric}</TableCell>
+                      <TableCell className="font-mono">{d.percent_change != null ? `${d.percent_change.toFixed(1)}%` : 'N/A'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </>
           )}
         </Card>
-      )}
+      </div>
 
-      {/* Params */}
+      {/* Parameters */}
       <Card className="mb-4">
         <CardHeader>
           <CardTitle>
@@ -239,6 +296,32 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
                         <TableCell className="font-mono">{String((values as { a: unknown; b: unknown }).a)}</TableCell>
                         <TableCell className="font-mono">{String((values as { a: unknown; b: unknown }).b)}</TableCell>
                       </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+            {report.params.removed && Object.keys(report.params.removed).length > 0 && (
+              <>
+                <h4 className="text-sm text-muted mb-2 mt-4">Only in Run A</h4>
+                <Table>
+                  <TableHead><TableRow><TableHeader>Parameter</TableHeader><TableHeader>Value</TableHeader></TableRow></TableHead>
+                  <TableBody>
+                    {Object.entries(report.params.removed).map(([key, value]) => (
+                      <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="font-mono">{String(value)}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+            {report.params.added && Object.keys(report.params.added).length > 0 && (
+              <>
+                <h4 className="text-sm text-muted mb-2 mt-4">Only in Run B</h4>
+                <Table>
+                  <TableHead><TableRow><TableHeader>Parameter</TableHeader><TableHeader>Value</TableHeader></TableRow></TableHead>
+                  <TableBody>
+                    {Object.entries(report.params.added).map(([key, value]) => (
+                      <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="font-mono">{String(value)}</TableCell></TableRow>
                     ))}
                   </TableBody>
                 </Table>
@@ -285,34 +368,161 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
                 </Table>
               </>
             )}
+            {report.metrics.removed && Object.keys(report.metrics.removed).length > 0 && (
+              <>
+                <h4 className="text-sm text-muted mb-2 mt-4">Only in Run A</h4>
+                <Table>
+                  <TableHead><TableRow><TableHeader>Metric</TableHeader><TableHeader>Value</TableHeader></TableRow></TableHead>
+                  <TableBody>
+                    {Object.entries(report.metrics.removed).map(([key, value]) => (
+                      <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="font-mono">{String(value)}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
+            {report.metrics.added && Object.keys(report.metrics.added).length > 0 && (
+              <>
+                <h4 className="text-sm text-muted mb-2 mt-4">Only in Run B</h4>
+                <Table>
+                  <TableHead><TableRow><TableHeader>Metric</TableHeader><TableHeader>Value</TableHeader></TableRow></TableHead>
+                  <TableBody>
+                    {Object.entries(report.metrics.added).map(([key, value]) => (
+                      <TableRow key={key}><TableCell>{key}</TableCell><TableCell className="font-mono">{String(value)}</TableCell></TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </>
+            )}
           </>
         )}
       </Card>
 
-      {/* TVD */}
-      {report.tvd !== undefined && (
+      {/* Circuit Diff */}
+      {report.circuit_diff && (
         <Card className="mb-4">
-          <CardHeader><CardTitle>Total Variation Distance</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>
+              Circuit
+              <Badge variant={report.circuit_diff.match ? 'success' : 'warning'}>
+                {report.circuit_diff.match ? 'Match' : 'Different'}
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+          {report.circuit_diff.changed && Object.keys(report.circuit_diff.changed).length > 0 && (
+            <>
+              <h4 className="text-sm text-muted mb-2">Changed</h4>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableHeader>Property</TableHeader>
+                    <TableHeader>Run A</TableHeader>
+                    <TableHeader>Run B</TableHeader>
+                    <TableHeader>Delta</TableHeader>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {Object.entries(report.circuit_diff.changed).map(([key, values]) => {
+                    const v = values as { a: unknown; b: unknown; label?: string; delta?: number; pct?: number };
+                    return (
+                      <TableRow key={key}>
+                        <TableCell>{v.label || key}</TableCell>
+                        <TableCell className="font-mono">{String(v.a)}</TableCell>
+                        <TableCell className="font-mono">{String(v.b)}</TableCell>
+                        <TableCell className="font-mono">
+                          {v.delta != null && <>{v.delta > 0 ? '+' : ''}{v.delta}{v.pct != null && ` (${v.pct > 0 ? '+' : ''}${v.pct.toFixed(1)}%)`}</>}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </>
+          )}
+          {report.circuit_diff.is_clifford_changed && (
+            <>
+              <h4 className="text-sm text-muted mb-2 mt-4">Clifford Status</h4>
+              <Table>
+                <TableBody>
+                  <TableRow><TableCell className="text-muted">Run A</TableCell><TableCell className="font-mono">{report.circuit_diff.is_clifford_a ?? 'unknown'}</TableCell></TableRow>
+                  <TableRow><TableCell className="text-muted">Run B</TableCell><TableCell className="font-mono">{report.circuit_diff.is_clifford_b ?? 'unknown'}</TableCell></TableRow>
+                </TableBody>
+              </Table>
+            </>
+          )}
+          {report.circuit_diff.added_gates && report.circuit_diff.added_gates.length > 0 && (
+            <>
+              <h4 className="text-sm text-muted mb-2 mt-4">New Gate Types (in B)</h4>
+              <p className="font-mono text-sm">{report.circuit_diff.added_gates.join(', ')}</p>
+            </>
+          )}
+          {report.circuit_diff.removed_gates && report.circuit_diff.removed_gates.length > 0 && (
+            <>
+              <h4 className="text-sm text-muted mb-2 mt-4">Removed Gate Types (from A)</h4>
+              <p className="font-mono text-sm">{report.circuit_diff.removed_gates.join(', ')}</p>
+            </>
+          )}
+          {report.circuit_diff.match && <p className="text-muted">Circuit structure matches</p>}
+        </Card>
+      )}
+
+      {/* Results / TVD */}
+      {report.tvd != null && (
+        <Card className="mb-4">
+          <CardHeader><CardTitle>Results</CardTitle></CardHeader>
           <Table>
             <TableBody>
               <TableRow>
-                <TableCell className="text-muted font-medium">TVD</TableCell>
+                <TableCell className="text-muted">Total Variation Distance (TVD)</TableCell>
                 <TableCell className="font-mono">{report.tvd.toFixed(6)}</TableCell>
               </TableRow>
               {report.shots && (
+                <TableRow>
+                  <TableCell className="text-muted">Total Shots (A / B)</TableCell>
+                  <TableCell className="font-mono">{report.shots.a} / {report.shots.b}</TableCell>
+                </TableRow>
+              )}
+              {report.noise_context && (
                 <>
                   <TableRow>
-                    <TableCell className="text-muted font-medium">Shots A</TableCell>
-                    <TableCell className="font-mono">{report.shots.a}</TableCell>
+                    <TableCell className="text-muted">Noise Threshold (p95)</TableCell>
+                    <TableCell className="font-mono">
+                      {(report.noise_context.noise_p95 ?? (report.noise_context.expected_noise ?? 0) * 2).toFixed(6)}
+                    </TableCell>
                   </TableRow>
-                  <TableRow>
-                    <TableCell className="text-muted font-medium">Shots B</TableCell>
-                    <TableCell className="font-mono">{report.shots.b}</TableCell>
-                  </TableRow>
+                  {report.noise_context.p_value != null && (
+                    <TableRow>
+                      <TableCell className="text-muted">p-value</TableCell>
+                      <TableCell className="font-mono">{report.noise_context.p_value.toFixed(3)}</TableCell>
+                    </TableRow>
+                  )}
                 </>
               )}
             </TableBody>
           </Table>
+          {report.tvd > 0 && report.noise_context && (
+            <p className="text-sm mt-4">
+              {report.noise_context.p_value != null ? (
+                report.noise_context.p_value >= 0.10 ? (
+                  <span className="text-success">✓ Consistent with sampling noise — difference is not statistically significant.</span>
+                ) : report.noise_context.p_value >= 0.05 ? (
+                  <span className="text-warning">⚠ Borderline (p={report.noise_context.p_value.toFixed(2)}). Consider increasing shots for a clearer signal.</span>
+                ) : (
+                  <span className="text-danger">✗ Statistically significant difference (p={report.noise_context.p_value.toFixed(2)}) — results show meaningful divergence.</span>
+                )
+              ) : (
+                report.noise_context.noise_ratio != null && (
+                  report.noise_context.noise_ratio < 1.5 ? (
+                    <span className="text-success">✓ TVD is within expected shot noise range.</span>
+                  ) : report.noise_context.noise_ratio < 3.0 ? (
+                    <span className="text-warning">⚠ Ambiguous ({report.noise_context.noise_ratio.toFixed(1)}× expected noise). Consider increasing shots.</span>
+                  ) : (
+                    <span className="text-danger">✗ TVD exceeds expected noise ({report.noise_context.noise_ratio.toFixed(1)}×) — results show meaningful differences.</span>
+                  )
+                )
+              )}
+            </p>
+          )}
         </Card>
       )}
 
@@ -320,7 +530,7 @@ function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
       {report.warnings && report.warnings.length > 0 && (
         <Card>
           <CardHeader><CardTitle>Warnings</CardTitle></CardHeader>
-          <ul className="list-disc pl-5 space-y-1">
+          <ul className="list-disc pl-6 space-y-1">
             {report.warnings.map((warning: string, idx: number) => (
               <li key={idx} className="text-sm text-warning">{warning}</li>
             ))}
@@ -343,10 +553,12 @@ export function DiffPage() {
         title={
           <>
             Compare Runs
-            {hasBothRuns && <Badge variant="info">Comparing</Badge>}
+            {hasBothRuns && (
+              <Badge variant="info">Comparing</Badge>
+            )}
           </>
         }
-        subtitle={hasBothRuns && <Link to="/diff">← Select different runs</Link>}
+        subtitle={hasBothRuns ? <Link to="/diff">← Select different runs</Link> : undefined}
       />
       {hasBothRuns ? <DiffResult runIdA={runIdA} runIdB={runIdB} /> : <DiffSelect />}
     </Layout>

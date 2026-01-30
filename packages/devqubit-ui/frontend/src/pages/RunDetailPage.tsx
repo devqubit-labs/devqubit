@@ -96,8 +96,8 @@ export function RunDetailPage() {
         <Card>
           <CardHeader><CardTitle>Fingerprints</CardTitle></CardHeader>
           <KVList items={[
-            { label: 'Run', value: <span className="font-mono text-sm truncate-id">{fingerprints.run || 'N/A'}</span> },
-            { label: 'Program', value: <span className="font-mono text-sm truncate-id">{fingerprints.program || 'N/A'}</span> },
+            { label: 'Run', value: <span className="font-mono text-sm">{shortDigest(fingerprints.run)}</span> },
+            { label: 'Program', value: <span className="font-mono text-sm">{shortDigest(fingerprints.program)}</span> },
           ]} />
         </Card>
       </div>
