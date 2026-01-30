@@ -15,11 +15,13 @@ export default defineConfig(({ mode }) => {
         exclude: ['src/main.tsx', 'src/App.tsx'],
       }),
     ].filter(Boolean),
+
     resolve: {
       alias: {
         '@': resolve(__dirname, 'src'),
       },
     },
+
     build: isLib
       ? {
           lib: {
@@ -36,6 +38,7 @@ export default defineConfig(({ mode }) => {
                 'react-dom': 'ReactDOM',
                 'react-router-dom': 'ReactRouterDOM',
               },
+              assetFileNames: 'style.[ext]',
             },
           },
           cssCodeSplit: false,
@@ -43,14 +46,10 @@ export default defineConfig(({ mode }) => {
       : {
           outDir: 'dist',
         },
+
     server: {
       proxy: {
         '/api': 'http://localhost:8000',
-        '/runs': 'http://localhost:8000',
-        '/projects': 'http://localhost:8000',
-        '/groups': 'http://localhost:8000',
-        '/diff': 'http://localhost:8000',
-        '/search': 'http://localhost:8000',
       },
     },
   };
