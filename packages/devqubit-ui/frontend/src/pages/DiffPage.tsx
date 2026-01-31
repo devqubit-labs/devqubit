@@ -23,10 +23,16 @@ function DiffSelect() {
   const runs = runsData?.runs ?? [];
   const [runA, setRunA] = useState(searchParams.get('a') || '');
   const [runB, setRunB] = useState(searchParams.get('b') || '');
+  const [validationError, setValidationError] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (runA && runB) setSearchParams({ a: runA, b: runB });
+    if (!runA || !runB) {
+      setValidationError('Please select both runs to compare');
+      return;
+    }
+    setValidationError('');
+    setSearchParams({ a: runA, b: runB });
   };
 
   return (
@@ -36,7 +42,7 @@ function DiffSelect() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <FormGroup>
               <Label htmlFor="a">Run A (Baseline)</Label>
-              <Select id="a" value={runA} onChange={(e) => setRunA(e.target.value)} required>
+              <Select id="a" value={runA} onChange={(e) => { setRunA(e.target.value); setValidationError(''); }}>
                 <option value="">Select run...</option>
                 {runs.map((run: RunSummary) => (
                   <option key={run.run_id} value={run.run_id}>
@@ -47,7 +53,7 @@ function DiffSelect() {
             </FormGroup>
             <FormGroup>
               <Label htmlFor="b">Run B (Candidate)</Label>
-              <Select id="b" value={runB} onChange={(e) => setRunB(e.target.value)} required>
+              <Select id="b" value={runB} onChange={(e) => { setRunB(e.target.value); setValidationError(''); }}>
                 <option value="">Select run...</option>
                 {runs.map((run: RunSummary) => (
                   <option key={run.run_id} value={run.run_id}>
@@ -57,7 +63,10 @@ function DiffSelect() {
               </Select>
             </FormGroup>
           </div>
-          <Button type="submit" variant="primary" disabled={!runA || !runB}>Compare</Button>
+          {validationError && <p className="text-sm text-danger mb-3">{validationError}</p>}
+          <div className="pt-2">
+            <Button type="submit" variant="primary">Compare</Button>
+          </div>
         </form>
       </Card>
 

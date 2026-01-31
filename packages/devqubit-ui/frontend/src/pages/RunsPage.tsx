@@ -2,10 +2,10 @@
  * DevQubit UI Runs Page
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Layout, PageHeader } from '../components/Layout';
-import { Card, Button, Spinner, FormGroup, FormRow, Label, Input, Select } from '../components/ui';
+import { Card, Button, Spinner, FormGroup, FormRow, Label, Input, Select, Toast } from '../components/ui';
 import { RunsTable } from '../components/RunsTable';
 import { useRuns, useProjects, useApp, useMutation } from '../hooks';
 import type { RunFilters, RunStatus, Project } from '../types';
@@ -14,6 +14,7 @@ export function RunsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { api } = useApp();
   const { data: projectsData } = useProjects();
+  const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
 
   const [filters, setFilters] = useState<RunFilters>({
     project: searchParams.get('project') || '',
@@ -24,6 +25,14 @@ export function RunsPage() {
 
   const { data, loading, refetch } = useRuns(filters);
   const deleteMutation = useMutation((runId: string) => api.deleteRun(runId));
+
+  // Auto-hide toast
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
 
   const updateFilter = useCallback((key: keyof RunFilters, value: string | number) => {
     setFilters((f) => ({ ...f, [key]: value }));
@@ -37,8 +46,13 @@ export function RunsPage() {
   }, [searchParams, setSearchParams]);
 
   const handleDelete = useCallback(async (runId: string) => {
-    await deleteMutation.mutate(runId);
-    refetch();
+    try {
+      await deleteMutation.mutate(runId);
+      setToast({ message: 'Run deleted', variant: 'success' });
+      refetch();
+    } catch {
+      setToast({ message: 'Failed to delete run', variant: 'error' });
+    }
   }, [deleteMutation, refetch]);
 
   return (
@@ -111,9 +125,23 @@ export function RunsPage() {
             runs={data?.runs ?? []}
             onDelete={handleDelete}
             loading={deleteMutation.loading}
+            baselineRunId={
+              filters.project
+                ? projectsData?.find((p: Project) => p.name === filters.project)?.baseline?.run_id
+                : undefined
+            }
           />
         )}
       </Card>
+
+      {toast && (
+        <Toast
+          message={toast.message}
+          variant={toast.variant}
+          visible={!!toast}
+          onClose={() => setToast(null)}
+        />
+      )}
     </Layout>
   );
 }

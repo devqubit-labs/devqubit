@@ -10,6 +10,8 @@ export {
   KVList,
   Modal,
   Toast,
+  Skeleton,
+  TableSkeleton,
 } from './primitives';
 
 export type {
@@ -29,6 +31,8 @@ export type {
   ModalProps,
   ToastVariant,
   ToastProps,
+  SkeletonProps,
+  TableSkeletonProps,
 } from './primitives';
 
 export {

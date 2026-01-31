@@ -159,15 +159,62 @@ export interface ToastProps {
 export function Toast({ message, variant = 'info', visible, onClose }: ToastProps) {
   if (!visible) return null;
 
-  const variantClass = {
-    success: 'bg-success-bg text-[#065f46] border-[#a7f3d0]',
-    error: 'bg-danger-bg text-[#991b1b] border-[#fecaca]',
-    info: 'bg-info-bg text-[#1e40af] border-[#bfdbfe]',
+  const icons = {
+    success: '✓',
+    error: '✕',
+    info: 'i',
+  }[variant];
+
+  const iconColor = {
+    success: 'text-[#059669]',
+    error: 'text-[#DC4A4A]',
+    info: 'text-[#2563EB]',
   }[variant];
 
   return (
-    <div className={cn('toast', variantClass)} onClick={onClose}>
+    <div className="toast" onClick={onClose}>
+      <span className={cn('mr-2 font-bold', iconColor)}>{icons}</span>
       {message}
+    </div>
+  );
+}
+
+/* Skeleton */
+export interface SkeletonProps extends HTMLAttributes<HTMLDivElement> {
+  width?: string | number;
+  height?: string | number;
+}
+
+export function Skeleton({ width, height, className, style, ...props }: SkeletonProps) {
+  return (
+    <div
+      className={cn('skeleton', className)}
+      style={{ width, height, ...style }}
+      {...props}
+    />
+  );
+}
+
+/* Loading Placeholder for tables */
+export interface TableSkeletonProps {
+  rows?: number;
+  cols?: number;
+}
+
+export function TableSkeleton({ rows = 5, cols = 4 }: TableSkeletonProps) {
+  return (
+    <div className="space-y-3 p-4">
+      {Array.from({ length: rows }).map((_, i) => (
+        <div key={i} className="flex gap-4">
+          {Array.from({ length: cols }).map((_, j) => (
+            <Skeleton
+              key={j}
+              className="skeleton-text flex-1"
+              style={{ width: j === 0 ? '20%' : undefined }}
+            />
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

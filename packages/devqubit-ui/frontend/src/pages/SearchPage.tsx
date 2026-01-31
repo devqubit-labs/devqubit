@@ -18,6 +18,7 @@ export function SearchPage() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<RunSummary[] | null>(null);
   const [searched, setSearched] = useState(false);
+  const [validationError, setValidationError] = useState('');
 
   const { mutate: search, loading } = useMutation(async () => {
     const data = await api.listRuns({ q: query, limit: 100 });
@@ -28,9 +29,12 @@ export function SearchPage() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (query.trim()) {
-      search();
+    if (!query.trim()) {
+      setValidationError('Please enter a search query');
+      return;
     }
+    setValidationError('');
+    search();
   };
 
   return (
@@ -47,13 +51,14 @@ export function SearchPage() {
               id="q"
               type="text"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setValidationError(''); }}
               placeholder="metric.fidelity > 0.95 and params.shots = 1000"
               className="font-mono"
             />
           </FormGroup>
-          <div className="flex gap-2 items-center">
-            <Button type="submit" variant="primary" disabled={loading || !query.trim()}>
+          {validationError && <p className="text-sm text-danger mb-3">{validationError}</p>}
+          <div className="flex gap-3 items-center pt-2">
+            <Button type="submit" variant="primary" disabled={loading}>
               {loading && <Spinner />}
               Search
             </Button>

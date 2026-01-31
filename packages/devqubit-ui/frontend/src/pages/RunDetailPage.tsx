@@ -10,15 +10,16 @@ import {
   Table, TableHead, TableBody, TableRow, TableHeader, TableCell, Modal, Toast,
 } from '../components';
 import { StatusBadge } from '../components/RunsTable';
-import { useRun, useApp, useMutation } from '../hooks';
+import { useRun, useProjects, useApp, useMutation } from '../hooks';
 import { shortId, shortDigest, timeAgo, formatNumber } from '../utils';
-import type { Artifact } from '../types';
+import type { Artifact, Project } from '../types';
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
   const { api } = useApp();
   const { data: run, loading, error, refetch } = useRun(runId!);
+  const { data: projects, refetch: refetchProjects } = useProjects();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
 
@@ -29,6 +30,10 @@ export function RunDetailPage() {
   const { mutate: doDelete, loading: deleting } = useMutation(
     () => api.deleteRun(runId!)
   );
+
+  // Check if this run is the baseline for its project
+  const project = projects?.find((p: Project) => p.name === run?.project);
+  const isBaseline = project?.baseline?.run_id === runId;
 
   // Auto-hide toast
   useEffect(() => {
@@ -64,16 +69,30 @@ export function RunDetailPage() {
   const errors = run.errors || [];
 
   const handleSetBaseline = async () => {
-    await doSetBaseline();
-    refetch();
+    try {
+      await doSetBaseline();
+      await refetchProjects();
+      refetch();
+      setToast({ message: 'Baseline updated', variant: 'success' });
+    } catch {
+      setToast({ message: 'Failed to set baseline', variant: 'error' });
+    }
   };
 
   const handleDelete = async () => {
-    await doDelete();
-    navigate('/runs');
+    try {
+      await doDelete();
+      setShowDeleteModal(false);
+      setToast({ message: 'Run deleted', variant: 'success' });
+      setTimeout(() => navigate('/runs'), 1000);
+    } catch {
+      setToast({ message: 'Failed to delete run', variant: 'error' });
+      setShowDeleteModal(false);
+    }
   };
 
   const handleDownload = async (idx: number) => {
+    const artifact = artifacts[idx];
     try {
       const url = api.getArtifactDownloadUrl(run.run_id, idx);
       const response = await fetch(url);
@@ -82,7 +101,7 @@ export function RunDetailPage() {
       const blob = await response.blob();
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `artifact-${idx}`;
+      a.download = artifact?.kind || `artifact-${idx}`;
       a.click();
       URL.revokeObjectURL(a.href);
 
@@ -94,17 +113,28 @@ export function RunDetailPage() {
 
   return (
     <Layout>
+      {/* Baseline Banner */}
+      {isBaseline && (
+        <div className="alert alert-info mb-4">
+          This run is the current baseline for project "{run.project}"
+        </div>
+      )}
+
       {/* Header */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">{run.run_name || 'Unnamed Run'}</h1>
+          <h1 className="page-title">
+            {run.run_name || 'Unnamed Run'}
+          </h1>
           <p className="text-muted text-sm font-mono">{run.run_id}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={handleSetBaseline} disabled={settingBaseline}>
-            {settingBaseline && <Spinner />}
-            Set as Baseline
-          </Button>
+          {!isBaseline && (
+            <Button variant="secondary" size="sm" onClick={handleSetBaseline} disabled={settingBaseline}>
+              {settingBaseline && <Spinner />}
+              Set as Baseline
+            </Button>
+          )}
           <Button variant="ghost-danger" size="sm" onClick={() => setShowDeleteModal(true)}>
             Delete
           </Button>
