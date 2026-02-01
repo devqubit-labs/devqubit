@@ -88,7 +88,7 @@ def _lazy_import_s3() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[s3] is not installed.
     """
-    from devqubit_engine.storage.backends.remote_s3 import S3Registry, S3Store
+    from devqubit_engine.storage.backends.s3 import S3Registry, S3Store
 
     return S3Store, S3Registry
 
@@ -107,7 +107,7 @@ def _lazy_import_gcs() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[gcs] is not installed.
     """
-    from devqubit_engine.storage.backends.remote_gcs import GCSRegistry, GCSStore
+    from devqubit_engine.storage.backends.gcs import GCSRegistry, GCSStore
 
     return GCSStore, GCSRegistry
 
