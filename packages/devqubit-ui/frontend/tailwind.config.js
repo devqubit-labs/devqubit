@@ -1,6 +1,33 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  safelist: [
+    // Button variants - these are generated dynamically
+    'btn-primary',
+    'btn-secondary',
+    'btn-danger',
+    'btn-ghost',
+    'btn-ghost-danger',
+    // Badge variants
+    'badge-success',
+    'badge-danger',
+    'badge-warning',
+    'badge-info',
+    'badge-gray',
+    'badge-neutral',
+    // Alert variants
+    'alert-success',
+    'alert-danger',
+    'alert-warning',
+    'alert-info',
+    // Diff page result banner
+    'bg-success/10',
+    'bg-warning/10',
+    'border-success/20',
+    'border-warning/20',
+    'text-success',
+    'text-warning',
+  ],
   theme: {
     extend: {
       colors: {
@@ -42,7 +69,6 @@ export default {
       },
       fontFamily: {
         sans: [
-          'Inter',
           '-apple-system',
           'BlinkMacSystemFont',
           'Segoe UI',
@@ -51,21 +77,18 @@ export default {
           'Arial',
           'sans-serif',
         ],
-        mono: ['JetBrains Mono', 'SF Mono', 'Monaco', 'Consolas', 'monospace'],
+        mono: ['SF Mono', 'Monaco', 'Consolas', 'monospace'],
       },
       fontSize: {
-        xs: ['0.75rem', { lineHeight: '1rem' }],
-        sm: ['0.8125rem', { lineHeight: '1.25rem' }],
-        base: ['0.875rem', { lineHeight: '1.5rem' }],
-        lg: ['1rem', { lineHeight: '1.5rem' }],
-        xl: ['1.125rem', { lineHeight: '1.75rem' }],
-        '2xl': ['1.5rem', { lineHeight: '2rem' }],
+        xs: '0.75rem',
+        sm: '0.8125rem',
+        base: '0.875rem',
+        lg: '1rem',
+        xl: '1.125rem',
+        '2xl': '1.5rem',
       },
       maxWidth: {
         container: '1400px',
-      },
-      borderRadius: {
-        DEFAULT: '0.375rem',
       },
     },
   },

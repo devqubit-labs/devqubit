@@ -63,10 +63,8 @@ function DiffSelect() {
               </Select>
             </FormGroup>
           </div>
-          {validationError && <p className="text-sm text-danger mb-3">{validationError}</p>}
-          <div className="pt-2">
-            <Button type="submit" variant="primary">Compare</Button>
-          </div>
+          {validationError && <p className="text-sm text-[#DC4A4A] mb-3">{validationError}</p>}
+          <Button type="submit" variant="primary">Compare</Button>
         </form>
       </Card>
 
@@ -85,13 +83,40 @@ function DiffSelect() {
 function DiffResult({ runIdA, runIdB }: { runIdA: string; runIdB: string }) {
   const { data, loading, error } = useDiff(runIdA, runIdB);
 
-  if (loading) return <div className="flex justify-center py-12"><Spinner /></div>;
+  if (loading) return (
+    <Card>
+      <div className="flex flex-col items-center justify-center py-12 gap-3">
+        <Spinner />
+        <p className="text-muted text-sm">Comparing runs...</p>
+      </div>
+    </Card>
+  );
   if (error || !data) return <Card><EmptyState message="Failed to load diff" hint={error?.message} /></Card>;
 
   const { run_a, run_b, report } = data;
 
+  // Determine overall comparison result
+  const isMatch = report.fingerprints.a === report.fingerprints.b;
+
   return (
     <>
+      {/* Overall Result Banner */}
+      <div className={`rounded-lg p-4 mb-4 ${isMatch ? 'bg-success/10 border border-success/20' : 'bg-warning/10 border border-warning/20'}`}>
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">{isMatch ? '✓' : '⚠'}</span>
+          <div>
+            <p className={`font-semibold ${isMatch ? 'text-success' : 'text-warning'}`}>
+              {isMatch ? 'Runs Match' : 'Runs Differ'}
+            </p>
+            <p className="text-sm text-muted">
+              {isMatch
+                ? 'Fingerprints are identical — runs produced the same results.'
+                : 'Fingerprints differ — see details below for what changed.'}
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Warnings - show at top if any */}
       {report.warnings && report.warnings.length > 0 && (
         <div className="alert alert-warning mb-4">
@@ -384,10 +409,7 @@ export function DiffPage() {
     <Layout>
       <div className="page-header">
         <div>
-          <h1 className="page-title">
-            Compare Runs
-            {hasBothRuns && <Badge variant="info">Comparing</Badge>}
-          </h1>
+          <h1 className="page-title">Compare Runs</h1>
           {hasBothRuns && <p className="text-muted text-sm"><Link to="/diff">← Select different runs</Link></p>}
         </div>
       </div>

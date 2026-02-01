@@ -63,10 +63,10 @@ export function Layout({ children, config: localConfig }: LayoutProps) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-gray-900 h-14 sticky top-0 z-50 border-b border-gray-800">
+      <header className="bg-gray-900 h-14 sticky top-0 z-50 shadow-sm">
         <div className="max-w-container mx-auto px-6 h-full flex items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link to="/" className="text-lg font-semibold text-primary hover:text-primary-light flex items-center gap-2 transition-colors hover:no-underline">
+            <Link to="/" className="text-lg font-semibold text-primary hover:text-primary-light flex items-center gap-2 transition-colors">
               {logo.icon && <span className="text-xl">{logo.icon}</span>}
               {logo.text}
             </Link>
@@ -76,7 +76,7 @@ export function Layout({ children, config: localConfig }: LayoutProps) {
                   key={link.href}
                   to={link.href}
                   className={cn(
-                    'px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-150 hover:no-underline',
+                    'px-3 py-2 rounded-md text-sm font-medium transition-colors duration-150',
                     isActive(link)
                       ? 'text-white bg-white/10'
                       : 'text-gray-400 hover:text-white hover:bg-white/5'

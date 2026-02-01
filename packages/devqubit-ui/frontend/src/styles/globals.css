@@ -28,11 +28,11 @@
   }
 
   a:hover {
-    @apply text-primary-dark underline;
+    @apply text-primary-dark;
   }
 
   :focus-visible {
-    @apply outline-none;
+    @apply outline-2 outline-offset-2 outline-primary/50;
   }
 }
 
@@ -42,8 +42,7 @@
 @layer components {
   /* Card */
   .card {
-    @apply bg-white border border-gray-200 rounded-lg p-5;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 1px 2px rgba(0, 0, 0, 0.06);
+    @apply bg-white border border-gray-200 rounded-lg p-5 shadow-sm;
   }
 
   .card-header {
@@ -51,7 +50,7 @@
   }
 
   .card-title {
-    @apply text-base font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
+    @apply text-lg font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
   }
 
   /* Page Header */
@@ -60,7 +59,7 @@
   }
 
   .page-title {
-    @apply text-xl font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
+    @apply text-2xl font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
   }
 
   /* Buttons */
@@ -69,42 +68,33 @@
   }
 
   .btn:focus-visible {
-    @apply outline-none ring-2 ring-offset-2 ring-primary/50;
+    @apply ring-2 ring-offset-2 ring-primary/50;
   }
 
   .btn-primary {
-    @apply bg-primary text-white border border-primary hover:bg-primary-dark hover:border-primary-dark hover:text-white hover:no-underline active:scale-[0.98];
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(46, 157, 107, 0.15);
+    @apply bg-primary text-white border-none hover:bg-primary-dark hover:text-white hover:no-underline active:scale-[0.98];
+    box-shadow: 0 1px 3px rgba(46, 157, 107, 0.3);
   }
 
   .btn-primary:hover {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(46, 157, 107, 0.2);
+    box-shadow: 0 2px 6px rgba(46, 157, 107, 0.4);
   }
 
   .btn-secondary {
-    @apply bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900 hover:no-underline active:scale-[0.98];
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  }
-
-  .btn-secondary:hover {
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    @apply bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 hover:text-gray-900 hover:no-underline active:scale-[0.98];
   }
 
   .btn-danger {
-    @apply bg-danger text-white border border-danger hover:bg-danger-dark hover:border-danger-dark hover:text-white hover:no-underline active:scale-[0.98];
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(220, 74, 74, 0.15);
-  }
-
-  .btn-danger:hover {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(220, 74, 74, 0.2);
+    @apply bg-danger text-white border-none hover:bg-danger-dark hover:text-white hover:no-underline active:scale-[0.98];
+    box-shadow: 0 1px 3px rgba(220, 74, 74, 0.3);
   }
 
   .btn-ghost {
-    @apply bg-transparent text-gray-600 border border-transparent hover:bg-gray-100 hover:text-gray-900 active:scale-[0.98];
+    @apply bg-transparent text-gray-600 border-none hover:bg-gray-100 hover:text-gray-900 active:scale-[0.98];
   }
 
   .btn-ghost-danger {
-    @apply bg-transparent text-gray-500 border border-transparent hover:bg-danger-bg hover:text-danger hover:border-danger/20 active:scale-[0.98];
+    @apply bg-transparent text-gray-500 border-none hover:bg-danger-bg hover:text-danger active:scale-[0.98];
   }
 
   .btn-sm {
@@ -112,12 +102,12 @@
   }
 
   .btn:disabled {
-    @apply opacity-50 cursor-not-allowed shadow-none active:scale-100 pointer-events-none;
+    @apply opacity-50 cursor-not-allowed shadow-none active:scale-100;
   }
 
   /* Badges */
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full whitespace-nowrap;
+    @apply inline-flex items-center px-2 py-0.5 text-xs font-medium rounded whitespace-nowrap;
   }
 
   .badge-success {
@@ -155,24 +145,14 @@
 
   .form-input {
     @apply w-full px-3 py-2 border border-gray-300 rounded-md text-sm transition-all duration-150 bg-white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) inset;
-  }
-
-  .form-input::placeholder {
-    @apply text-gray-400;
   }
 
   .form-input:focus {
-    @apply outline-none border-primary;
-    box-shadow: 0 0 0 3px rgba(46, 157, 107, 0.12), 0 1px 2px rgba(0, 0, 0, 0.04) inset;
+    @apply outline-none border-primary ring-2 ring-primary/15;
   }
 
-  .form-input:hover:not(:focus):not(:disabled) {
+  .form-input:hover:not(:focus) {
     @apply border-gray-400;
-  }
-
-  .form-input:disabled {
-    @apply bg-gray-50 text-gray-500 cursor-not-allowed;
   }
 
   .form-row {
@@ -185,23 +165,23 @@
 
   /* Alerts */
   .alert {
-    @apply px-4 py-3 rounded-lg mb-4 text-sm leading-relaxed;
+    @apply px-4 py-3 rounded-md mb-4 text-sm;
   }
 
   .alert-success {
-    @apply bg-success-bg text-success border border-success/15;
+    @apply bg-success-bg text-success border border-success/20;
   }
 
   .alert-danger {
-    @apply bg-danger-bg text-danger border border-danger/15;
+    @apply bg-danger-bg text-danger border border-danger/20;
   }
 
   .alert-warning {
-    @apply bg-warning-bg text-warning border border-warning/15;
+    @apply bg-warning-bg text-warning border border-warning/20;
   }
 
   .alert-info {
-    @apply bg-info-bg text-info border border-info/15;
+    @apply bg-info-bg text-info border border-info/20;
   }
 
   /* Tables */
@@ -218,28 +198,16 @@
     @apply font-semibold text-xs uppercase tracking-wider text-gray-500 bg-gray-50/80;
   }
 
-  .table th:first-child {
-    @apply rounded-tl-md;
-  }
-
-  .table th:last-child {
-    @apply rounded-tr-md;
-  }
-
   .table tbody tr {
     @apply transition-colors duration-100;
   }
 
   .table tbody tr:hover td {
-    @apply bg-gray-50/80;
+    @apply bg-gray-50;
   }
 
   .table tbody tr:last-child td {
     @apply border-b-0;
-  }
-
-  .table td {
-    @apply text-sm;
   }
 
   /* Key-Value List */
@@ -284,7 +252,7 @@
 
   /* Empty State */
   .empty-state {
-    @apply text-center py-12 px-6 text-gray-500 bg-gray-50/50 rounded-lg border border-gray-100 border-dashed;
+    @apply text-center py-12 px-4 text-gray-500;
   }
 
   /* Diff Styles */
@@ -300,21 +268,21 @@
 
   /* Code */
   code {
-    @apply font-mono text-[0.875em] bg-gray-100 px-1.5 py-0.5 rounded text-gray-800;
+    @apply font-mono text-[0.875em] bg-gray-100 px-1.5 py-0.5 rounded;
   }
 
   pre {
-    @apply bg-gray-900 text-gray-100 p-4 rounded-lg overflow-x-auto text-[0.8125rem] leading-relaxed;
+    @apply bg-gray-900 text-gray-100 p-4 rounded-md overflow-x-auto text-[0.8125rem] leading-relaxed;
   }
 
   pre code {
-    @apply bg-transparent p-0 text-inherit;
+    @apply bg-transparent p-0;
   }
 
   /* Modal */
   .modal-backdrop {
-    @apply fixed inset-0 bg-gray-900/60 flex items-center justify-center z-[1000] opacity-0 invisible transition-all duration-200;
-    backdrop-filter: blur(4px);
+    @apply fixed inset-0 bg-black/50 flex items-center justify-center z-[1000] opacity-0 invisible transition-all duration-200;
+    backdrop-filter: blur(2px);
   }
 
   .modal-backdrop.active {
@@ -322,8 +290,7 @@
   }
 
   .modal {
-    @apply bg-white rounded-xl p-6 max-w-[420px] w-[90%] scale-95 transition-all duration-200;
-    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    @apply bg-white rounded-lg p-6 max-w-[400px] w-[90%] shadow-2xl scale-95 transition-all duration-200;
   }
 
   .modal-backdrop.active .modal {
@@ -335,11 +302,11 @@
   }
 
   .modal-body {
-    @apply text-gray-600 mb-6 text-sm leading-relaxed;
+    @apply text-gray-600 mb-6;
   }
 
   .modal-actions {
-    @apply flex gap-3 justify-end;
+    @apply flex gap-2 justify-end;
   }
 
   /* Spinner */
@@ -353,26 +320,19 @@
 
   /* Toast */
   .toast {
-    @apply fixed top-6 left-1/2 -translate-x-1/2 px-5 py-3 rounded-lg bg-white text-gray-900 text-sm font-medium z-[1001] cursor-pointer min-w-[280px] max-w-[400px] text-center border border-gray-100;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1), 0 0 0 1px rgba(0, 0, 0, 0.02);
-    animation: toast-in 0.3s cubic-bezier(0.21, 1.02, 0.73, 1);
+    @apply fixed top-6 left-1/2 -translate-x-1/2 px-6 py-4 rounded-lg bg-white text-gray-900 text-sm font-medium z-[1001] cursor-pointer min-w-[300px] text-center;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    animation: toast-in 0.25s ease-out;
   }
 
   @keyframes toast-in {
-    from { opacity: 0; transform: translate(-50%, -20px); }
+    from { opacity: 0; transform: translate(-50%, -16px); }
     to { opacity: 1; transform: translate(-50%, 0); }
   }
 
   /* Skeleton Loading */
   .skeleton {
-    @apply bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200 rounded;
-    background-size: 200% 100%;
-    animation: skeleton-shimmer 1.5s ease-in-out infinite;
-  }
-
-  @keyframes skeleton-shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    @apply bg-gray-200 rounded animate-pulse;
   }
 
   .skeleton-text {
@@ -390,22 +350,6 @@
 @layer utilities {
   .text-muted {
     @apply text-gray-500;
-  }
-
-  .text-success {
-    color: theme('colors.success.DEFAULT');
-  }
-
-  .text-danger {
-    color: theme('colors.danger.DEFAULT');
-  }
-
-  .text-warning {
-    color: theme('colors.warning.DEFAULT');
-  }
-
-  .text-info {
-    color: theme('colors.info.DEFAULT');
   }
 
   .truncate-id {

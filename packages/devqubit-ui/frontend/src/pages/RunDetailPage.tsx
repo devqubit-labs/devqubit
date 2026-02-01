@@ -115,7 +115,7 @@ export function RunDetailPage() {
     <Layout>
       {/* Baseline Banner */}
       {isBaseline && (
-        <div className="alert alert-info mb-4">
+        <div className="mb-4 px-4 py-3 bg-[#EFF6FF] border border-[#2563EB]/20 rounded-md text-[#2563EB] text-sm font-medium">
           This run is the current baseline for project "{run.project}"
         </div>
       )}

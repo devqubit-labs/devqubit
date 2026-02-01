@@ -56,8 +56,8 @@ export function SearchPage() {
               className="font-mono"
             />
           </FormGroup>
-          {validationError && <p className="text-sm text-danger mb-3">{validationError}</p>}
-          <div className="flex gap-3 items-center pt-2">
+          {validationError && <p className="text-sm text-[#DC4A4A] mb-3">{validationError}</p>}
+          <div className="flex gap-2 items-center">
             <Button type="submit" variant="primary" disabled={loading}>
               {loading && <Spinner />}
               Search
