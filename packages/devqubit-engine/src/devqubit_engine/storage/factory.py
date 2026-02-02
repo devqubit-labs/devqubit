@@ -35,6 +35,7 @@ Examples
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
@@ -88,7 +89,7 @@ def _lazy_import_s3() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[s3] is not installed.
     """
-    from devqubit_engine.storage.backends.s3 import S3Registry, S3Store
+    from devqubit_engine.storage.backends.remote_s3 import S3Registry, S3Store
 
     return S3Store, S3Registry
 
@@ -107,9 +108,27 @@ def _lazy_import_gcs() -> tuple[ObjectStoreBackend, RegistryBackend]:
     ImportError
         If devqubit-engine[gcs] is not installed.
     """
-    from devqubit_engine.storage.backends.gcs import GCSRegistry, GCSStore
+    from devqubit_engine.storage.backends.remote_gcs import GCSRegistry, GCSStore
 
     return GCSStore, GCSRegistry
+
+
+def _lazy_import_remote() -> tuple[ObjectStoreBackend, RegistryBackend]:
+    """
+    Lazy import remote HTTP backends.
+
+    Returns
+    -------
+    tuple
+        (RemoteStore, RemoteRegistry) constructors.
+    """
+    from devqubit_engine.storage.backends.remote import RemoteRegistry, RemoteStore
+
+    return RemoteStore, RemoteRegistry
+
+
+# Environment variable for remote tracking (checked before URL-based resolution)
+ENV_TRACKING_URI = "DEVQUBIT_TRACKING_URI"
 
 
 class StorageURL:
@@ -399,7 +418,19 @@ def create_store(
     ------
     StorageError
         If the URL scheme is not supported.
+
+    Notes
+    -----
+    If ``DEVQUBIT_TRACKING_URI`` environment variable is set and no explicit
+    URL or backend_class is provided, a remote store will be created automatically.
     """
+    # Check for remote tracking URI (highest priority when no explicit URL)
+    tracking_uri = os.environ.get(ENV_TRACKING_URI)
+    if tracking_uri and url is None and backend_class is None:
+        RemoteStore, _ = _lazy_import_remote()
+        logger.debug("Creating remote store: server=%s", tracking_uri)
+        return RemoteStore.from_env()
+
     cfg = config or get_config()
     parsed = _get_storage_url(url, cfg.storage_url, cfg.objects_dir)
     all_kwargs = {**parsed.params, **kwargs}
@@ -480,7 +511,19 @@ def create_registry(
     ------
     StorageError
         If the URL scheme is not supported.
+
+    Notes
+    -----
+    If ``DEVQUBIT_TRACKING_URI`` environment variable is set and no explicit
+    URL or backend_class is provided, a remote registry will be created automatically.
     """
+    # Check for remote tracking URI (highest priority when no explicit URL)
+    tracking_uri = os.environ.get(ENV_TRACKING_URI)
+    if tracking_uri and url is None and backend_class is None:
+        _, RemoteRegistry = _lazy_import_remote()
+        logger.debug("Creating remote registry: server=%s", tracking_uri)
+        return RemoteRegistry.from_env()
+
     cfg = config or get_config()
     parsed = _get_storage_url(url, cfg.registry_url, cfg.root_dir)
     all_kwargs = {**parsed.params, **kwargs}

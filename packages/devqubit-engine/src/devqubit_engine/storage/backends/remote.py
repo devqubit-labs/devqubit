@@ -16,8 +16,10 @@ Configuration
 -------------
 Remote backends are configured via environment variables or storage URLs:
 
+.. code-block:: bash
+
     # Environment variables
-    export DEVQUBIT_TRACKING_URI=https://tracking.example.com
+    export DEVQUBIT_TRACKING_URI=https://tracking.company.com
     export DEVQUBIT_API_TOKEN=dqt_xxxxxxxxxxxx
     export DEVQUBIT_WORKSPACE=my-workspace
 
@@ -27,12 +29,12 @@ Direct instantiation:
 
 >>> from devqubit_engine.storage.backends.remote import RemoteStore, RemoteRegistry
 >>> store = RemoteStore(
-...     server_url="https://tracking.example.com",
+...     server_url="https://tracking.company.com",
 ...     token="dqt_xxxxxxxxxxxx",
 ...     workspace="my-workspace",
 ... )
 >>> registry = RemoteRegistry(
-...     server_url="https://tracking.example.com",
+...     server_url="https://tracking.company.com",
 ...     token="dqt_xxxxxxxxxxxx",
 ...     workspace="my-workspace",
 ... )
@@ -54,6 +56,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 import requests
 from devqubit_engine.storage.errors import (
     ObjectNotFoundError,
+    RegistryError,
     RunNotFoundError,
     StorageError,
 )
@@ -152,7 +155,7 @@ class RemoteClientConfig:
         token: str | None = None,
         workspace: str | None = None,
         **kwargs: Any,
-    ) -> "RemoteClientConfig":
+    ) -> RemoteClientConfig:
         """
         Create configuration from environment variables with overrides.
 
@@ -374,7 +377,7 @@ class RemoteClient:
         """Close the HTTP session."""
         self.session.close()
 
-    def __enter__(self) -> "RemoteClient":
+    def __enter__(self) -> RemoteClient:
         """Enter context manager."""
         return self
 
@@ -447,6 +450,43 @@ class RemoteStore(ObjectStoreProtocol):
         )
         self._client = RemoteClient(config)
         self._workspace = workspace
+
+    @classmethod
+    def from_env(cls) -> RemoteStore:
+        """
+        Create RemoteStore from environment variables.
+
+        Environment Variables
+        ---------------------
+        DEVQUBIT_TRACKING_URI : str
+            Remote server URL (required).
+        DEVQUBIT_API_TOKEN : str
+            API token for authentication (required).
+        DEVQUBIT_WORKSPACE : str
+            Workspace identifier (required).
+
+        Returns
+        -------
+        RemoteStore
+            Configured store instance.
+
+        Raises
+        ------
+        StorageError
+            If required environment variables are not set.
+        """
+        server_url = os.getenv(ENV_TRACKING_URI, "")
+        token = os.getenv(ENV_API_TOKEN, "")
+        workspace = os.getenv(ENV_WORKSPACE, "")
+
+        if not server_url:
+            raise StorageError(f"Environment variable {ENV_TRACKING_URI} is required")
+        if not token:
+            raise StorageError(f"Environment variable {ENV_API_TOKEN} is required")
+        if not workspace:
+            raise StorageError(f"Environment variable {ENV_WORKSPACE} is required")
+
+        return cls(server_url=server_url, token=token, workspace=workspace)
 
     def put_bytes(self, data: bytes) -> str:
         """
@@ -716,7 +756,7 @@ class RemoteStore(ObjectStoreProtocol):
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> "RemoteStore":
+    def __enter__(self) -> RemoteStore:
         """Enter context manager."""
         return self
 
@@ -795,6 +835,43 @@ class RemoteRegistry(RegistryProtocol):
         self._client = RemoteClient(config)
         self._workspace = workspace
 
+    @classmethod
+    def from_env(cls) -> RemoteRegistry:
+        """
+        Create RemoteRegistry from environment variables.
+
+        Environment Variables
+        ---------------------
+        DEVQUBIT_TRACKING_URI : str
+            Remote server URL (required).
+        DEVQUBIT_API_TOKEN : str
+            API token for authentication (required).
+        DEVQUBIT_WORKSPACE : str
+            Workspace identifier (required).
+
+        Returns
+        -------
+        RemoteRegistry
+            Configured registry instance.
+
+        Raises
+        ------
+        RegistryError
+            If required environment variables are not set.
+        """
+        server_url = os.getenv(ENV_TRACKING_URI, "")
+        token = os.getenv(ENV_API_TOKEN, "")
+        workspace = os.getenv(ENV_WORKSPACE, "")
+
+        if not server_url:
+            raise RegistryError(f"Environment variable {ENV_TRACKING_URI} is required")
+        if not token:
+            raise RegistryError(f"Environment variable {ENV_API_TOKEN} is required")
+        if not workspace:
+            raise RegistryError(f"Environment variable {ENV_WORKSPACE} is required")
+
+        return cls(server_url=server_url, token=token, workspace=workspace)
+
     def save(self, record: dict[str, Any]) -> None:
         """
         Save or update a run record.
@@ -841,7 +918,7 @@ class RemoteRegistry(RegistryProtocol):
         self._client._raise_for_status(response, f"Failed to save run {run_id}")
         logger.debug("Saved run: %s", run_id)
 
-    def load(self, run_id: str) -> "RunRecord":
+    def load(self, run_id: str) -> RunRecord:
         """
         Load a run record by ID.
 
@@ -884,7 +961,7 @@ class RemoteRegistry(RegistryProtocol):
 
         return RunRecord(record=record, artifacts=artifacts)
 
-    def load_or_none(self, run_id: str) -> "RunRecord | None":
+    def load_or_none(self, run_id: str) -> RunRecord | None:
         """
         Load a run record or return None if not found.
 
@@ -1331,7 +1408,7 @@ class RemoteRegistry(RegistryProtocol):
         """Close the underlying HTTP client."""
         self._client.close()
 
-    def __enter__(self) -> "RemoteRegistry":
+    def __enter__(self) -> RemoteRegistry:
         """Enter context manager."""
         return self
 

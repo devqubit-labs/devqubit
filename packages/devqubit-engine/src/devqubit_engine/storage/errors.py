@@ -2,6 +2,12 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 
+class RegistryError(Exception):
+    """Base exception for registry operations."""
+
+    pass
+
+
 class StorageError(Exception):
     """Base exception for storage operations."""
 
