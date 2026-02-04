@@ -237,3 +237,7 @@ export type {
   AsyncState,
   AppContextValue,
 };
+
+// Theme
+export { ThemeProvider, useTheme, useThemeOptional } from './useTheme';
+export type { Theme, ThemeContextValue, ThemeProviderProps } from './useTheme';

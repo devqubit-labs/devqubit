@@ -2,12 +2,55 @@
  * DevQubit UI Global Styles
  *
  * Core stylesheet with Tailwind CSS directives and custom design system.
- * This file is bundled as styles.css in the npm package.
+ * This file is bundled as style.css in the npm package.
+ *
+ * NOTE: Dark mode variants are NOT included here - they are provided by
+ * devqubit-hub for Teams/Enterprise editions.
  */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* =========================================================================
+   CSS Custom Properties
+
+   These vars can be overridden by adding .dark class to <html> element.
+   Dark mode values are provided by devqubit-hub.
+   ========================================================================= */
+:root {
+  --dq-primary: #2E9D6B;
+  --dq-primary-dark: #257D56;
+  --dq-primary-light: #3DB87E;
+  --dq-primary-bg: #F7FAF9;
+
+  --dq-danger: #DC4A4A;
+  --dq-danger-dark: #C43C3C;
+  --dq-danger-bg: #FEF2F2;
+
+  --dq-warning: #D97706;
+  --dq-warning-bg: #FFFBEB;
+
+  --dq-success: #059669;
+  --dq-success-bg: #ECFDF5;
+
+  --dq-info: #2563EB;
+  --dq-info-bg: #EFF6FF;
+
+  --dq-bg-primary: #FFFFFF;
+  --dq-bg-secondary: #F9FAFB;
+  --dq-bg-tertiary: #F3F4F6;
+
+  --dq-text-primary: #111827;
+  --dq-text-secondary: #4B5563;
+  --dq-text-muted: #6B7280;
+
+  --dq-border-color: #E5E7EB;
+
+  --dq-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --dq-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  --dq-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
 
 /* =========================================================================
    Base Styles
@@ -20,19 +63,23 @@
   }
 
   body {
-    @apply font-sans text-base leading-normal bg-gray-50 text-gray-900 min-h-screen antialiased;
+    @apply font-sans text-base leading-normal min-h-screen antialiased;
+    background-color: var(--dq-bg-secondary);
+    color: var(--dq-text-primary);
   }
 
   a {
-    @apply text-primary no-underline transition-colors duration-150;
+    color: var(--dq-primary);
+    @apply no-underline transition-colors duration-150;
   }
 
   a:hover {
-    @apply text-primary-dark;
+    color: var(--dq-primary-dark);
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-primary/50;
+    @apply outline-2 outline-offset-2;
+    outline-color: var(--dq-primary);
   }
 }
 
@@ -42,15 +89,20 @@
 @layer components {
   /* Card */
   .card {
-    @apply bg-white border border-gray-200 rounded-lg p-5 shadow-sm;
+    background-color: var(--dq-bg-primary);
+    border: 1px solid var(--dq-border-color);
+    @apply rounded-lg p-5;
+    box-shadow: var(--dq-shadow-sm);
   }
 
   .card-header {
-    @apply flex items-center justify-between mb-4 pb-3 border-b border-gray-100;
+    @apply flex items-center justify-between mb-4 pb-3;
+    border-bottom: 1px solid var(--dq-border-color);
   }
 
   .card-title {
-    @apply text-lg font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
+    @apply text-lg font-semibold flex items-center gap-2 flex-wrap;
+    color: var(--dq-text-primary);
   }
 
   /* Page Header */
@@ -59,42 +111,71 @@
   }
 
   .page-title {
-    @apply text-2xl font-semibold text-gray-900 flex items-center gap-2 flex-wrap;
+    @apply text-2xl font-semibold flex items-center gap-2 flex-wrap;
+    color: var(--dq-text-primary);
   }
 
   /* Buttons */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md cursor-pointer transition-all duration-150 no-underline whitespace-nowrap select-none;
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium rounded-md cursor-pointer transition-all duration-150 no-underline whitespace-nowrap select-none border-none;
   }
 
   .btn:focus-visible {
-    @apply ring-2 ring-offset-2 ring-primary/50;
+    @apply ring-2 ring-offset-2;
+    --tw-ring-color: var(--dq-primary);
   }
 
   .btn-primary {
-    @apply bg-primary text-white border-none hover:bg-primary-dark hover:text-white hover:no-underline active:scale-[0.98];
+    background-color: var(--dq-primary);
+    @apply text-white hover:text-white hover:no-underline active:scale-[0.98];
     box-shadow: 0 1px 3px rgba(46, 157, 107, 0.3);
   }
 
   .btn-primary:hover {
+    background-color: var(--dq-primary-dark);
     box-shadow: 0 2px 6px rgba(46, 157, 107, 0.4);
   }
 
   .btn-secondary {
-    @apply bg-white text-gray-700 border border-gray-200 hover:bg-gray-50 hover:text-gray-900 hover:no-underline active:scale-[0.98];
+    background-color: var(--dq-bg-primary);
+    color: var(--dq-text-secondary);
+    border: 1px solid var(--dq-border-color);
+    @apply hover:no-underline active:scale-[0.98];
+  }
+
+  .btn-secondary:hover {
+    background-color: var(--dq-bg-tertiary);
+    color: var(--dq-text-primary);
   }
 
   .btn-danger {
-    @apply bg-danger text-white border-none hover:bg-danger-dark hover:text-white hover:no-underline active:scale-[0.98];
+    background-color: var(--dq-danger);
+    @apply text-white hover:text-white hover:no-underline active:scale-[0.98];
     box-shadow: 0 1px 3px rgba(220, 74, 74, 0.3);
   }
 
+  .btn-danger:hover {
+    background-color: var(--dq-danger-dark);
+  }
+
   .btn-ghost {
-    @apply bg-transparent text-gray-600 border-none hover:bg-gray-100 hover:text-gray-900 active:scale-[0.98];
+    @apply bg-transparent border-none active:scale-[0.98];
+    color: var(--dq-text-secondary);
+  }
+
+  .btn-ghost:hover {
+    background-color: var(--dq-bg-tertiary);
+    color: var(--dq-text-primary);
   }
 
   .btn-ghost-danger {
-    @apply bg-transparent text-gray-500 border-none hover:bg-danger-bg hover:text-danger active:scale-[0.98];
+    @apply bg-transparent border-none active:scale-[0.98];
+    color: var(--dq-text-muted);
+  }
+
+  .btn-ghost-danger:hover {
+    background-color: var(--dq-danger-bg);
+    color: var(--dq-danger);
   }
 
   .btn-sm {
@@ -111,23 +192,28 @@
   }
 
   .badge-success {
-    @apply bg-success-bg text-success;
+    background-color: var(--dq-success-bg);
+    color: var(--dq-success);
   }
 
   .badge-danger {
-    @apply bg-danger-bg text-danger;
+    background-color: var(--dq-danger-bg);
+    color: var(--dq-danger);
   }
 
   .badge-warning {
-    @apply bg-warning-bg text-warning;
+    background-color: var(--dq-warning-bg);
+    color: var(--dq-warning);
   }
 
   .badge-info {
-    @apply bg-info-bg text-info;
+    background-color: var(--dq-info-bg);
+    color: var(--dq-info);
   }
 
   .badge-gray {
-    @apply bg-gray-100 text-gray-600;
+    background-color: var(--dq-bg-tertiary);
+    color: var(--dq-text-secondary);
   }
 
   .badge-neutral {
@@ -140,19 +226,29 @@
   }
 
   .form-label {
-    @apply block font-medium mb-1.5 text-sm text-gray-700;
+    @apply block font-medium mb-1.5 text-sm;
+    color: var(--dq-text-secondary);
   }
 
   .form-input {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-md text-sm transition-all duration-150 bg-white;
+    @apply w-full px-3 py-2 rounded-md text-sm transition-all duration-150;
+    background-color: var(--dq-bg-primary);
+    border: 1px solid var(--dq-border-color);
+    color: var(--dq-text-primary);
   }
 
   .form-input:focus {
-    @apply outline-none border-primary ring-2 ring-primary/15;
+    @apply outline-none ring-2;
+    border-color: var(--dq-primary);
+    --tw-ring-color: rgba(46, 157, 107, 0.15);
   }
 
   .form-input:hover:not(:focus) {
     @apply border-gray-400;
+  }
+
+  .form-input::placeholder {
+    color: var(--dq-text-muted);
   }
 
   .form-row {
@@ -169,19 +265,23 @@
   }
 
   .alert-success {
-    @apply bg-success-bg text-success border border-success/20;
+    background-color: var(--dq-success-bg);
+    color: var(--dq-success);
   }
 
   .alert-danger {
-    @apply bg-danger-bg text-danger border border-danger/20;
+    background-color: var(--dq-danger-bg);
+    color: var(--dq-danger);
   }
 
   .alert-warning {
-    @apply bg-warning-bg text-warning border border-warning/20;
+    background-color: var(--dq-warning-bg);
+    color: var(--dq-warning);
   }
 
   .alert-info {
-    @apply bg-info-bg text-info border border-info/20;
+    background-color: var(--dq-info-bg);
+    color: var(--dq-info);
   }
 
   /* Tables */
@@ -191,11 +291,14 @@
 
   .table th,
   .table td {
-    @apply px-4 py-3 text-left border-b border-gray-100;
+    @apply px-4 py-3 text-left;
+    border-bottom: 1px solid var(--dq-border-color);
   }
 
   .table th {
-    @apply font-semibold text-xs uppercase tracking-wider text-gray-500 bg-gray-50/80;
+    @apply font-semibold text-xs uppercase tracking-wider;
+    color: var(--dq-text-muted);
+    background-color: var(--dq-bg-secondary);
   }
 
   .table tbody tr {
@@ -203,7 +306,7 @@
   }
 
   .table tbody tr:hover td {
-    @apply bg-gray-50;
+    background-color: var(--dq-bg-secondary);
   }
 
   .table tbody tr:last-child td {
@@ -218,11 +321,13 @@
   }
 
   .kv-list dt {
-    @apply font-medium text-gray-500 text-sm;
+    @apply font-medium text-sm;
+    color: var(--dq-text-muted);
   }
 
   .kv-list dd {
-    @apply text-gray-900 break-words;
+    @apply break-words;
+    color: var(--dq-text-primary);
   }
 
   /* KV definition list (original style) */
@@ -234,11 +339,13 @@
   }
 
   dl.kv dt {
-    @apply font-medium text-gray-500 text-sm;
+    @apply font-medium text-sm;
+    color: var(--dq-text-muted);
   }
 
   dl.kv dd {
-    @apply text-gray-900 break-words;
+    @apply break-words;
+    color: var(--dq-text-primary);
   }
 
   /* Truncate for fingerprints/digests */
@@ -252,23 +359,25 @@
 
   /* Empty State */
   .empty-state {
-    @apply text-center py-12 px-4 text-gray-500;
+    @apply text-center py-12 px-4;
+    color: var(--dq-text-muted);
   }
 
   /* Diff Styles */
   .diff-match {
-    color: var(--color-success, #059669);
+    color: var(--dq-success);
     @apply font-medium;
   }
 
   .diff-mismatch {
-    color: var(--color-warning, #D97706);
+    color: var(--dq-warning);
     @apply font-medium;
   }
 
   /* Code */
   code {
-    @apply font-mono text-[0.875em] bg-gray-100 px-1.5 py-0.5 rounded;
+    @apply font-mono text-[0.875em] px-1.5 py-0.5 rounded;
+    background-color: var(--dq-bg-tertiary);
   }
 
   pre {
@@ -290,7 +399,9 @@
   }
 
   .modal {
-    @apply bg-white rounded-lg p-6 max-w-[400px] w-[90%] shadow-2xl scale-95 transition-all duration-200;
+    @apply rounded-lg p-6 max-w-[400px] w-[90%] scale-95 transition-all duration-200;
+    background-color: var(--dq-bg-primary);
+    box-shadow: var(--dq-shadow-lg);
   }
 
   .modal-backdrop.active .modal {
@@ -298,11 +409,13 @@
   }
 
   .modal-title {
-    @apply text-lg font-semibold mb-2 text-gray-900;
+    @apply text-lg font-semibold mb-2;
+    color: var(--dq-text-primary);
   }
 
   .modal-body {
-    @apply text-gray-600 mb-6;
+    @apply mb-6;
+    color: var(--dq-text-secondary);
   }
 
   .modal-actions {
@@ -311,7 +424,9 @@
 
   /* Spinner */
   .spinner {
-    @apply w-4 h-4 border-2 border-gray-200 border-t-primary rounded-full animate-spin;
+    @apply w-4 h-4 border-2 rounded-full animate-spin;
+    border-color: var(--dq-border-color);
+    border-top-color: var(--dq-primary);
   }
 
   .spinner-lg {
@@ -320,7 +435,9 @@
 
   /* Toast */
   .toast {
-    @apply fixed top-6 left-1/2 -translate-x-1/2 px-6 py-4 rounded-lg bg-white text-gray-900 text-sm font-medium z-[1001] cursor-pointer min-w-[300px] text-center;
+    @apply fixed top-6 left-1/2 -translate-x-1/2 px-6 py-4 rounded-lg text-sm font-medium z-[1001] cursor-pointer min-w-[300px] text-center;
+    background-color: var(--dq-bg-primary);
+    color: var(--dq-text-primary);
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
     animation: toast-in 0.25s ease-out;
   }
@@ -332,7 +449,8 @@
 
   /* Skeleton Loading */
   .skeleton {
-    @apply bg-gray-200 rounded animate-pulse;
+    @apply rounded animate-pulse;
+    background-color: var(--dq-bg-tertiary);
   }
 
   .skeleton-text {
@@ -342,6 +460,64 @@
   .skeleton-text-sm {
     @apply h-3 rounded;
   }
+
+  /* =========================================================================
+     Layout Component
+     ========================================================================= */
+  .dq-layout {
+    @apply min-h-screen;
+    background-color: var(--dq-bg-secondary);
+  }
+
+  .dq-header {
+    @apply bg-gray-900 h-14 sticky top-0 z-50;
+    box-shadow: var(--dq-shadow-sm);
+  }
+
+  .dq-header-inner {
+    @apply max-w-[1400px] mx-auto px-6 h-full flex items-center justify-between;
+  }
+
+  .dq-header-left {
+    @apply flex items-center gap-8;
+  }
+
+  .dq-header-right {
+    @apply flex items-center gap-4;
+  }
+
+  .dq-logo {
+    @apply text-lg font-semibold flex items-center gap-2 transition-colors duration-150;
+    color: var(--dq-primary);
+  }
+
+  .dq-logo:hover {
+    color: var(--dq-primary-light);
+  }
+
+  .dq-logo-icon {
+    @apply text-xl;
+  }
+
+  .dq-nav {
+    @apply flex gap-1;
+  }
+
+  .dq-nav-link {
+    @apply px-3 py-2 rounded-md text-sm font-medium text-gray-400 transition-colors duration-150;
+  }
+
+  .dq-nav-link:hover {
+    @apply text-white bg-white/5;
+  }
+
+  .dq-nav-link.active {
+    @apply text-white bg-white/10;
+  }
+
+  .dq-main {
+    @apply max-w-[1400px] mx-auto p-6;
+  }
 }
 
 /* =========================================================================
@@ -349,7 +525,7 @@
    ========================================================================= */
 @layer utilities {
   .text-muted {
-    @apply text-gray-500;
+    color: var(--dq-text-muted);
   }
 
   .truncate-id {
@@ -375,11 +551,12 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-100;
+  background-color: var(--dq-bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-300 rounded;
+  @apply rounded;
+  background-color: var(--dq-border-color);
 }
 
 ::-webkit-scrollbar-thumb:hover {

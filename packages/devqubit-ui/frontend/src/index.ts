@@ -30,7 +30,11 @@ export {
   useDiff,
   useArtifact,
   useMutation,
+  ThemeProvider,
+  useTheme,
+  useThemeOptional,
 } from './hooks';
+export type { Theme, ThemeContextValue, ThemeProviderProps } from './hooks';
 
 // Layout
 export { Layout, PageHeader, LayoutConfigProvider, useLayoutConfig } from './components/Layout';

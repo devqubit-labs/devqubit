@@ -62,38 +62,33 @@ export function Layout({ children, config: localConfig }: LayoutProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-gray-900 h-14 sticky top-0 z-50 shadow-sm">
-        <div className="max-w-container mx-auto px-6 h-full flex items-center justify-between">
-          <div className="flex items-center gap-8">
-            <Link to="/" className="text-lg font-semibold text-primary hover:text-primary-light flex items-center gap-2 transition-colors">
-              {logo.icon && <span className="text-xl">{logo.icon}</span>}
+    <div className="dq-layout">
+      <header className="dq-header">
+        <div className="dq-header-inner">
+          <div className="dq-header-left">
+            <Link to="/" className="dq-logo">
+              {logo.icon && <span className="dq-logo-icon">{logo.icon}</span>}
               {logo.text}
             </Link>
-            <nav className="flex gap-1">
+            <nav className="dq-nav">
               {navLinks.map((link) => (
                 <Link
                   key={link.href}
                   to={link.href}
-                  className={cn(
-                    'px-3 py-2 rounded-md text-sm font-medium transition-colors duration-150',
-                    isActive(link)
-                      ? 'text-white bg-white/10'
-                      : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  )}
+                  className={cn('dq-nav-link', isActive(link) && 'active')}
                 >
                   {link.label}
                 </Link>
               ))}
             </nav>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="dq-header-right">
             {config?.headerRight}
           </div>
         </div>
       </header>
 
-      <main className="max-w-container mx-auto p-6 fade-in">
+      <main className="dq-main fade-in">
         {children}
       </main>
     </div>
@@ -108,11 +103,9 @@ export interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
   return (
-    <div className="flex items-start justify-between mb-6 gap-4 flex-wrap">
+    <div className="page-header">
       <div>
-        <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-2 flex-wrap">
-          {title}
-        </h1>
+        <h1 className="page-title">{title}</h1>
         {subtitle && <p className="text-sm text-muted mt-1">{subtitle}</p>}
       </div>
       {actions && <div className="flex gap-2">{actions}</div>}
