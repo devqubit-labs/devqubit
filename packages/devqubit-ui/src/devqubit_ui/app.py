@@ -27,6 +27,7 @@ from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 from devqubit_ui.plugins import load_ui_plugins
 from devqubit_ui.routers import api
+from devqubit_ui.routers import export as export_router
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
@@ -118,6 +119,7 @@ def create_app(
 
     # Include API router
     app.include_router(api.router, prefix="/api", tags=["api"])
+    app.include_router(export_router.router, prefix="/api", tags=["export"])
 
     # Serve React frontend
     static_dir = Path(__file__).parent / "static"

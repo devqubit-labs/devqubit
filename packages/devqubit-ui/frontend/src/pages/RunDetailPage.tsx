@@ -8,6 +8,7 @@ import { Layout } from '../components/Layout';
 import {
   Card, CardHeader, CardTitle, Badge, Button, Spinner, EmptyState, KVList,
   Table, TableHead, TableBody, TableRow, TableHeader, TableCell, Modal, Toast,
+  ExportRunButton,
 } from '../components';
 import { StatusBadge } from '../components/RunsTable';
 import { useRun, useProjects, useApp, useMutation } from '../hooks';
@@ -129,6 +130,7 @@ export function RunDetailPage() {
           <p className="text-muted text-sm font-mono">{run.run_id}</p>
         </div>
         <div className="flex gap-2">
+          <ExportRunButton runId={run.run_id} runName={run.run_name} />
           {!isBaseline && (
             <Button variant="secondary" size="sm" onClick={handleSetBaseline} disabled={settingBaseline}>
               {settingBaseline && <Spinner />}

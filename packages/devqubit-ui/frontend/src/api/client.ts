@@ -149,6 +149,32 @@ export class ApiClient {
   getArtifactDownloadUrl(runId: string, index: number): string {
     return `${this.baseUrl}/api/runs/${runId}/artifacts/${index}/raw`;
   }
+
+  async createExport(runId: string): Promise<{
+    status: string;
+    run_id: string;
+    artifact_count: number;
+    object_count: number;
+    missing_objects: string[];
+  }> {
+    return this.request('POST', `/api/runs/${runId}/export`);
+  }
+
+  async getExportInfo(runId: string): Promise<{
+    run_id: string;
+    run_name?: string;
+    project?: string;
+    artifact_count: number;
+    object_count: number;
+    available_objects: number;
+    missing_objects: number;
+  }> {
+    return this.request('GET', `/api/runs/${runId}/export/info`);
+  }
+
+  getExportDownloadUrl(runId: string): string {
+    return `${this.baseUrl}/api/runs/${runId}/export/download`;
+  }
 }
 
 export const api = new ApiClient();
