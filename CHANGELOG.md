@@ -8,6 +8,14 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.11](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.11) - 2026-02-04
+
+#### Added
+- Added `RemoteStore` and `RemoteRegistry` for HTTP-based centralized tracking. ([#44](https://github.com/devqubit-labs/devqubit/pull/44))
+
+#### Changed
+- Migrated frontend from Jinja/HTMX to React. ([#41](https://github.com/devqubit-labs/devqubit/pull/41))
+
 ## [0.1.10](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.10) - 2026-01-30
 
 #### Changed
