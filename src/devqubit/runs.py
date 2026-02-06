@@ -38,6 +38,12 @@ Baseline Management
 ...     print(f"Baseline: {baseline['run_id']}")
 >>> set_baseline("my_project", "run_abc123")
 >>> clear_baseline("my_project")
+
+DataFrame Export
+----------------
+>>> from devqubit.runs import runs_to_dataframe
+>>> df = runs_to_dataframe(project="vqe", limit=200)
+>>> df[["run_id", "metric.fidelity", "param.shots"]].head()
 """
 
 from __future__ import annotations
@@ -62,6 +68,8 @@ __all__ = [
     "get_baseline",
     "set_baseline",
     "clear_baseline",
+    # DataFrame export
+    "runs_to_dataframe",
     # Types (for annotation convenience)
     "RunRecord",
     "RunSummary",
@@ -70,6 +78,7 @@ __all__ = [
 
 
 if TYPE_CHECKING:
+    import pandas as pd
     from devqubit_engine.storage.types import (
         BaselineInfo,
         RegistryProtocol,
@@ -645,6 +654,71 @@ def clear_baseline(
     """
     reg = registry if registry is not None else _get_registry()
     return reg.clear_baseline(project)
+
+
+def runs_to_dataframe(
+    *,
+    project: str | None = None,
+    group_id: str | None = None,
+    status: str | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    limit: int = 1000,
+    registry: "RegistryProtocol | None" = None,
+) -> "pd.DataFrame":
+    """
+    Load runs into a pandas DataFrame with flat columns.
+
+    Standard columns are always present (``run_id``, ``project``, ``status``,
+    …).  Params, metrics, and tags are expanded into ``param.*``,
+    ``metric.*``, ``tag.*`` columns.
+
+    Requires ``pandas`` — install with ``pip install devqubit[pandas]``.
+
+    Parameters
+    ----------
+    project : str, optional
+        Filter by project name.
+    group_id : str, optional
+        Filter by group ID (for sweep/experiment aggregation).
+    status : str, optional
+        Filter by status.
+    since : str, optional
+        Only include runs created after this ISO 8601 datetime.
+    until : str, optional
+        Only include runs created before this ISO 8601 datetime.
+    limit : int, default 1000
+        Maximum number of runs to load.
+    registry : RegistryProtocol, optional
+        Custom registry. Uses global config if not provided.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per run.
+
+    Examples
+    --------
+    >>> from devqubit.runs import runs_to_dataframe
+    >>> df = runs_to_dataframe(project="vqe")
+    >>> df[["run_id", "metric.fidelity", "param.shots"]].head()
+
+    >>> # Group aggregation
+    >>> df = runs_to_dataframe(group_id="sweep_20260115")
+    >>> df.groupby("param.optimization_level")["metric.fidelity"].mean()
+    """
+    from devqubit_engine.dataframe import runs_to_dataframe as _engine_to_df
+
+    reg = registry if registry is not None else _get_registry()
+    return _engine_to_df(
+        reg,
+        project=project,
+        group_id=group_id,
+        status=status,
+        since=since,
+        until=until,
+        limit=limit,
+    )
 
 
 def __getattr__(name: str) -> Any:
