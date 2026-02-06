@@ -21,12 +21,14 @@ and is automatically synchronized with GCS.
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
 import re
 import sqlite3
 import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List
@@ -387,10 +389,16 @@ class GCSRegistry:
         self._index_path = cache_dir / index_name
 
         self._local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connections_lock = threading.Lock()
         self._init_index()
 
         if auto_sync:
             self._sync_index()
+
+        # Ensure connections are cleaned up when the process exits.
+        weak_self = weakref.ref(self)
+        atexit.register(GCSRegistry._atexit_close, weak_self)
 
         logger.debug(
             "GCSRegistry initialized: bucket=%s, prefix=%s, index=%s",
@@ -399,12 +407,21 @@ class GCSRegistry:
             self._index_path,
         )
 
+    @staticmethod
+    def _atexit_close(weak_self: weakref.ref[GCSRegistry]) -> None:
+        """Close all connections at interpreter shutdown."""
+        self = weak_self()
+        if self is not None:
+            self.close_all()
+
     def _create_index_connection(self) -> sqlite3.Connection:
         """Create a new index database connection."""
         conn = sqlite3.connect(str(self._index_path), timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=30000")
+        with self._connections_lock:
+            self._connections.add(conn)
         return conn
 
     @contextmanager
@@ -785,6 +802,8 @@ class GCSRegistry:
         fingerprint: str | None = None,
         git_commit: str | None = None,
         group_id: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> List[RunSummary]:
         """
         List runs with optional filtering.
@@ -813,6 +832,10 @@ class GCSRegistry:
             Filter by git commit.
         group_id : str, optional
             Filter by group ID.
+        created_after : str, optional
+            ISO 8601 lower bound (exclusive) on ``created_at``.
+        created_before : str, optional
+            ISO 8601 upper bound (exclusive) on ``created_at``.
 
         Returns
         -------
@@ -846,6 +869,12 @@ class GCSRegistry:
         if group_id:
             conditions.append("group_id = ?")
             params.append(group_id)
+        if created_after:
+            conditions.append("created_at > ?")
+            params.append(created_after)
+        if created_before:
+            conditions.append("created_at < ?")
+            params.append(created_before)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -1249,11 +1278,40 @@ class GCSRegistry:
 
     def close(self) -> None:
         """
-        Close the thread-local index database connection.
+        Close the current thread's index database connection.
 
-        This is optional - connections are automatically closed when
-        the thread terminates.
+        Safe to call multiple times.  For cross-thread cleanup use
+        :meth:`close_all`.
         """
-        if hasattr(self._local, "conn") and self._local.conn is not None:
-            self._local.conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            with self._connections_lock:
+                self._connections.discard(conn)
+            try:
+                conn.close()
+            except Exception:
+                pass
             self._local.conn = None
+
+    def close_all(self) -> None:
+        """
+        Close every tracked index connection across all threads.
+
+        Intended for interpreter shutdown and explicit cleanup in tests.
+        """
+        with self._connections_lock:
+            for conn in list(self._connections):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
+        self._local = threading.local()
+
+    def __enter__(self) -> GCSRegistry:
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Exit context manager, closing all connections."""
+        self.close_all()
