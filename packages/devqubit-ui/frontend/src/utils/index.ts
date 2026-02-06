@@ -196,3 +196,59 @@ export function buildUrl(base: string, params: Record<string, unknown>): string 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(' ');
 }
+
+/**
+ * Compute elapsed seconds between two ISO timestamps (or until now).
+ *
+ * Parameters
+ * ----------
+ * createdAt : string
+ *     ISO 8601 start timestamp.
+ * endedAt : string | null | undefined
+ *     ISO 8601 end timestamp, or null/undefined to use current time.
+ *
+ * Returns
+ * -------
+ * number
+ *     Elapsed seconds (floored, minimum 0).
+ */
+export function elapsedSeconds(createdAt: string, endedAt?: string | null): number {
+  const start = new Date(createdAt).getTime();
+  const end = endedAt ? new Date(endedAt).getTime() : Date.now();
+  return Math.max(0, Math.floor((end - start) / 1000));
+}
+
+/**
+ * Format a duration in seconds to a human-readable string.
+ *
+ * Examples: "12s", "3m 45s", "2h 10m 5s", "1d 4h 20m"
+ *
+ * Parameters
+ * ----------
+ * seconds : number
+ *     Duration in seconds.
+ *
+ * Returns
+ * -------
+ * string
+ *     Formatted duration.
+ */
+export function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  return `${m}m ${s}s`;
+}
+
+/**
+ * Check if a run status is terminal (no further updates expected).
+ */
+export function isTerminalStatus(status: string): boolean {
+  return status === 'FINISHED' || status === 'FAILED' || status === 'KILLED';
+}

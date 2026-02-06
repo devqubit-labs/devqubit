@@ -2,7 +2,7 @@
  * DevQubit UI Type Definitions
  */
 
-export type RunStatus = 'RUNNING' | 'FINISHED' | 'FAILED' | 'UNKNOWN';
+export type RunStatus = 'RUNNING' | 'FINISHED' | 'FAILED' | 'KILLED' | 'UNKNOWN';
 
 export interface Artifact {
   kind: string;
@@ -23,6 +23,7 @@ export interface RunSummary {
   adapter?: string;
   status: RunStatus;
   created_at: string;
+  ended_at?: string | null;
   fingerprints?: Fingerprints;
 }
 

@@ -148,9 +148,21 @@ def create_app(
     return app
 
 
-def _run_in_thread(app: FastAPI, host: str, port: int, log_level: str) -> None:
+def _run_in_thread(
+    app: FastAPI,
+    host: str,
+    port: int,
+    log_level: str,
+    access_log: bool = False,
+) -> None:
     """Run uvicorn server in a background thread (for Jupyter)."""
-    config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level,
+        access_log=access_log,
+    )
     server = uvicorn.Server(config)
 
     def run_server() -> None:
@@ -220,6 +232,7 @@ def run_server(
             port=port,
             reload=True,
             log_level=log_level,
+            access_log=debug,
         )
         return
 
@@ -232,12 +245,12 @@ def run_server(
         in_async_context = False
 
     if in_async_context:
-        _run_in_thread(app, host, port, log_level)
+        _run_in_thread(app, host, port, log_level, access_log=debug)
     else:
         print(f"\n   devqubit UI: http://{host}:{port}")
         print(f"   Workspace: {app.state.workspace}")
         print("   Press Ctrl+C to stop\n")
-        uvicorn.run(app, host=host, port=port, log_level=log_level)
+        uvicorn.run(app, host=host, port=port, log_level=log_level, access_log=debug)
 
 
 if __name__ == "__main__":
