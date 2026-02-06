@@ -139,8 +139,13 @@ class Run:
     ) -> None:
         self._lock = threading.Lock()
 
-        # Generate unique run ID
-        self._run_id = str(ULID())
+        # Generate unique run ID — compatible with both python-ulid and py-ulid
+        # python-ulid: ULID() returns object with __str__ => str(obj) works
+        # py-ulid:     ULID() returns object with .generate() => returns string
+        ulid_gen = ULID()
+        self._run_id = (
+            ulid_gen.generate() if hasattr(ulid_gen, "generate") else str(ulid_gen)
+        )
         self._project = project
         self._adapter = adapter
         self._run_name = run_name
@@ -170,17 +175,15 @@ class Run:
 
         # Group/lineage support
         if group_id:
-            self.record["group_id"] = group_id
+            self.record["group_id"] = str(group_id)
         if group_name:
-            self.record["group_name"] = group_name
+            self.record["group_name"] = str(group_name)
         if parent_run_id:
-            self.record["parent_run_id"] = parent_run_id
+            self.record["parent_run_id"] = str(parent_run_id)
 
         # Capture environment and provenance
         if capture_env:
-            self.record["environment"] = capture_environment(
-                include_pip=cfg.capture_pip,
-            )
+            self.record["environment"] = capture_environment()
 
         should_capture_git = capture_git and cfg.capture_git
         if should_capture_git:
