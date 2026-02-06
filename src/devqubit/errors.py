@@ -5,26 +5,25 @@
 Public exception types.
 
 This module exposes all public exceptions that may be raised by devqubit
-operations. Users can catch these to handle specific error conditions.
+operations.  Users can catch these to handle specific error conditions.
 
-Exception Types
----------------
-Storage errors:
-    - ``StorageError`` - Base for storage-related errors
-    - ``ObjectNotFoundError`` - Artifact not found in object store
-    - ``RunNotFoundError`` - Run not found in registry
+Exception Hierarchy
+-------------------
+All exceptions inherit from :class:`DevQubitError`::
 
-Query errors:
-    - ``QueryParseError`` - Invalid search query syntax
+    DevQubitError
+    ├── StorageError
+    │   ├── ObjectNotFoundError
+    │   └── RunNotFoundError
+    ├── RegistryError
+    ├── QueryParseError
+    ├── CircuitError
+    │   ├── LoaderError
+    │   └── SerializerError
+    ├── MissingEnvelopeError
+    └── EnvelopeValidationError
 
-Envelope errors:
-    - ``MissingEnvelopeError`` - Run missing required envelope
-    - ``EnvelopeValidationError`` - Invalid envelope data
-
-Catch-All
----------
-``DevQubitError`` is a convenience base class defined in this module.
-Use it to catch any error from devqubit in a single except block:
+Catch-all pattern:
 
 >>> from devqubit.errors import DevQubitError, RunNotFoundError
 >>> try:
@@ -34,19 +33,13 @@ Use it to catch any error from devqubit in a single except block:
 ... except DevQubitError:
 ...     print("Other devqubit error")
 
-Basic Usage
------------
+Specific error handling:
+
 >>> from devqubit.errors import RunNotFoundError
 >>> try:
 ...     run = load_run("nonexistent")
 ... except RunNotFoundError as e:
 ...     print(f"Run not found: {e.run_id}")
-
-Note
-----
-The engine exceptions (``StorageError``, ``RunNotFoundError``, etc.) are
-re-exported from ``devqubit_engine`` for convenience. ``DevQubitError``
-is a separate base class defined here for catch-all patterns.
 """
 
 from __future__ import annotations
@@ -55,46 +48,35 @@ from typing import TYPE_CHECKING, Any
 
 
 __all__ = [
-    # Convenience base exception
+    # Base exception
     "DevQubitError",
     # Storage errors
+    "RegistryError",
     "StorageError",
     "ObjectNotFoundError",
     "RunNotFoundError",
     # Query errors
     "QueryParseError",
+    # Circuit errors
+    "CircuitError",
+    "LoaderError",
+    "SerializerError",
     # Envelope errors
     "MissingEnvelopeError",
     "EnvelopeValidationError",
 ]
 
 
-class DevQubitError(Exception):
-    """
-    Convenience base exception for catch-all error handling.
-
-    This exception is NOT the base class for engine exceptions, but can
-    be used alongside specific exceptions for comprehensive error handling.
-
-    Examples
-    --------
-    >>> from devqubit.errors import DevQubitError, RunNotFoundError
-    >>> try:
-    ...     result = some_devqubit_operation()
-    ... except RunNotFoundError:
-    ...     print("Specific: run not found")
-    ... except DevQubitError:
-    ...     print("Fallback: other devqubit error")
-    """
-
-    pass
-
-
 if TYPE_CHECKING:
+    from devqubit_engine.circuit.registry import CircuitError as _CircuitError
+    from devqubit_engine.circuit.registry import LoaderError as _LoaderError
+    from devqubit_engine.circuit.registry import SerializerError as _SerializerError
+    from devqubit_engine.errors import DevQubitError as _DevQubitError
     from devqubit_engine.query import QueryParseError as _QueryParseError
     from devqubit_engine.storage.errors import (
         ObjectNotFoundError as _ObjectNotFoundError,
     )
+    from devqubit_engine.storage.errors import RegistryError as _RegistryError
     from devqubit_engine.storage.errors import RunNotFoundError as _RunNotFoundError
     from devqubit_engine.storage.errors import StorageError as _StorageError
     from devqubit_engine.uec.errors import (
@@ -102,20 +84,29 @@ if TYPE_CHECKING:
     )
     from devqubit_engine.uec.errors import MissingEnvelopeError as _MissingEnvelopeError
 
-    # Re-export with type hints
+    DevQubitError = _DevQubitError
+    RegistryError = _RegistryError
     StorageError = _StorageError
     ObjectNotFoundError = _ObjectNotFoundError
     RunNotFoundError = _RunNotFoundError
     QueryParseError = _QueryParseError
+    CircuitError = _CircuitError
+    LoaderError = _LoaderError
+    SerializerError = _SerializerError
     MissingEnvelopeError = _MissingEnvelopeError
     EnvelopeValidationError = _EnvelopeValidationError
 
 
 _LAZY_IMPORTS = {
+    "DevQubitError": ("devqubit_engine.errors", "DevQubitError"),
+    "RegistryError": ("devqubit_engine.storage.errors", "RegistryError"),
     "StorageError": ("devqubit_engine.storage.errors", "StorageError"),
     "ObjectNotFoundError": ("devqubit_engine.storage.errors", "ObjectNotFoundError"),
     "RunNotFoundError": ("devqubit_engine.storage.errors", "RunNotFoundError"),
     "QueryParseError": ("devqubit_engine.query", "QueryParseError"),
+    "CircuitError": ("devqubit_engine.circuit.registry", "CircuitError"),
+    "LoaderError": ("devqubit_engine.circuit.registry", "LoaderError"),
+    "SerializerError": ("devqubit_engine.circuit.registry", "SerializerError"),
     "MissingEnvelopeError": ("devqubit_engine.uec.errors", "MissingEnvelopeError"),
     "EnvelopeValidationError": (
         "devqubit_engine.uec.errors",

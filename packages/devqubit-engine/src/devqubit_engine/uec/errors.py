@@ -5,13 +5,16 @@
 
 from __future__ import annotations
 
+from devqubit_engine.errors import DevQubitError
 
-class MissingEnvelopeError(Exception):
+
+class MissingEnvelopeError(DevQubitError):
     """
-    Raised when adapter run is missing required envelope.
+    Raised when an adapter run is missing its required envelope.
 
-    Adapter runs MUST have an envelope artifact. If missing, this indicates
-    an adapter integration error that should be fixed in the adapter.
+    Adapter runs MUST have an envelope artifact.  If missing, this
+    indicates an adapter integration error that should be fixed in
+    the adapter.
 
     Parameters
     ----------
@@ -21,7 +24,7 @@ class MissingEnvelopeError(Exception):
         Adapter name that should have created the envelope.
     """
 
-    def __init__(self, run_id: str, adapter: str):
+    def __init__(self, run_id: str, adapter: str) -> None:
         self.run_id = run_id
         self.adapter = adapter
         super().__init__(
@@ -30,22 +33,23 @@ class MissingEnvelopeError(Exception):
         )
 
 
-class EnvelopeValidationError(Exception):
+class EnvelopeValidationError(DevQubitError):
     """
-    Raised when adapter run produces invalid envelope.
+    Raised when an adapter run produces an invalid envelope.
 
-    Adapter runs MUST produce valid envelopes. Invalid envelopes indicate
-    an adapter integration error that must be fixed in the adapter code.
+    Adapter runs MUST produce valid envelopes.  Invalid envelopes
+    indicate an adapter integration error that must be fixed in the
+    adapter code.
 
     Parameters
     ----------
     adapter : str
-        Adapter name that produced invalid envelope.
+        Adapter name that produced the invalid envelope.
     errors : list of str
         Validation error messages.
     """
 
-    def __init__(self, adapter: str, errors: list[str]):
+    def __init__(self, adapter: str, errors: list[str]) -> None:
         self.adapter = adapter
         self.errors = errors
         error_summary = "; ".join(errors[:3])

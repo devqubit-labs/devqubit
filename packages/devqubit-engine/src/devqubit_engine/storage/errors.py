@@ -1,21 +1,30 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
+"""Storage and registry exceptions."""
 
-class RegistryError(Exception):
+from __future__ import annotations
+
+from devqubit_engine.errors import DevQubitError
+
+
+class RegistryError(DevQubitError):
     """Base exception for registry operations."""
 
-    pass
 
-
-class StorageError(Exception):
+class StorageError(DevQubitError):
     """Base exception for storage operations."""
-
-    pass
 
 
 class ObjectNotFoundError(StorageError):
-    """Raised when a requested object doesn't exist in the store."""
+    """
+    Raised when a requested object does not exist in the store.
+
+    Parameters
+    ----------
+    digest : str
+        Content-address digest of the missing object.
+    """
 
     def __init__(self, digest: str) -> None:
         self.digest = digest
@@ -23,7 +32,14 @@ class ObjectNotFoundError(StorageError):
 
 
 class RunNotFoundError(StorageError):
-    """Raised when a requested run doesn't exist in the registry."""
+    """
+    Raised when a requested run does not exist in the registry.
+
+    Parameters
+    ----------
+    run_id : str
+        Identifier of the missing run.
+    """
 
     def __init__(self, run_id: str) -> None:
         self.run_id = run_id

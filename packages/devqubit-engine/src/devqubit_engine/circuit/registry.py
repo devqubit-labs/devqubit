@@ -31,27 +31,22 @@ from devqubit_engine.circuit.models import (
     LoadedCircuit,
 )
 from devqubit_engine.circuit.summary import CircuitSummary
+from devqubit_engine.errors import DevQubitError
 
 
 logger = logging.getLogger(__name__)
 
 
-class CircuitError(Exception):
+class CircuitError(DevQubitError):
     """Base exception for circuit operations."""
-
-    pass
 
 
 class LoaderError(CircuitError):
     """Raised when circuit loading fails."""
 
-    pass
-
 
 class SerializerError(CircuitError):
     """Raised when circuit serialization fails."""
-
-    pass
 
 
 @runtime_checkable

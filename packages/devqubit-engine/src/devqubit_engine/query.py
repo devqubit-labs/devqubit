@@ -57,6 +57,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Sequence
 
+from devqubit_engine.errors import DevQubitError
+
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +185,7 @@ _TOKEN_RE = re.compile(
 )
 
 
-class QueryParseError(ValueError):
+class QueryParseError(DevQubitError, ValueError):
     """
     Raised when query parsing fails.
 
@@ -191,8 +193,6 @@ class QueryParseError(ValueError):
     invalid syntax, unrecognized operators, or unsupported
     constructs.
     """
-
-    pass
 
 
 def _tokenize(query: str) -> list[tuple[str, str]]:
