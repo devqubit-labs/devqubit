@@ -13,7 +13,12 @@ class TestRunLifecycle:
 
     def test_successful_run(self, store, registry, config):
         """Complete successful run with all data types."""
-        with track(project="lifecycle", config=config) as run:
+        with track(
+            project="lifecycle",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_param("shots", 1000)
             run.log_metric("fidelity", 0.95)
             run.set_tag("backend", "simulator")
@@ -38,7 +43,12 @@ class TestRunLifecycle:
     def test_failed_run_captures_error(self, store, registry, config):
         """Failed run captures error and has FAILED status."""
         try:
-            with track(project="failing", config=config) as run:
+            with track(
+                project="failing",
+                store=store,
+                registry=registry,
+                config=config,
+            ) as run:
                 run.log_param("before_error", True)
                 run_id = run.run_id
                 raise ValueError("Test error message")
@@ -54,7 +64,13 @@ class TestRunLifecycle:
 
     def test_run_with_name(self, store, registry, config):
         """Run name is stored correctly."""
-        with track(project="named", run_name="experiment_v1", config=config) as run:
+        with track(
+            project="named",
+            run_name="experiment_v1",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run_id = run.run_id
 
         loaded = registry.load(run_id)
@@ -67,7 +83,12 @@ class TestLogging:
 
     def test_batch_logging(self, store, registry, config):
         """Log multiple params/metrics/tags at once."""
-        with track(project="batch", config=config) as run:
+        with track(
+            project="batch",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_params({"a": 1, "b": 2})
             run.log_metrics({"x": 0.5, "y": 0.6})
             run.set_tags({"env": "test"})
@@ -81,7 +102,12 @@ class TestLogging:
 
     def test_metric_time_series(self, store, registry, config):
         """Metric with step creates time series."""
-        with track(project="series", config=config) as run:
+        with track(
+            project="series",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_metric("loss", 1.0, step=0)
             run.log_metric("loss", 0.5, step=1)
             run.log_metric("loss", 0.2, step=2)
@@ -100,7 +126,12 @@ class TestArtifactLogging:
 
     def test_log_bytes(self, store, registry, config):
         """Log binary artifact."""
-        with track(project="artifacts", config=config) as run:
+        with track(
+            project="artifacts",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             ref = run.log_bytes(
                 kind="test.data",
                 data=b"binary content",
@@ -113,7 +144,12 @@ class TestArtifactLogging:
 
     def test_log_json(self, store, registry, config):
         """Log JSON artifact."""
-        with track(project="json", config=config) as run:
+        with track(
+            project="json",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_json(
                 name="config",
                 obj={"setting": "value", "count": 42},
@@ -129,7 +165,12 @@ class TestArtifactLogging:
 
     def test_log_text(self, store, registry, config):
         """Log text artifact."""
-        with track(project="text", config=config) as run:
+        with track(
+            project="text",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             ref = run.log_text(
                 name="notes",
                 text="Experiment notes",
@@ -143,7 +184,12 @@ class TestArtifactLogging:
         test_file = tmp_path / "input.txt"
         test_file.write_text("file content")
 
-        with track(project="file", config=config) as run:
+        with track(
+            project="file",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             ref = run.log_file(path=test_file, kind="input.file", role="input")
 
         assert store.get_bytes(ref.digest) == b"file content"
@@ -162,6 +208,8 @@ class TestGroupTracking:
                 project="sweep",
                 group_id=group_id,
                 group_name="Shots Sweep",
+                store=store,
+                registry=registry,
                 config=config,
             ) as run:
                 run.log_param("shots", shots)
@@ -179,11 +227,22 @@ class TestGroupTracking:
 
     def test_run_lineage(self, store, registry, config):
         """Parent-child run relationship."""
-        with track(project="lineage", config=config) as parent:
+        with track(
+            project="lineage",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as parent:
             parent.log_param("generation", 1)
             parent_id = parent.run_id
 
-        with track(project="lineage", parent_run_id=parent_id, config=config) as child:
+        with track(
+            project="lineage",
+            parent_run_id=parent_id,
+            store=store,
+            registry=registry,
+            config=config,
+        ) as child:
             child.log_param("generation", 2)
             child_id = child.run_id
 
@@ -206,6 +265,8 @@ class TestFingerprints:
                 project="identical",
                 capture_env=False,
                 capture_git=False,
+                store=store,
+                registry=registry,
                 config=config,
             ) as run:
                 run.log_param("x", 42)

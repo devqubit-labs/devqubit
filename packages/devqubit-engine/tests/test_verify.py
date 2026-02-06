@@ -31,6 +31,8 @@ class TestVerifyWorkflow:
             project="test",
             capture_env=False,
             capture_git=False,
+            store=store,
+            registry=registry,
             config=config,
         ) as base:
             base.log_param("shots", 1000)
@@ -46,6 +48,8 @@ class TestVerifyWorkflow:
             project="test",
             capture_env=False,
             capture_git=False,
+            store=store,
+            registry=registry,
             config=config,
         ) as cand:
             cand.log_param("shots", 1000)
@@ -69,11 +73,21 @@ class TestVerifyWorkflow:
 
     def test_param_change_fails_when_required(self, store, registry, config):
         """Parameter changes fail verification when params_must_match=True."""
-        with track(project="params", config=config) as base:
+        with track(
+            project="params",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_param("shots", 1000)
             base_id = base.run_id
 
-        with track(project="params", config=config) as cand:
+        with track(
+            project="params",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_param("shots", 2000)  # Changed
             cand_id = cand.run_id
 
@@ -90,7 +104,12 @@ class TestVerifyWorkflow:
 
     def test_program_change_fails_when_required(self, store, registry, config):
         """Program changes fail verification when program_must_match=True."""
-        with track(project="prog", config=config) as base:
+        with track(
+            project="prog",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_bytes(
                 kind="circuit.qasm",
                 data=b"OPENQASM 3; qubit q; h q;",
@@ -99,7 +118,12 @@ class TestVerifyWorkflow:
             )
             base_id = base.run_id
 
-        with track(project="prog", config=config) as cand:
+        with track(
+            project="prog",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_bytes(
                 kind="circuit.qasm",
                 data=b"OPENQASM 3; qubit q; x q;",  # Changed
@@ -121,7 +145,12 @@ class TestVerifyWorkflow:
 
     def test_tvd_threshold_enforced(self, store, registry, config):
         """TVD exceeding threshold fails verification."""
-        with track(project="tvd", config=config) as base:
+        with track(
+            project="tvd",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
@@ -130,7 +159,12 @@ class TestVerifyWorkflow:
             )
             base_id = base.run_id
 
-        with track(project="tvd", config=config) as cand:
+        with track(
+            project="tvd",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 300, "11": 700}}).encode(),
@@ -157,7 +191,12 @@ class TestVerifyWorkflow:
 
     def test_noise_factor_uses_bootstrap(self, store, registry, config):
         """noise_factor multiplies bootstrap noise_p95 threshold."""
-        with track(project="noise", config=config) as base:
+        with track(
+            project="noise",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
@@ -166,7 +205,12 @@ class TestVerifyWorkflow:
             )
             base_id = base.run_id
 
-        with track(project="noise", config=config) as cand:
+        with track(
+            project="noise",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             # Large difference that should exceed any noise
             cand.log_bytes(
                 kind="result.counts.json",
@@ -193,7 +237,12 @@ class TestVerifyWorkflow:
     def test_tvd_max_is_hard_limit_over_noise_threshold(self, store, registry, config):
         """tvd_max should be a hard limit even when noise_threshold is higher."""
         # Create runs with TVD = 0.2
-        with track(project="threshold", config=config) as base:
+        with track(
+            project="threshold",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
@@ -202,7 +251,12 @@ class TestVerifyWorkflow:
             )
             base_id = base.run_id
 
-        with track(project="threshold", config=config) as cand:
+        with track(
+            project="threshold",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 300, "11": 700}}).encode(),
@@ -233,7 +287,12 @@ class TestVerifyWorkflow:
 
     def test_noise_pvalue_cutoff_triggers_noise_context(self, store, registry, config):
         """noise_pvalue_cutoff alone should trigger noise context computation."""
-        with track(project="pvalue", config=config) as base:
+        with track(
+            project="pvalue",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
@@ -242,7 +301,12 @@ class TestVerifyWorkflow:
             )
             base_id = base.run_id
 
-        with track(project="pvalue", config=config) as cand:
+        with track(
+            project="pvalue",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_bytes(
                 kind="result.counts.json",
                 data=json.dumps({"counts": {"00": 495, "11": 505}}).encode(),
@@ -276,7 +340,12 @@ class TestBaselineWorkflow:
 
     def test_missing_baseline_raises(self, store, registry, config):
         """Missing baseline raises error by default."""
-        with track(project="no_baseline", config=config) as run:
+        with track(
+            project="no_baseline",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
@@ -290,7 +359,12 @@ class TestBaselineWorkflow:
 
     def test_allow_missing_baseline_passes(self, store, registry, config):
         """First run passes when allow_missing_baseline=True."""
-        with track(project="first_run", config=config) as run:
+        with track(
+            project="first_run",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
@@ -307,7 +381,12 @@ class TestBaselineWorkflow:
 
     def test_promote_on_pass_updates_baseline(self, store, registry, config):
         """Passing verification with promote_on_pass updates baseline."""
-        with track(project="promote", config=config) as run:
+        with track(
+            project="promote",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run:
             run.log_param("x", 1)
             run_id = run.run_id
 
@@ -326,13 +405,23 @@ class TestBaselineWorkflow:
 
     def test_no_promote_on_fail(self, store, registry, config):
         """Failed verification does not update baseline."""
-        with track(project="no_promote", config=config) as base:
+        with track(
+            project="no_promote",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
             base.log_param("x", 1)
             base_id = base.run_id
 
         registry.set_baseline("no_promote", base_id)
 
-        with track(project="no_promote", config=config) as cand:
+        with track(
+            project="no_promote",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
             cand.log_param("x", 999)  # Different
             cand_id = cand.run_id
 
@@ -518,3 +607,192 @@ class TestVerifyResultSerialization:
         parsed = json.loads(json_str)
 
         assert parsed["ok"] is True
+
+
+class TestCIBaselineLoop:
+    """Full CI baseline promotion workflow — the critical production path.
+
+    Simulates: first run promoted => second run verified against it => third run
+    with regression detected and rejected.
+    """
+
+    def test_full_baseline_promotion_cycle(self, store, registry, config):
+        """First run promoted, second run passes, third run regresses and fails."""
+        # Run 1: Initial baseline (no prior baseline => auto-pass + promote)
+        with track(
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run1:
+            run1.log_param("shots", 1000)
+            run1.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            run1_id = run1.run_id
+
+        result1 = verify_against_baseline(
+            registry.load(run1_id),
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            policy=VerifyPolicy(
+                allow_missing_baseline=True,
+                params_must_match=True,
+                program_must_match=False,
+            ),
+            promote_on_pass=True,
+        )
+        assert result1.ok
+        assert registry.get_baseline("ci_loop")["run_id"] == run1_id
+
+        # Run 2: Same params + similar counts => pass + promote
+        with track(
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run2:
+            run2.log_param("shots", 1000)
+            run2.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 490, "11": 510}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            run2_id = run2.run_id
+
+        result2 = verify_against_baseline(
+            registry.load(run2_id),
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            policy=VerifyPolicy(
+                params_must_match=True,
+                program_must_match=False,
+                tvd_max=0.05,
+            ),
+            promote_on_pass=True,
+        )
+        assert result2.ok
+        assert result2.baseline_run_id == run1_id
+        # Baseline promoted to run2
+        assert registry.get_baseline("ci_loop")["run_id"] == run2_id
+
+        # Run 3: Regression — different params => fail, baseline stays at run2
+        with track(
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as run3:
+            run3.log_param("shots", 2000)  # Changed!
+            run3_id = run3.run_id
+
+        result3 = verify_against_baseline(
+            registry.load(run3_id),
+            project="ci_loop",
+            store=store,
+            registry=registry,
+            policy=VerifyPolicy(
+                params_must_match=True,
+                program_must_match=False,
+            ),
+            promote_on_pass=True,
+        )
+        assert not result3.ok
+        assert any("param" in f.lower() for f in result3.failures)
+        # Baseline unchanged
+        assert registry.get_baseline("ci_loop")["run_id"] == run2_id
+
+    def test_verify_with_tvd_regression(self, store, registry, config):
+        """TVD regression detected across baseline promotion cycle."""
+        # Establish baseline
+        with track(
+            project="tvd_ci",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
+            base.log_param("shots", 1000)
+            base.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 500, "11": 500}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            base_id = base.run_id
+
+        registry.set_baseline("tvd_ci", base_id)
+
+        # Candidate with large TVD regression
+        with track(
+            project="tvd_ci",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
+            cand.log_param("shots", 1000)
+            cand.log_bytes(
+                kind="result.counts.json",
+                data=json.dumps({"counts": {"00": 100, "11": 900}}).encode(),
+                media_type="application/json",
+                role="results",
+            )
+            cand_id = cand.run_id
+
+        result = verify_against_baseline(
+            registry.load(cand_id),
+            project="tvd_ci",
+            store=store,
+            registry=registry,
+            policy=VerifyPolicy(
+                params_must_match=True,
+                program_must_match=False,
+                tvd_max=0.1,
+            ),
+        )
+
+        assert not result.ok
+        assert any("tvd" in f.lower() for f in result.failures)
+        assert result.comparison is not None
+        assert result.comparison.tvd == pytest.approx(0.4)
+
+    def test_junit_output_from_real_verify(self, store, registry, config, tmp_path):
+        """JUnit XML produced from actual verify result (not mocked)."""
+        with track(
+            project="junit_e2e",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as base:
+            base.log_param("shots", 1000)
+            base_id = base.run_id
+
+        with track(
+            project="junit_e2e",
+            store=store,
+            registry=registry,
+            config=config,
+        ) as cand:
+            cand.log_param("shots", 2000)
+            cand_id = cand.run_id
+
+        result = verify(
+            registry.load(base_id),
+            registry.load(cand_id),
+            store_baseline=store,
+            store_candidate=store,
+            policy=VerifyPolicy(params_must_match=True),
+        )
+
+        junit_path = tmp_path / "verify.xml"
+        write_junit(result, junit_path)
+
+        content = junit_path.read_text()
+        assert "<testsuite" in content
+        assert 'failures="1"' in content
+        assert "<failure" in content

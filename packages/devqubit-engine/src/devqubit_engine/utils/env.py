@@ -25,13 +25,17 @@ logger = logging.getLogger(__name__)
 _SUBPROCESS_TIMEOUT = 30.0
 _GIT_TIMEOUT = 5.0
 
+# Per-process cache for pip freeze output keyed by (pid, executable)
+_pip_cache: dict[tuple[int, str], list[str] | None] = {}
+
 
 def _pip_freeze() -> list[str] | None:
     """
     Get installed packages via pip freeze.
 
     Runs ``pip freeze --local`` to capture the list of installed packages
-    in the current environment.
+    in the current environment. Results are cached per process and
+    Python executable to avoid redundant subprocess calls.
 
     Returns
     -------
@@ -45,6 +49,10 @@ def _pip_freeze() -> list[str] | None:
     This function has a 30-second timeout to prevent hanging on
     slow or unresponsive pip installations.
     """
+    cache_key = (os.getpid(), sys.executable)
+    if cache_key in _pip_cache:
+        return _pip_cache[cache_key]
+
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pip", "freeze", "--local"],
@@ -59,6 +67,7 @@ def _pip_freeze() -> list[str] | None:
                 if line.strip() and not line.startswith("#")
             ]
             logger.debug("Captured %d packages from pip freeze", len(packages))
+            _pip_cache[cache_key] = packages
             return packages
         else:
             logger.debug("pip freeze failed with return code %d", result.returncode)
@@ -69,6 +78,7 @@ def _pip_freeze() -> list[str] | None:
     except OSError as e:
         logger.debug("pip freeze failed: %s", e)
 
+    _pip_cache[cache_key] = None
     return None
 
 

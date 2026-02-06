@@ -90,7 +90,9 @@ class TestPackRun:
         """Pack creates bundle with required structure."""
         bundle_path = tmp_path / "test.zip"
 
-        with track(project="pack_test", config=config) as run:
+        with track(
+            project="pack_test", store=store, registry=registry, config=config
+        ) as run:
             run.log_param("x", 42)
             run_id = run.run_id
 
@@ -120,7 +122,9 @@ class TestPackRun:
         """Strict mode fails if referenced objects are missing."""
         bundle_path = tmp_path / "test.zip"
 
-        with track(project="pack_test", config=config) as run:
+        with track(
+            project="pack_test", store=store, registry=registry, config=config
+        ) as run:
             run_id = run.run_id
 
         # Add fake artifact reference
@@ -153,7 +157,9 @@ class TestUnpackBundle:
         """Unpack fails if run exists and overwrite=False."""
         bundle_path = tmp_path / "test.zip"
 
-        with track(project="test", config=config) as run:
+        with track(
+            project="test", store=store, registry=registry, config=config
+        ) as run:
             run_id = run.run_id
 
         pack_run(
@@ -175,7 +181,9 @@ class TestUnpackBundle:
         """Unpack succeeds with overwrite=True."""
         bundle_path = tmp_path / "test.zip"
 
-        with track(project="test", config=config) as run:
+        with track(
+            project="test", store=store, registry=registry, config=config
+        ) as run:
             run_id = run.run_id
 
         pack_run(
@@ -202,7 +210,9 @@ class TestBundleReader:
         """Bundle reader provides access to manifest, record, and objects."""
         bundle_path = tmp_path / "test.zip"
 
-        with track(project="reader_test", config=config) as run:
+        with track(
+            project="reader_test", store=store, registry=registry, config=config
+        ) as run:
             run.log_param("key", "value")
             run.log_bytes(
                 kind="test.data",

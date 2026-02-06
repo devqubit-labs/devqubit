@@ -484,6 +484,35 @@ def _resolve_field(record: dict[str, Any], field: str) -> tuple[bool, Any]:
     return _get_nested_value(record, field)
 
 
+def _coerce_numeric_pair(left: Any, right: Any) -> tuple[Any, Any]:
+    """
+    Coerce a str/numeric pair so both operands share a numeric type.
+
+    Parameters
+    ----------
+    left : Any
+        Left operand.
+    right : Any
+        Right operand.
+
+    Returns
+    -------
+    tuple
+        Coerced (left, right). If coercion fails, originals are returned.
+    """
+    if isinstance(right, (int, float)) and isinstance(left, str):
+        try:
+            return float(left), right
+        except (ValueError, TypeError):
+            return left, right
+    if isinstance(left, (int, float)) and isinstance(right, str):
+        try:
+            return left, float(right)
+        except (ValueError, TypeError):
+            return left, right
+    return left, right
+
+
 def _compare(left: Any, op: Op, right: Any) -> bool:
     """
     Compare two values with an operator.
@@ -506,20 +535,11 @@ def _compare(left: Any, op: Op, right: Any) -> bool:
         return True  # If we got here, field exists
 
     if op == Op.EQ:
-        # Type-coercing equality
-        if isinstance(right, (int, float)) and isinstance(left, str):
-            try:
-                left = float(left)
-            except (ValueError, TypeError):
-                pass
-        elif isinstance(left, (int, float)) and isinstance(right, str):
-            try:
-                right = float(right)
-            except (ValueError, TypeError):
-                pass
+        left, right = _coerce_numeric_pair(left, right)
         return left == right
 
     if op == Op.NE:
+        left, right = _coerce_numeric_pair(left, right)
         return left != right
 
     if op == Op.CONTAINS:

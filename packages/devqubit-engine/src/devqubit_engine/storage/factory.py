@@ -350,8 +350,16 @@ def _load_plugins() -> None:
             logger.warning("Failed to load storage plugin %s: %s", ep.name, e)
 
 
-# Load plugins on module import
-_load_plugins()
+# Load plugins lazily on first use
+_plugins_loaded: bool = False
+
+
+def _ensure_plugins_loaded() -> None:
+    """Load storage plugins on first use, not on import."""
+    global _plugins_loaded
+    if not _plugins_loaded:
+        _load_plugins()
+        _plugins_loaded = True
 
 
 def _get_storage_url(
@@ -431,6 +439,7 @@ def create_store(
         logger.debug("Creating remote store: server=%s", tracking_uri)
         return RemoteStore.from_env()
 
+    _ensure_plugins_loaded()
     cfg = config or get_config()
     parsed = _get_storage_url(url, cfg.storage_url, cfg.objects_dir)
     all_kwargs = {**parsed.params, **kwargs}
@@ -524,6 +533,7 @@ def create_registry(
         logger.debug("Creating remote registry: server=%s", tracking_uri)
         return RemoteRegistry.from_env()
 
+    _ensure_plugins_loaded()
     cfg = config or get_config()
     parsed = _get_storage_url(url, cfg.registry_url, cfg.root_dir)
     all_kwargs = {**parsed.params, **kwargs}

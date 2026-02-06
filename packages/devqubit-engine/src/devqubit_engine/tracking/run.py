@@ -139,7 +139,9 @@ class Run:
     ) -> None:
         self._lock = threading.Lock()
 
-        # Generate unique run ID
+        # Generate unique run ID — compatible with both python-ulid and py-ulid
+        # python-ulid: ULID() returns object with __str__ => str(obj) works
+        # py-ulid:     ULID() returns object with .generate() => returns string
         ulid_gen = ULID()
         self._run_id = (
             ulid_gen.generate() if hasattr(ulid_gen, "generate") else str(ulid_gen)
@@ -173,11 +175,11 @@ class Run:
 
         # Group/lineage support
         if group_id:
-            self.record["group_id"] = group_id
+            self.record["group_id"] = str(group_id)
         if group_name:
-            self.record["group_name"] = group_name
+            self.record["group_name"] = str(group_name)
         if parent_run_id:
-            self.record["parent_run_id"] = parent_run_id
+            self.record["parent_run_id"] = str(parent_run_id)
 
         # Capture environment and provenance
         if capture_env:
@@ -241,10 +243,21 @@ class Run:
         Parameters
         ----------
         key : str
-            Parameter name.
+            Parameter name. Must not contain dots (they conflict with
+            the query parser's nested field resolution).
         value : Any
             Parameter value. Will be converted to JSON-serializable form.
+
+        Raises
+        ------
+        ValueError
+            If key contains a dot character.
         """
+        if "." in key:
+            raise ValueError(
+                f"Param key cannot contain dots: {key!r}. "
+                f"Use underscores or nested dicts instead."
+            )
         jsonable_value = to_jsonable(value)
         with self._lock:
             self.record["data"]["params"][key] = jsonable_value
@@ -1080,6 +1093,10 @@ class Run:
         # Save to registry
         self._registry.save(run_record.to_dict())
 
+        # Release registry resources
+        if hasattr(self._registry, "close"):
+            self._registry.close()
+
         logger.info(
             "Run finalized: run_id=%s, status=%s, artifacts=%d, envelopes=%d",
             self._run_id,
@@ -1135,6 +1152,8 @@ class Run:
             self._finalize(success=True)
         except Exception as finalize_error:
             with self._lock:
+                self.record["info"]["status"] = "PARTIAL"
+                self.record["info"]["finalization_error"] = str(finalize_error)
                 self.record.setdefault("errors", []).append(
                     {
                         "type": type(finalize_error).__name__,
@@ -1148,6 +1167,8 @@ class Run:
                 self._registry.save(self.record)
             except Exception:
                 logger.exception("Failed to save run record after finalization error")
+
+            raise finalize_error
 
         return False
 

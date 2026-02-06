@@ -116,11 +116,19 @@ class RedactionConfig:
         repr=False,
         compare=False,
     )
+    _compiled_key: tuple[str, ...] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def _get_compiled(self) -> list[Pattern[str]]:
-        """Get compiled patterns, caching on first access."""
-        if self._compiled is None:
+        """Get compiled patterns, recompiling when patterns change."""
+        current_key = tuple(self.patterns)
+        if self._compiled is None or self._compiled_key != current_key:
             self._compiled = _get_compiled_patterns(self.patterns)
+            self._compiled_key = current_key
         return self._compiled
 
     def should_redact(self, key: str) -> bool:
