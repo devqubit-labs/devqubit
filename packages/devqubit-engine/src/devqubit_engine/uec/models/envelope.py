@@ -66,8 +66,8 @@ class ValidationResult:
     warnings: list[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
-        """Return True if validation passed."""
-        return self.valid
+        """Return True if validation passed without errors."""
+        return self.ok
 
     def __iter__(self):
         """Iterate over validation errors."""
