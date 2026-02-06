@@ -37,6 +37,7 @@ def register(cli: click.Group) -> None:
     cli.add_command(baseline_group)
     cli.add_command(config_cmd)
     cli.add_command(ui_command)
+    cli.add_command(doctor_command)
 
 
 # =============================================================================
@@ -564,3 +565,155 @@ def ui_command(host: str, port: int, workspace: str | None, debug: bool) -> None
         workspace=workspace,
         debug=debug,
     )
+
+
+# =============================================================================
+# Doctor command
+# =============================================================================
+
+
+@click.command("doctor")
+@click.option(
+    "--older-than",
+    default="6h",
+    show_default=True,
+    help="Age threshold (e.g. 6h, 1d, 30m).",
+)
+@click.option("--project", "-p", default=None, help="Limit to specific project.")
+@click.option("--auto", is_flag=True, help="Recover stale runs without prompting.")
+@click.option("--dry-run", "-n", is_flag=True, help="Preview without modifying.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
+@click.pass_context
+def doctor_command(
+    ctx: click.Context,
+    older_than: str,
+    project: str | None,
+    auto: bool,
+    dry_run: bool,
+    fmt: str,
+) -> None:
+    """
+    Diagnose and recover stale runs.
+
+    Finds runs stuck in RUNNING state that are older than the given
+    threshold and marks them as KILLED.  This is useful after process
+    crashes, SSH disconnects, or OOM kills during hardware jobs.
+
+    Examples:
+        devqubit doctor --dry-run
+        devqubit doctor --auto --older-than 6h
+        devqubit doctor --auto --older-than 1d --project nightly-ci
+    """
+    from devqubit_engine.config import Config
+    from devqubit_engine.storage.factory import create_registry
+
+    root = root_from_ctx(ctx)
+    config = Config(root_dir=root)
+    registry = create_registry(config=config)
+
+    hours = _parse_duration_to_hours(older_than)
+
+    if not hasattr(registry, "recover_stale_runs"):
+        raise click.ClickException(
+            "Current registry backend does not support stale run recovery."
+        )
+
+    stale = registry.recover_stale_runs(
+        older_than_hours=hours,
+        project=project,
+        dry_run=True,
+    )
+
+    if fmt == "json":
+        if dry_run or not auto:
+            print_json({"stale_runs": stale, "count": len(stale), "dry_run": True})
+            if dry_run or not stale:
+                return
+        if not auto:
+            if not click.confirm(f"Recover {len(stale)} stale run(s)?"):
+                echo("Cancelled.")
+                return
+        recovered = registry.recover_stale_runs(
+            older_than_hours=hours,
+            project=project,
+            dry_run=False,
+        )
+        print_json(
+            {"recovered_runs": recovered, "count": len(recovered), "dry_run": False}
+        )
+        return
+
+    if not stale:
+        echo("No stale runs found.")
+        return
+
+    echo(f"Found {len(stale)} stale run(s) (RUNNING for >{older_than}):\n")
+
+    headers = ["Run ID", "Project", "Created"]
+    rows = [
+        [
+            r["run_id"][:12] + "...",
+            r["project"][:20],
+            str(r["created_at"])[:19],
+        ]
+        for r in stale
+    ]
+    print_table(headers, rows, "Stale Runs")
+
+    if dry_run:
+        echo("\nDry run - no runs modified.")
+        return
+
+    if not auto:
+        if not click.confirm(f"\nRecover {len(stale)} stale run(s)? (mark as KILLED)"):
+            echo("Cancelled.")
+            return
+
+    recovered = registry.recover_stale_runs(
+        older_than_hours=hours,
+        project=project,
+        dry_run=False,
+    )
+    echo(f"\nRecovered {len(recovered)} run(s).")
+
+
+def _parse_duration_to_hours(value: str) -> float:
+    """
+    Parse a human-readable duration string to hours.
+
+    Parameters
+    ----------
+    value : str
+        Duration string (e.g. ``"6h"``, ``"1d"``, ``"30m"``).
+
+    Returns
+    -------
+    float
+        Duration in hours.
+
+    Raises
+    ------
+    click.BadParameter
+        If the format is not recognized.
+    """
+    import re
+
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([hdm])", value.strip().lower())
+    if not match:
+        raise click.BadParameter(
+            f"Invalid duration: {value!r}. Use format like 6h, 1d, or 30m."
+        )
+    amount = float(match.group(1))
+    unit = match.group(2)
+    if unit == "h":
+        return amount
+    if unit == "d":
+        return amount * 24.0
+    if unit == "m":
+        return amount / 60.0
+    raise click.BadParameter(f"Unknown duration unit: {unit!r}")

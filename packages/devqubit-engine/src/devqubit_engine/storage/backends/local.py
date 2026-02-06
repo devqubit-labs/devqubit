@@ -1270,6 +1270,104 @@ class LocalRegistry:
             return True
         return False
 
+    def recover_stale_runs(
+        self,
+        older_than_hours: float = 6.0,
+        *,
+        project: str | None = None,
+        dry_run: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Mark runs stuck in RUNNING state as KILLED.
+
+        A run is considered stale when its ``created_at`` timestamp is
+        older than *older_than_hours* and its status is still RUNNING.
+        This typically happens when the host process is terminated
+        (OOM, SSH disconnect, kernel restart) before the run context
+        manager can finalize.
+
+        Parameters
+        ----------
+        older_than_hours : float, optional
+            Age threshold in hours.  Runs older than this value that
+            are still in RUNNING state will be recovered.  Default is 6.
+        project : str, optional
+            Limit recovery to a single project.
+        dry_run : bool, optional
+            If ``True``, return the list of stale runs without modifying
+            them.  Default is ``False``.
+
+        Returns
+        -------
+        list of dict
+            One entry per recovered (or would-be-recovered) run, each
+            containing ``run_id``, ``project``, ``created_at``, and
+            ``recovered_at`` keys.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+
+        conditions = ["status = 'RUNNING'", "created_at < ?"]
+        params: list[Any] = [cutoff_iso]
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+
+        where = " AND ".join(conditions)
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT run_id, project, created_at, record_json "
+                f"FROM runs WHERE {where} ORDER BY created_at",
+                params,
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        now_iso = utc_now_iso()
+        recovered: list[dict[str, Any]] = []
+
+        for row in rows:
+            entry = {
+                "run_id": row["run_id"],
+                "project": row["project"],
+                "created_at": row["created_at"],
+                "recovered_at": now_iso,
+            }
+            recovered.append(entry)
+
+            if dry_run:
+                continue
+
+            record = json.loads(row["record_json"])
+            info = record.setdefault("info", {})
+            info["status"] = "KILLED"
+            info["ended_at"] = now_iso
+            info["recovery_note"] = (
+                f"Automatically recovered by devqubit doctor: "
+                f"run was RUNNING for more than {older_than_hours}h"
+            )
+            record_json = json.dumps(record, default=str)
+
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE runs SET status = 'KILLED', ended_at = ?, "
+                    "record_json = ? WHERE run_id = ?",
+                    (now_iso, record_json, row["run_id"]),
+                )
+
+            logger.info(
+                "Recovered stale run: run_id=%s, project=%s, age=%s",
+                row["run_id"],
+                row["project"],
+                row["created_at"],
+            )
+
+        return recovered
+
     def close(self) -> None:
         """
         Close the current thread's database connection.
