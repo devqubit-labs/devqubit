@@ -14,7 +14,10 @@ class TestRunLifecycle:
     def test_successful_run(self, store, registry, config):
         """Complete successful run with all data types."""
         with track(
-            project="lifecycle", store=store, registry=registry, config=config
+            project="lifecycle",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             run.log_param("shots", 1000)
             run.log_metric("fidelity", 0.95)
@@ -41,7 +44,10 @@ class TestRunLifecycle:
         """Failed run captures error and has FAILED status."""
         try:
             with track(
-                project="failing", store=store, registry=registry, config=config
+                project="failing",
+                store=store,
+                registry=registry,
+                config=config,
             ) as run:
                 run.log_param("before_error", True)
                 run_id = run.run_id
@@ -78,7 +84,10 @@ class TestLogging:
     def test_batch_logging(self, store, registry, config):
         """Log multiple params/metrics/tags at once."""
         with track(
-            project="batch", store=store, registry=registry, config=config
+            project="batch",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             run.log_params({"a": 1, "b": 2})
             run.log_metrics({"x": 0.5, "y": 0.6})
@@ -94,7 +103,10 @@ class TestLogging:
     def test_metric_time_series(self, store, registry, config):
         """Metric with step creates time series."""
         with track(
-            project="series", store=store, registry=registry, config=config
+            project="series",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             run.log_metric("loss", 1.0, step=0)
             run.log_metric("loss", 0.5, step=1)
@@ -115,7 +127,10 @@ class TestArtifactLogging:
     def test_log_bytes(self, store, registry, config):
         """Log binary artifact."""
         with track(
-            project="artifacts", store=store, registry=registry, config=config
+            project="artifacts",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             ref = run.log_bytes(
                 kind="test.data",
@@ -130,7 +145,10 @@ class TestArtifactLogging:
     def test_log_json(self, store, registry, config):
         """Log JSON artifact."""
         with track(
-            project="json", store=store, registry=registry, config=config
+            project="json",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             run.log_json(
                 name="config",
@@ -148,7 +166,10 @@ class TestArtifactLogging:
     def test_log_text(self, store, registry, config):
         """Log text artifact."""
         with track(
-            project="text", store=store, registry=registry, config=config
+            project="text",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             ref = run.log_text(
                 name="notes",
@@ -164,7 +185,10 @@ class TestArtifactLogging:
         test_file.write_text("file content")
 
         with track(
-            project="file", store=store, registry=registry, config=config
+            project="file",
+            store=store,
+            registry=registry,
+            config=config,
         ) as run:
             ref = run.log_file(path=test_file, kind="input.file", role="input")
 
@@ -204,7 +228,10 @@ class TestGroupTracking:
     def test_run_lineage(self, store, registry, config):
         """Parent-child run relationship."""
         with track(
-            project="lineage", store=store, registry=registry, config=config
+            project="lineage",
+            store=store,
+            registry=registry,
+            config=config,
         ) as parent:
             parent.log_param("generation", 1)
             parent_id = parent.run_id
