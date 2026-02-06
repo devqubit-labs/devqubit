@@ -38,6 +38,7 @@ def register(cli: click.Group) -> None:
     cli.add_command(config_cmd)
     cli.add_command(ui_command)
     cli.add_command(doctor_command)
+    cli.add_command(gc_command)
 
 
 # =============================================================================
@@ -717,3 +718,168 @@ def _parse_duration_to_hours(value: str) -> float:
     if unit == "m":
         return amount / 60.0
     raise click.BadParameter(f"Unknown duration unit: {unit!r}")
+
+
+# =============================================================================
+# Top-level GC command
+# =============================================================================
+
+
+@click.command("gc")
+@click.option(
+    "--older-than",
+    default=None,
+    help="Delete runs older than this (e.g. 90d, 24h).  Without this flag, "
+    "only orphaned objects are cleaned — no runs are deleted.",
+)
+@click.option(
+    "--keep-last",
+    type=int,
+    default=10,
+    show_default=True,
+    help="Always keep N most recent runs per project.",
+)
+@click.option("--project", "-p", default=None, help="Limit to specific project.")
+@click.option(
+    "--status",
+    "-s",
+    default=None,
+    help="Only prune runs with this status (e.g. FAILED, KILLED).",
+)
+@click.option("--dry-run", "-n", is_flag=True, help="Preview without deleting.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["pretty", "json"]),
+    default="pretty",
+)
+@click.pass_context
+def gc_command(
+    ctx: click.Context,
+    older_than: str | None,
+    keep_last: int,
+    project: str | None,
+    status: str | None,
+    dry_run: bool,
+    yes: bool,
+    fmt: str,
+) -> None:
+    """
+    Clean up old runs and orphaned objects.
+
+    Combines run pruning and object garbage collection in one step.
+    Without --older-than, only orphaned objects are cleaned (no runs deleted).
+
+    \b
+    Examples:
+        devqubit gc --dry-run
+        devqubit gc --older-than 90d --project nightly-ci
+        devqubit gc --older-than 30d --status FAILED --yes
+        devqubit gc --older-than 7d --keep-last 50
+    """
+    from devqubit_engine.config import Config
+    from devqubit_engine.storage.factory import create_registry, create_store
+    from devqubit_engine.storage.gc import gc_run, prune_runs
+
+    root = root_from_ctx(ctx)
+    config = Config(root_dir=root)
+    registry = create_registry(config=config)
+    store = create_store(config=config)
+
+    # Phase 1: prune runs (only if --older-than provided)
+    prune_stats = None
+    if older_than is not None:
+        hours = _parse_duration_to_hours(older_than)
+        older_than_days = hours / 24.0
+
+        prune_stats = prune_runs(
+            registry,
+            project=project,
+            status=status,
+            older_than_days=int(older_than_days) if older_than_days >= 1 else 1,
+            keep_latest=keep_last,
+            dry_run=True,
+        )
+
+        if fmt == "pretty":
+            if prune_stats.runs_pruned > 0:
+                echo(f"Runs to delete:   {prune_stats.runs_pruned}")
+            else:
+                echo("No runs match pruning criteria.")
+
+    # Phase 2: scan orphaned objects
+    gc_stats = gc_run(store, registry, project=project, dry_run=True)
+
+    if fmt == "json":
+
+        result: dict = {
+            "orphaned_objects": gc_stats.unreferenced_objects,
+            "bytes_reclaimable": gc_stats.bytes_reclaimable,
+            "dry_run": dry_run,
+        }
+        if prune_stats is not None:
+            result["runs_to_prune"] = prune_stats.runs_pruned
+        print_json(result)
+        if dry_run:
+            return
+    else:
+        echo(f"Orphaned objects: {gc_stats.unreferenced_objects}")
+        if gc_stats.bytes_reclaimable > 0:
+            echo(f"Reclaimable:      {gc_stats.bytes_reclaimable:,} bytes")
+
+    nothing_to_do = (
+        prune_stats is None or prune_stats.runs_pruned == 0
+    ) and gc_stats.unreferenced_objects == 0
+
+    if dry_run:
+        if fmt == "pretty":
+            echo("\nDry run — nothing modified.")
+        return
+
+    if nothing_to_do:
+        if fmt == "pretty":
+            echo("\nNothing to clean up.")
+        return
+
+    if not yes:
+        parts = []
+        if prune_stats and prune_stats.runs_pruned > 0:
+            parts.append(f"{prune_stats.runs_pruned} run(s)")
+        if gc_stats.unreferenced_objects > 0:
+            parts.append(f"{gc_stats.unreferenced_objects} orphaned object(s)")
+        if not click.confirm(f"\nDelete {' and '.join(parts)}?"):
+            echo("Cancelled.")
+            return
+
+    # Execute
+    runs_deleted = 0
+    if prune_stats and prune_stats.runs_pruned > 0:
+        actual = prune_runs(
+            registry,
+            project=project,
+            status=status,
+            older_than_days=int(_parse_duration_to_hours(older_than) / 24.0) or 1,
+            keep_latest=keep_last,
+            dry_run=False,
+        )
+        runs_deleted = actual.runs_pruned
+
+    # Re-scan after pruning (may have created new orphans)
+    actual_gc = gc_run(store, registry, project=project, dry_run=False)
+
+    if fmt == "json":
+        result = {
+            "runs_deleted": runs_deleted,
+            "objects_deleted": actual_gc.objects_deleted,
+            "bytes_reclaimed": actual_gc.bytes_reclaimed,
+            "dry_run": False,
+        }
+        print_json(result)
+    else:
+        if runs_deleted:
+            echo(f"\nDeleted {runs_deleted} run(s).")
+        echo(
+            f"Reclaimed {actual_gc.objects_deleted} object(s) "
+            f"({actual_gc.bytes_reclaimed:,} bytes)."
+        )
