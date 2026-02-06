@@ -413,7 +413,14 @@ class LocalRegistry:
             yield self._local.conn
             self._local.conn.commit()
         except Exception:
-            self._local.conn.rollback()
+            try:
+                self._local.conn.rollback()
+            except Exception:
+                try:
+                    self._local.conn.close()
+                except Exception:
+                    pass
+                self._local.conn = None
             raise
 
     def _init_db(self) -> None:
@@ -901,13 +908,21 @@ class LocalRegistry:
                     continue
             return results
 
-        # If sort_by requested: collect all matches, then sort, then slice
+        # If sort_by requested: collect matches up to hard limit, then sort, then slice
+        _SORT_HARD_LIMIT = 10_000
         all_matches: list[RunRecord] = []
         for run_id in _iter_run_ids_in_default_order():
             try:
                 record = self.load(run_id)
                 if matches_query(record.record, parsed):
                     all_matches.append(record)
+                    if len(all_matches) >= _SORT_HARD_LIMIT:
+                        logger.warning(
+                            "search_runs with sort_by hit hard limit of %d records; "
+                            "results may be incomplete",
+                            _SORT_HARD_LIMIT,
+                        )
+                        break
             except Exception:
                 continue
 
