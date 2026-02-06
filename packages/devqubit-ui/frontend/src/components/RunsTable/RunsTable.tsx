@@ -1,14 +1,15 @@
 /**
  * DevQubit UI Runs Table Component
  *
- * Displays a list of runs with status, actions, and delete functionality.
+ * Displays a list of runs with status, duration, and delete functionality.
+ * Running runs show a live-updating duration timer.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Table, TableHead, TableBody, TableRow, TableHeader, TableCell } from '../Table';
 import { Badge, Button, EmptyState, Modal, Spinner } from '../ui';
-import { shortId, timeAgo } from '../../utils';
+import { shortId, timeAgo, elapsedSeconds, formatDuration, isTerminalStatus } from '../../utils';
 import type { RunSummary, RunStatus } from '../../types';
 
 export interface RunsTableProps {
@@ -23,10 +24,47 @@ function StatusBadge({ status }: { status: RunStatus }) {
   const variant = {
     FINISHED: 'success',
     FAILED: 'danger',
+    KILLED: 'gray',
     RUNNING: 'warning',
     UNKNOWN: 'gray',
   }[status] as 'success' | 'danger' | 'warning' | 'gray';
   return <Badge variant={variant}>{status}</Badge>;
+}
+
+/**
+ * Live-updating duration display.
+ *
+ * For terminal runs, renders a static formatted duration.
+ * For RUNNING runs, ticks every second to show elapsed time.
+ */
+function Duration({ createdAt, endedAt, status }: {
+  createdAt: string;
+  endedAt?: string | null;
+  status: RunStatus;
+}) {
+  const isRunning = !isTerminalStatus(status);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
+  // For running: compute against current time; for terminal: use ended_at
+  const end = isRunning ? undefined : endedAt;
+  const seconds = elapsedSeconds(createdAt, end);
+
+  // Override formatDuration for running to use fresh `now`
+  const displaySeconds = isRunning
+    ? Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000))
+    : seconds;
+
+  return (
+    <span className={isRunning ? 'tabular-nums' : undefined}>
+      {formatDuration(displaySeconds)}
+    </span>
+  );
 }
 
 export function RunsTable({ runs, onDelete, loading, emptyHint, baselineRunId }: RunsTableProps) {
@@ -57,6 +95,7 @@ export function RunsTable({ runs, onDelete, loading, emptyHint, baselineRunId }:
             <TableHeader>Name</TableHeader>
             <TableHeader>Project</TableHeader>
             <TableHeader>Status</TableHeader>
+            <TableHeader>Duration</TableHeader>
             <TableHeader>Created</TableHeader>
             <TableHeader>Actions</TableHeader>
           </TableRow>
@@ -76,6 +115,13 @@ export function RunsTable({ runs, onDelete, loading, emptyHint, baselineRunId }:
               <TableCell>{run.project}</TableCell>
               <TableCell>
                 <StatusBadge status={run.status} />
+              </TableCell>
+              <TableCell className="font-mono text-sm">
+                <Duration
+                  createdAt={run.created_at}
+                  endedAt={run.ended_at}
+                  status={run.status}
+                />
               </TableCell>
               <TableCell className="text-muted">{timeAgo(run.created_at)}</TableCell>
               <TableCell>

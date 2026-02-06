@@ -451,6 +451,8 @@ class RegistryProtocol(Protocol):
         fingerprint: str | None = None,
         git_commit: str | None = None,
         group_id: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> list[RunSummary]:
         """
         List runs with optional filtering.
@@ -477,6 +479,10 @@ class RegistryProtocol(Protocol):
             Filter by git commit SHA.
         group_id : str, optional
             Filter by group ID.
+        created_after : str, optional
+            ISO 8601 lower bound (exclusive) on ``created_at``.
+        created_before : str, optional
+            ISO 8601 upper bound (exclusive) on ``created_at``.
 
         Returns
         -------

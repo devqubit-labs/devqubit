@@ -6,7 +6,11 @@
 
 import { useState, useEffect, useCallback, useRef, useContext, createContext } from 'react';
 import { ApiClient, api as defaultApi, ApiError } from '../api';
+import { isTerminalStatus } from '../utils';
 import type { Capabilities, Workspace } from '../types';
+
+/** Polling interval for all data fetching (ms). */
+const POLL_INTERVAL = 1_000;
 
 /** Async state for data fetching */
 interface AsyncState<T> {
@@ -112,7 +116,34 @@ function useAsync<T>(
 }
 
 /**
+ * Poll with setInterval + immediate refetch when the browser tab regains focus.
+ *
+ * The visibility listener covers the typical workflow: user starts a run in the
+ * terminal, switches to the browser, and expects the UI to be up-to-date instantly.
+ */
+function usePolling(refetch: () => void, intervalMs: number, active: boolean) {
+  useEffect(() => {
+    if (!active) return;
+
+    const id = setInterval(refetch, intervalMs);
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refetch();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refetch, intervalMs, active]);
+}
+
+/**
  * Fetch runs list with filters.
+ *
+ * Polls every second so new runs and status changes appear immediately.
+ * Also refetches instantly when the browser tab regains focus.
  */
 export function useRuns(params?: {
   project?: string;
@@ -121,24 +152,36 @@ export function useRuns(params?: {
   limit?: number;
 }) {
   const { api, currentWorkspace } = useApp();
-  return useAsync(
+  const result = useAsync(
     () => api.listRuns({ ...params, workspace: currentWorkspace?.id }),
     [api, currentWorkspace?.id, params?.project, params?.status, params?.q, params?.limit]
   );
+
+  usePolling(result.refetch, POLL_INTERVAL, true);
+
+  return result;
 }
 
 /**
  * Fetch single run by ID.
+ *
+ * Polls every second while the run is still in a non-terminal state.
  */
 export function useRun(runId: string) {
   const { api } = useApp();
-  return useAsync(
+  const result = useAsync(
     async () => {
       const { run } = await api.getRun(runId);
       return run;
     },
     [api, runId]
   );
+
+  const isRunning = result.data ? !isTerminalStatus(result.data.status) : false;
+
+  usePolling(result.refetch, POLL_INTERVAL, isRunning);
+
+  return result;
 }
 
 /**

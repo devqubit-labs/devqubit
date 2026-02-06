@@ -14,6 +14,7 @@ storage protocols:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -22,6 +23,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -375,8 +377,31 @@ class LocalRegistry:
         self.db_path = self.root / "registry.db"
         self._timeout = timeout
         self._local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connections_lock = threading.Lock()
         self._init_db()
+
+        # Ensure connections are cleaned up when the process exits.
+        # A weak reference prevents the atexit callback from keeping
+        # this instance alive longer than intended.
+        weak_self = weakref.ref(self)
+        atexit.register(LocalRegistry._atexit_close, weak_self)
+
         logger.debug("LocalRegistry initialized at %s", self.db_path)
+
+    @staticmethod
+    def _atexit_close(weak_self: weakref.ref[LocalRegistry]) -> None:
+        """
+        Close all tracked connections at interpreter shutdown.
+
+        Parameters
+        ----------
+        weak_self : weakref.ref
+            Weak reference to the registry instance.
+        """
+        instance = weak_self()
+        if instance is not None:
+            instance.close_all()
 
     def _create_connection(self) -> sqlite3.Connection:
         """
@@ -393,6 +418,8 @@ class LocalRegistry:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA secure_delete=ON")
+        with self._connections_lock:
+            self._connections.add(conn)
         return conn
 
     @contextmanager
@@ -683,6 +710,8 @@ class LocalRegistry:
         fingerprint: str | None = None,
         git_commit: str | None = None,
         group_id: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> list[RunSummary]:
         """
         List runs with optional filtering.
@@ -709,6 +738,10 @@ class LocalRegistry:
             Filter by git commit SHA.
         group_id : str, optional
             Filter by group ID.
+        created_after : str, optional
+            ISO 8601 lower bound (exclusive) on ``created_at``.
+        created_before : str, optional
+            ISO 8601 upper bound (exclusive) on ``created_at``.
 
         Returns
         -------
@@ -742,6 +775,12 @@ class LocalRegistry:
         if group_id:
             conditions.append("group_id = ?")
             params.append(group_id)
+        if created_after:
+            conditions.append("created_at > ?")
+            params.append(created_after)
+        if created_before:
+            conditions.append("created_at < ?")
+            params.append(created_before)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -1231,16 +1270,143 @@ class LocalRegistry:
             return True
         return False
 
+    def recover_stale_runs(
+        self,
+        older_than_hours: float = 6.0,
+        *,
+        project: str | None = None,
+        dry_run: bool = False,
+    ) -> list[dict[str, Any]]:
+        """
+        Mark runs stuck in RUNNING state as KILLED.
+
+        A run is considered stale when its ``created_at`` timestamp is
+        older than *older_than_hours* and its status is still RUNNING.
+        This typically happens when the host process is terminated
+        (OOM, SSH disconnect, kernel restart) before the run context
+        manager can finalize.
+
+        Parameters
+        ----------
+        older_than_hours : float, optional
+            Age threshold in hours.  Runs older than this value that
+            are still in RUNNING state will be recovered.  Default is 6.
+        project : str, optional
+            Limit recovery to a single project.
+        dry_run : bool, optional
+            If ``True``, return the list of stale runs without modifying
+            them.  Default is ``False``.
+
+        Returns
+        -------
+        list of dict
+            One entry per recovered (or would-be-recovered) run, each
+            containing ``run_id``, ``project``, ``created_at``, and
+            ``recovered_at`` keys.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        cutoff_iso = cutoff.strftime("%Y-%m-%dT%H:%M:%S")
+
+        conditions = ["status = 'RUNNING'", "created_at < ?"]
+        params: list[Any] = [cutoff_iso]
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+
+        where = " AND ".join(conditions)
+
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT run_id, project, created_at, record_json "
+                f"FROM runs WHERE {where} ORDER BY created_at",
+                params,
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        now_iso = utc_now_iso()
+        recovered: list[dict[str, Any]] = []
+
+        for row in rows:
+            entry = {
+                "run_id": row["run_id"],
+                "project": row["project"],
+                "created_at": row["created_at"],
+                "recovered_at": now_iso,
+            }
+            recovered.append(entry)
+
+            if dry_run:
+                continue
+
+            record = json.loads(row["record_json"])
+            info = record.setdefault("info", {})
+            info["status"] = "KILLED"
+            info["ended_at"] = now_iso
+            info["recovery_note"] = (
+                f"Automatically recovered by devqubit doctor: "
+                f"run was RUNNING for more than {older_than_hours}h"
+            )
+            record_json = json.dumps(record, default=str)
+
+            with self._get_connection() as conn:
+                conn.execute(
+                    "UPDATE runs SET status = 'KILLED', ended_at = ?, "
+                    "record_json = ? WHERE run_id = ?",
+                    (now_iso, record_json, row["run_id"]),
+                )
+
+            logger.info(
+                "Recovered stale run: run_id=%s, project=%s, age=%s",
+                row["run_id"],
+                row["project"],
+                row["created_at"],
+            )
+
+        return recovered
+
     def close(self) -> None:
         """
-        Close the thread-local database connection if open.
+        Close the current thread's database connection.
 
-        This is optional - connections are automatically closed when
-        the thread terminates.
+        Safe to call multiple times.  For cross-thread cleanup use
+        :meth:`close_all`.
         """
-        if hasattr(self._local, "conn") and self._local.conn is not None:
-            self._local.conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            with self._connections_lock:
+                self._connections.discard(conn)
+            try:
+                conn.close()
+            except Exception:
+                pass
             self._local.conn = None
+
+    def close_all(self) -> None:
+        """
+        Close every tracked connection across all threads.
+
+        Intended for interpreter shutdown and explicit cleanup in tests.
+        """
+        with self._connections_lock:
+            for conn in list(self._connections):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
+        self._local = threading.local()
+
+    def __enter__(self) -> LocalRegistry:
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Exit context manager, closing all connections."""
+        self.close_all()
 
 
 class LocalWorkspace:

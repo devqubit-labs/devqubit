@@ -12,13 +12,42 @@ import {
 } from '../components';
 import { StatusBadge } from '../components/RunsTable';
 import { useRun, useProjects, useApp, useMutation } from '../hooks';
-import { shortId, shortDigest, timeAgo, formatNumber } from '../utils';
-import type { Artifact, Project } from '../types';
+import { shortId, shortDigest, timeAgo, formatNumber, elapsedSeconds, formatDuration, isTerminalStatus } from '../utils';
+import type { Artifact, Project, RunStatus } from '../types';
+
+/**
+ * Live-updating duration for the detail page overview.
+ */
+function RunDuration({ createdAt, endedAt, status }: {
+  createdAt: string;
+  endedAt?: string | null;
+  status: RunStatus;
+}) {
+  const isRunning = !isTerminalStatus(status);
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!isRunning) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
+
+  const seconds = isRunning
+    ? Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000))
+    : elapsedSeconds(createdAt, endedAt);
+
+  return (
+    <span className={isRunning ? 'tabular-nums' : undefined}>
+      {formatDuration(seconds)}
+    </span>
+  );
+}
 
 export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
   const { api } = useApp();
+  // useRun now auto-polls while the run is in a non-terminal state
   const { data: run, loading, error, refetch } = useRun(runId!);
   const { data: projects, refetch: refetchProjects } = useProjects();
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -112,6 +141,27 @@ export function RunDetailPage() {
     }
   };
 
+  // Build overview items — include ended_at and duration
+  const overviewItems = [
+    { label: 'Project', value: <Link to={`/runs?project=${run.project}`}>{run.project}</Link> },
+    { label: 'Name', value: run.run_name || '—' },
+    { label: 'Adapter', value: run.adapter || 'N/A' },
+    { label: 'Status', value: <StatusBadge status={run.status} /> },
+    { label: 'Created', value: `${run.created_at} (${timeAgo(run.created_at)})` },
+    {
+      label: 'Duration',
+      value: <RunDuration createdAt={run.created_at} endedAt={run.ended_at} status={run.status} />,
+    },
+    ...(run.ended_at
+      ? [{ label: 'Ended', value: `${run.ended_at} (${timeAgo(run.ended_at)})` }]
+      : []),
+    { label: 'Backend', value: backend.name || 'N/A' },
+    ...(run.group_id ? [{
+      label: 'Group',
+      value: <Link to={`/groups/${run.group_id}`}>{run.group_name || shortId(run.group_id)}</Link>
+    }] : []),
+  ];
+
   return (
     <Layout>
       {/* Baseline Banner */}
@@ -147,18 +197,7 @@ export function RunDetailPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
         <Card>
           <CardHeader><CardTitle>Overview</CardTitle></CardHeader>
-          <KVList items={[
-            { label: 'Project', value: <Link to={`/runs?project=${run.project}`}>{run.project}</Link> },
-            { label: 'Name', value: run.run_name || '—' },
-            { label: 'Adapter', value: run.adapter || 'N/A' },
-            { label: 'Status', value: <StatusBadge status={run.status} /> },
-            { label: 'Created', value: `${run.created_at} (${timeAgo(run.created_at)})` },
-            { label: 'Backend', value: backend.name || 'N/A' },
-            ...(run.group_id ? [{
-              label: 'Group',
-              value: <Link to={`/groups/${run.group_id}`}>{run.group_name || shortId(run.group_id)}</Link>
-            }] : []),
-          ]} />
+          <KVList items={overviewItems} />
         </Card>
 
         <Card>

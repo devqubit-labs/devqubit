@@ -1038,6 +1038,8 @@ class RemoteRegistry(RegistryProtocol):
         fingerprint: str | None = None,
         git_commit: str | None = None,
         group_id: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> list[RunSummary]:
         """
         List runs with optional filtering.
@@ -1064,6 +1066,10 @@ class RemoteRegistry(RegistryProtocol):
             Filter by git commit SHA.
         group_id : str, optional
             Filter by group ID.
+        created_after : str, optional
+            ISO 8601 lower bound (exclusive) on ``created_at``.
+        created_before : str, optional
+            ISO 8601 upper bound (exclusive) on ``created_at``.
 
         Returns
         -------
@@ -1092,6 +1098,10 @@ class RemoteRegistry(RegistryProtocol):
             params["git_commit"] = git_commit
         if group_id:
             params["group_id"] = group_id
+        if created_after:
+            params["created_after"] = created_after
+        if created_before:
+            params["created_before"] = created_before
 
         response = self._client._request("GET", "/runs", params=params)
         self._client._raise_for_status(response, "Failed to list runs")

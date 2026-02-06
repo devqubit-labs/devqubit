@@ -1110,7 +1110,18 @@ class Run:
     # -----------------------------------------------------------------------
 
     def __enter__(self) -> Run:
-        """Enter the run context."""
+        """
+        Enter the run context and persist the initial record.
+
+        The record is saved with ``status=RUNNING`` so that long-running
+        hardware jobs are immediately visible in the registry and the
+        frontend while the experiment is in progress.
+        """
+        self._registry.save(self.record)
+        logger.debug(
+            "Persisted initial RUNNING record: run_id=%s",
+            self._run_id,
+        )
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:

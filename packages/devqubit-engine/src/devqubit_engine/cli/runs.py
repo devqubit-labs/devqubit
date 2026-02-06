@@ -67,6 +67,16 @@ def _get_run_tags(run_record: Any) -> dict[str, Any]:
 @click.option("--group", "-g", default=None, help="Filter by group ID.")
 @click.option("--name", default=None, help="Filter by run name (exact match).")
 @click.option(
+    "--since",
+    default=None,
+    help="Show runs created after this date (ISO 8601, e.g. 2026-01-01).",
+)
+@click.option(
+    "--until",
+    default=None,
+    help="Show runs created before this date (ISO 8601, e.g. 2026-02-01).",
+)
+@click.option(
     "--tag",
     "-t",
     "tags",
@@ -84,6 +94,8 @@ def list_runs(
     backend: str | None,
     group: str | None,
     name: str | None,
+    since: str | None,
+    until: str | None,
     tags: tuple[str, ...],
     fmt: str,
 ) -> None:
@@ -96,6 +108,7 @@ def list_runs(
         devqubit list --status COMPLETED --backend ibm_brisbane
         devqubit list --name baseline-v1 --project bell_state
         devqubit list --tag experiment=bell --tag validated
+        devqubit list --project vqe --since 2026-01-01 --until 2026-01-31
     """
     from devqubit_engine.config import Config
     from devqubit_engine.storage.factory import create_registry
@@ -116,7 +129,11 @@ def list_runs(
     if group:
         filter_kwargs["group_id"] = group
     if name:
-        filter_kwargs["name"] = name  # Fixed: was "run_name", should be "name"
+        filter_kwargs["name"] = name
+    if since:
+        filter_kwargs["created_after"] = since
+    if until:
+        filter_kwargs["created_before"] = until
 
     runs = registry.list_runs(**filter_kwargs)
 
