@@ -14,6 +14,7 @@ storage protocols:
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -22,6 +23,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -375,8 +377,31 @@ class LocalRegistry:
         self.db_path = self.root / "registry.db"
         self._timeout = timeout
         self._local = threading.local()
+        self._connections: weakref.WeakSet[sqlite3.Connection] = weakref.WeakSet()
+        self._connections_lock = threading.Lock()
         self._init_db()
+
+        # Ensure connections are cleaned up when the process exits.
+        # A weak reference prevents the atexit callback from keeping
+        # this instance alive longer than intended.
+        weak_self = weakref.ref(self)
+        atexit.register(LocalRegistry._atexit_close, weak_self)
+
         logger.debug("LocalRegistry initialized at %s", self.db_path)
+
+    @staticmethod
+    def _atexit_close(weak_self: weakref.ref[LocalRegistry]) -> None:
+        """
+        Close all tracked connections at interpreter shutdown.
+
+        Parameters
+        ----------
+        weak_self : weakref.ref
+            Weak reference to the registry instance.
+        """
+        instance = weak_self()
+        if instance is not None:
+            instance.close_all()
 
     def _create_connection(self) -> sqlite3.Connection:
         """
@@ -393,6 +418,8 @@ class LocalRegistry:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
         conn.execute("PRAGMA secure_delete=ON")
+        with self._connections_lock:
+            self._connections.add(conn)
         return conn
 
     @contextmanager
@@ -1233,14 +1260,41 @@ class LocalRegistry:
 
     def close(self) -> None:
         """
-        Close the thread-local database connection if open.
+        Close the current thread's database connection.
 
-        This is optional - connections are automatically closed when
-        the thread terminates.
+        Safe to call multiple times. For cross-thread cleanup use
+        :meth:`close_all`.
         """
-        if hasattr(self._local, "conn") and self._local.conn is not None:
-            self._local.conn.close()
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
             self._local.conn = None
+
+    def close_all(self) -> None:
+        """
+        Close every tracked connection across all threads.
+
+        Intended for interpreter shutdown and explicit cleanup in tests.
+        """
+        with self._connections_lock:
+            for conn in list(self._connections):
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._connections.clear()
+        self._local = threading.local()
+
+    def __enter__(self) -> LocalRegistry:
+        """Enter context manager."""
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        """Exit context manager, closing all connections."""
+        self.close_all()
 
 
 class LocalWorkspace:
