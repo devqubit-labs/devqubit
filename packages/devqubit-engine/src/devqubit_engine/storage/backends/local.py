@@ -392,6 +392,7 @@ class LocalRegistry:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA secure_delete=ON")
         return conn
 
     @contextmanager
@@ -821,6 +822,51 @@ class LocalRegistry:
                 tag_conditions.append(cond)
 
         candidate_ids: set[str] | None = None
+
+        # Map query fields to indexed SQL columns
+        _FIELD_TO_COLUMN: dict[str, str] = {
+            "project": "project",
+            "adapter": "adapter",
+            "status": "status",
+            "backend": "backend_name",
+            "fingerprint": "fingerprint",
+        }
+
+        # Push indexed field conditions into SQL WHERE to avoid
+        # deserializing full record JSON for every row.
+        sql_conditions: list[str] = []
+        sql_params: list[Any] = []
+
+        for cond in parsed.conditions:
+            column = _FIELD_TO_COLUMN.get(cond.field)
+            if column is None:
+                continue
+
+            op = cond.op
+            if op.value == "=":
+                sql_conditions.append(f"{column} = ?")
+                sql_params.append(str(cond.value))
+            elif op.value == "!=":
+                sql_conditions.append(f"({column} IS NULL OR {column} != ?)")
+                sql_params.append(str(cond.value))
+            elif op.value == "~":
+                sql_conditions.append(f"{column} LIKE ?")
+                sql_params.append(f"%{cond.value}%")
+            elif op.value == "exists":
+                sql_conditions.append(f"{column} IS NOT NULL")
+
+        if sql_conditions:
+            where = " AND ".join(sql_conditions)
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    f"SELECT run_id FROM runs WHERE {where}",
+                    sql_params,
+                ).fetchall()
+            sql_ids = {row["run_id"] for row in rows}
+            if candidate_ids is None:
+                candidate_ids = sql_ids
+            else:
+                candidate_ids &= sql_ids
 
         # Use tag index if we have tag conditions
         if tag_conditions:
