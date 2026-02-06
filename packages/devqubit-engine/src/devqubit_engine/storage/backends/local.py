@@ -710,6 +710,8 @@ class LocalRegistry:
         fingerprint: str | None = None,
         git_commit: str | None = None,
         group_id: str | None = None,
+        created_after: str | None = None,
+        created_before: str | None = None,
     ) -> list[RunSummary]:
         """
         List runs with optional filtering.
@@ -736,6 +738,10 @@ class LocalRegistry:
             Filter by git commit SHA.
         group_id : str, optional
             Filter by group ID.
+        created_after : str, optional
+            ISO 8601 lower bound (exclusive) on ``created_at``.
+        created_before : str, optional
+            ISO 8601 upper bound (exclusive) on ``created_at``.
 
         Returns
         -------
@@ -769,6 +775,12 @@ class LocalRegistry:
         if group_id:
             conditions.append("group_id = ?")
             params.append(group_id)
+        if created_after:
+            conditions.append("created_at > ?")
+            params.append(created_after)
+        if created_before:
+            conditions.append("created_at < ?")
+            params.append(created_before)
 
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         params.extend([limit, offset])
@@ -1262,7 +1274,7 @@ class LocalRegistry:
         """
         Close the current thread's database connection.
 
-        Safe to call multiple times. For cross-thread cleanup use
+        Safe to call multiple times.  For cross-thread cleanup use
         :meth:`close_all`.
         """
         conn = getattr(self._local, "conn", None)
