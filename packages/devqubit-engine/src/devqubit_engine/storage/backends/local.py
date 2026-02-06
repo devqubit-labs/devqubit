@@ -377,7 +377,7 @@ class LocalRegistry:
         self.db_path = self.root / "registry.db"
         self._timeout = timeout
         self._local = threading.local()
-        self._connections: weakref.WeakSet[sqlite3.Connection] = weakref.WeakSet()
+        self._connections: set[sqlite3.Connection] = set()
         self._connections_lock = threading.Lock()
         self._init_db()
 
@@ -1377,6 +1377,8 @@ class LocalRegistry:
         """
         conn = getattr(self._local, "conn", None)
         if conn is not None:
+            with self._connections_lock:
+                self._connections.discard(conn)
             try:
                 conn.close()
             except Exception:
