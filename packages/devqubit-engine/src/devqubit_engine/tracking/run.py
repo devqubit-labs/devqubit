@@ -140,10 +140,7 @@ class Run:
         self._lock = threading.Lock()
 
         # Generate unique run ID
-        ulid_gen = ULID()
-        self._run_id = (
-            ulid_gen.generate() if hasattr(ulid_gen, "generate") else str(ulid_gen)
-        )
+        self._run_id = str(ULID())
         self._project = project
         self._adapter = adapter
         self._run_name = run_name
@@ -181,7 +178,9 @@ class Run:
 
         # Capture environment and provenance
         if capture_env:
-            self.record["environment"] = capture_environment()
+            self.record["environment"] = capture_environment(
+                include_pip=cfg.capture_pip,
+            )
 
         should_capture_git = capture_git and cfg.capture_git
         if should_capture_git:
@@ -241,10 +240,21 @@ class Run:
         Parameters
         ----------
         key : str
-            Parameter name.
+            Parameter name. Must not contain dots (they conflict with
+            the query parser's nested field resolution).
         value : Any
             Parameter value. Will be converted to JSON-serializable form.
+
+        Raises
+        ------
+        ValueError
+            If key contains a dot character.
         """
+        if "." in key:
+            raise ValueError(
+                f"Param key cannot contain dots: {key!r}. "
+                f"Use underscores or nested dicts instead."
+            )
         jsonable_value = to_jsonable(value)
         with self._lock:
             self.record["data"]["params"][key] = jsonable_value
@@ -1080,6 +1090,10 @@ class Run:
         # Save to registry
         self._registry.save(run_record.to_dict())
 
+        # Release registry resources
+        if hasattr(self._registry, "close"):
+            self._registry.close()
+
         logger.info(
             "Run finalized: run_id=%s, status=%s, artifacts=%d, envelopes=%d",
             self._run_id,
@@ -1135,6 +1149,8 @@ class Run:
             self._finalize(success=True)
         except Exception as finalize_error:
             with self._lock:
+                self.record["info"]["status"] = "PARTIAL"
+                self.record["info"]["finalization_error"] = str(finalize_error)
                 self.record.setdefault("errors", []).append(
                     {
                         "type": type(finalize_error).__name__,
@@ -1148,6 +1164,8 @@ class Run:
                 self._registry.save(self.record)
             except Exception:
                 logger.exception("Failed to save run record after finalization error")
+
+            raise finalize_error
 
         return False
 
