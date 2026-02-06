@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from devqubit_engine.bundle.pack import BUNDLE_FORMAT_VERSION
 from devqubit_ui.dependencies import RegistryDep, StoreDep
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
@@ -20,10 +21,6 @@ from fastapi.responses import FileResponse, JSONResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-
-# Bundle format version
-BUNDLE_FORMAT_VERSION = "devqubit.bundle/0.1"
 
 
 @dataclass

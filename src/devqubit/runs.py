@@ -87,8 +87,8 @@ if TYPE_CHECKING:
     from devqubit_engine.tracking.record import RunRecord
 
 
-# Lazy imports for types
-_LAZY_TYPE_IMPORTS = {
+# Lazy imports
+_LAZY_IMPORTS = {
     "RunRecord": ("devqubit_engine.tracking.record", "RunRecord"),
     "RunSummary": ("devqubit_engine.storage.types", "RunSummary"),
     "BaselineInfo": ("devqubit_engine.storage.types", "BaselineInfo"),
@@ -722,9 +722,9 @@ def runs_to_dataframe(
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler for types."""
-    if name in _LAZY_TYPE_IMPORTS:
-        module_path, attr_name = _LAZY_TYPE_IMPORTS[name]
+    """Lazy import handler."""
+    if name in _LAZY_IMPORTS:
+        module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
         value = getattr(module, attr_name)
         globals()[name] = value
@@ -734,4 +734,4 @@ def __getattr__(name: str) -> Any:
 
 def __dir__() -> list[str]:
     """List available attributes."""
-    return sorted(set(__all__) | set(_LAZY_TYPE_IMPORTS.keys()))
+    return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

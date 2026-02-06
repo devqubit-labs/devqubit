@@ -241,13 +241,18 @@ def verify_baseline(
 
     candidate_record: RunRecord
     candidate_store = store
+    # Keep bundle context alive so its temporary store remains accessible
+    # during verification.
+    bundle_ctx = None
 
-    if isinstance(candidate, RunRecord):
-        candidate_record = candidate
+    try:
+        if isinstance(candidate, RunRecord):
+            candidate_record = candidate
 
-    elif is_bundle_path(candidate):
-        with Bundle(Path(candidate)) as bundle:
-            record_dict = bundle.run_record
+        elif is_bundle_path(candidate):
+            bundle_ctx = Bundle(Path(candidate))
+            bundle_ctx.__enter__()
+            record_dict = bundle_ctx.run_record
             artifacts = [
                 ArtifactRef.from_dict(a)
                 for a in record_dict.get("artifacts", [])
@@ -257,30 +262,24 @@ def verify_baseline(
                 record=record_dict,
                 artifacts=artifacts,
             )
-            candidate_store = bundle.store
+            candidate_store = bundle_ctx.store
 
-            return _verify_against_baseline(
-                candidate_record,
-                project=project,
-                store=candidate_store,
-                registry=registry,
-                policy=policy,
-                promote_on_pass=promote_on_pass,
-            )
+        else:
+            # Resolve name to ID if needed
+            run_id = resolve_run_id(str(candidate), project, registry)
+            candidate_record = registry.load(run_id)
 
-    else:
-        # Resolve name to ID if needed
-        run_id = resolve_run_id(str(candidate), project, registry)
-        candidate_record = registry.load(run_id)
-
-    return _verify_against_baseline(
-        candidate_record,
-        project=project,
-        store=candidate_store,
-        registry=registry,
-        policy=policy,
-        promote_on_pass=promote_on_pass,
-    )
+        return _verify_against_baseline(
+            candidate_record,
+            project=project,
+            store=candidate_store,
+            registry=registry,
+            policy=policy,
+            promote_on_pass=promote_on_pass,
+        )
+    finally:
+        if bundle_ctx is not None:
+            bundle_ctx.__exit__(None, None, None)
 
 
 def __getattr__(name: str) -> Any:
