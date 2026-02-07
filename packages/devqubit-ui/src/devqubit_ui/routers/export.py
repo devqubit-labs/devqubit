@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import tempfile
 import time
 import zipfile
@@ -26,6 +27,53 @@ router = APIRouter()
 
 _DEFAULT_TTL_SECONDS = 3600
 _DEFAULT_MAX_ENTRIES = 64
+
+_EXPORT_DIR = Path(tempfile.gettempdir()) / "devqubit_exports"
+
+# Allowlist: ULIDs, UUIDs, hex strings, optional hyphens.
+# Rejects slashes, dots, null bytes, and any traversal attempt.
+_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+
+
+# ---------------------------------------------------------------------------
+# Path safety
+# ---------------------------------------------------------------------------
+
+
+def _validate_run_id(run_id: str) -> str:
+    """Validate run_id against an allowlist pattern.
+
+    Raises HTTPException(400) if the ID contains path separators,
+    traversal sequences, or characters outside the allowlist.
+    """
+    if not _RUN_ID_PATTERN.match(run_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid run_id format",
+        )
+    return run_id
+
+
+def _safe_bundle_path(run_id: str) -> Path:
+    """Build and verify a bundle path within the export directory.
+
+    Validates the run_id, constructs the path, then resolves it and
+    checks containment to prevent path traversal even if the allowlist
+    is loosened in the future (defense in depth).
+    """
+    _validate_run_id(run_id)
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    bundle_path = (_EXPORT_DIR / f"{run_id}.zip").resolve()
+    export_root = _EXPORT_DIR.resolve()
+    if (
+        not str(bundle_path).startswith(str(export_root) + "/")
+        and bundle_path != export_root
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid run_id format",
+        )
+    return bundle_path
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +228,7 @@ async def create_export(
     The archive contains ``run.json``, a ``manifest.json``, and all
     referenced artifact objects under ``objects/``.
     """
+    bundle_path = _safe_bundle_path(run_id)
     logger.info("Creating export bundle for run %s", run_id)
 
     try:
@@ -210,10 +259,6 @@ async def create_export(
     logger.debug(
         "Found %d unique digests in %d artifacts", len(digests), len(artifacts)
     )
-
-    temp_dir = Path(tempfile.gettempdir()) / "devqubit_exports"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    bundle_path = temp_dir / f"{run_id}.zip"
 
     written: list[str] = []
     missing: list[str] = []
@@ -255,6 +300,8 @@ async def create_export(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Failed to create export bundle: %s", exc)
         if bundle_path.exists():
@@ -268,8 +315,7 @@ async def download_export(run_id: str, registry: RegistryDep):
     bundle_path = bundle_cache.get(run_id)
 
     if bundle_path is None:
-        temp_dir = Path(tempfile.gettempdir()) / "devqubit_exports"
-        candidate = temp_dir / f"{run_id}.zip"
+        candidate = _safe_bundle_path(run_id)
         if not candidate.exists():
             raise HTTPException(
                 status_code=404,
@@ -300,6 +346,8 @@ async def download_export(run_id: str, registry: RegistryDep):
 @router.get("/runs/{run_id}/export/info")
 async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
     """Preview what would be exported without creating the bundle."""
+    _validate_run_id(run_id)
+
     try:
         run_record = registry.load(run_id)
     except (KeyError, FileNotFoundError):
@@ -342,6 +390,7 @@ async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
 @router.delete("/runs/{run_id}/export")
 async def cleanup_export(run_id: str):
     """Remove a previously created export bundle from disk."""
+    _validate_run_id(run_id)
     bundle_path = bundle_cache.pop(run_id)
     if bundle_path is not None and bundle_path.exists():
         try:

@@ -103,3 +103,56 @@ class TestCleanupExport:
         assert (
             client.delete("/api/runs/no-such-run/export").json()["status"] == "cleaned"
         )
+
+
+class TestPathTraversal:
+    """Verify run_id sanitization rejects path traversal attempts."""
+
+    # IDs that reach the handler but must be rejected by our allowlist.
+    MALICIOUS_IDS = [
+        ".hidden",  # dotfile — starts with '.'
+        "..secret",  # starts with dots
+        "run id with spaces",  # whitespace in the middle
+        "%2e%2e",  # percent-encoded dots (arrives as literal string)
+    ]
+
+    @pytest.mark.parametrize("malicious_id", MALICIOUS_IDS)
+    def test_create_rejects_traversal(self, client, malicious_id):
+        resp = client.post(f"/api/runs/{malicious_id}/export")
+        assert (
+            resp.status_code == 400
+        ), f"Expected 400 for run_id={malicious_id!r}, got {resp.status_code}"
+
+    @pytest.mark.parametrize("malicious_id", MALICIOUS_IDS)
+    def test_download_rejects_traversal(self, client, malicious_id):
+        resp = client.get(f"/api/runs/{malicious_id}/export/download")
+        assert (
+            resp.status_code == 400
+        ), f"Expected 400 for run_id={malicious_id!r}, got {resp.status_code}"
+
+    @pytest.mark.parametrize("malicious_id", MALICIOUS_IDS)
+    def test_info_rejects_traversal(self, client, malicious_id):
+        resp = client.get(f"/api/runs/{malicious_id}/export/info")
+        assert (
+            resp.status_code == 400
+        ), f"Expected 400 for run_id={malicious_id!r}, got {resp.status_code}"
+
+    @pytest.mark.parametrize("malicious_id", MALICIOUS_IDS)
+    def test_cleanup_rejects_traversal(self, client, malicious_id):
+        resp = client.delete(f"/api/runs/{malicious_id}/export")
+        assert (
+            resp.status_code == 400
+        ), f"Expected 400 for run_id={malicious_id!r}, got {resp.status_code}"
+
+    def test_valid_ids_accepted(self, client, _mock_run_record):
+        """Sanity: typical run IDs still work fine."""
+        for valid_id in [
+            "abc123",
+            "01HWXYZ",
+            "550e8400-e29b-41d4-a716-446655440000",
+            "run_name-with-dashes_and_underscores",
+        ]:
+            resp = client.post(f"/api/runs/{valid_id}/export")
+            assert (
+                resp.status_code == 200
+            ), f"Valid run_id={valid_id!r} rejected with {resp.status_code}"
