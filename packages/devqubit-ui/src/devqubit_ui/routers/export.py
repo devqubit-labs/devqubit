@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -30,8 +31,8 @@ _DEFAULT_MAX_ENTRIES = 64
 
 _EXPORT_DIR = Path(tempfile.gettempdir()) / "devqubit_exports"
 
-# Allowlist: ULIDs, UUIDs, hex strings, optional hyphens.
-# Rejects slashes, dots, null bytes, and any traversal attempt.
+# Allowlist: starts with alnum, then alnum/dash/underscore, max 128 chars.
+# Rejects slashes, dots, null bytes, spaces, and any traversal attempt.
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 
 
@@ -55,24 +56,27 @@ def _validate_run_id(run_id: str) -> str:
 
 
 def _safe_bundle_path(run_id: str) -> Path:
-    """Build and verify a bundle path within the export directory.
+    """
+    Build a safe bundle path that never includes user input in the filename.
 
-    Validates the run_id, constructs the path, then resolves it and
-    checks containment to prevent path traversal even if the allowlist
-    is loosened in the future (defense in depth).
+    Three layers of defense:
+    1. Allowlist validation — rejects any run_id with dots, slashes, etc.
+    2. Deterministic hash — filename is derived from sha256(run_id), so no
+       user-controlled bytes ever reach the filesystem.
+    3. Containment check — resolved path must stay inside _EXPORT_DIR.
     """
     _validate_run_id(run_id)
+
+    # Derive filename from hash — completely breaks taint chain.
+    # Deterministic: same run_id always maps to same file.
+    name = hashlib.sha256(run_id.encode("utf-8")).hexdigest() + ".zip"
+
     _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    bundle_path = (_EXPORT_DIR / f"{run_id}.zip").resolve()
+    bundle_path = (_EXPORT_DIR / name).resolve()
     export_root = _EXPORT_DIR.resolve()
-    if (
-        not str(bundle_path).startswith(str(export_root) + "/")
-        and bundle_path != export_root
-    ):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid run_id format",
-        )
+    if not bundle_path.parent == export_root:
+        # Should never happen with hex digest, but defense in depth.
+        raise HTTPException(status_code=400, detail="Invalid run_id format")
     return bundle_path
 
 
