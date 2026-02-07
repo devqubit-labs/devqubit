@@ -21,6 +21,10 @@ devqubit diff baseline-v1 candidate-v2 --project myproject
 # Verify against baseline
 devqubit verify nightly-run --project myproject
 
+# Recover stale runs and clean up
+devqubit doctor --auto
+devqubit gc --older-than 90d --status FAILED
+
 # Launch web UI
 devqubit ui
 ```
@@ -47,6 +51,9 @@ devqubit list [OPTIONS]
 | `--status` | `-s` | Filter by status (FINISHED, FAILED, RUNNING, KILLED) |
 | `--backend` | `-b` | Filter by backend name |
 | `--group` | `-g` | Filter by group ID |
+| `--name` | | Filter by run name (exact match) |
+| `--since` | | Show runs created after this date (ISO 8601) |
+| `--until` | | Show runs created before this date (ISO 8601) |
 | `--tag` | `-t` | Filter by tag (repeatable) |
 | `--format` | | Output format: `table` (default) or `json` |
 
@@ -64,6 +71,12 @@ devqubit list --backend ibm_brisbane
 
 # Filter by tags (can combine multiple)
 devqubit list --tag experiment=bell --tag validated
+
+# Filter by run name
+devqubit list --name baseline-v1 --project bell-state
+
+# Time range filtering
+devqubit list --project vqe --since 2026-01-01 --until 2026-01-31
 
 # Output as JSON for scripting
 devqubit list --format json
@@ -876,6 +889,81 @@ Reports:
 
 ---
 
+## Health & Maintenance
+
+### doctor
+
+Detect and recover stale runs (stuck in RUNNING after a crash, OOM, or SSH disconnect).
+
+```bash
+devqubit doctor [OPTIONS]
+```
+
+**Options:**
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--older-than` | | 6h | Age threshold (e.g., `6h`, `30m`, `2d`) |
+| `--auto` | | | Automatically mark stale runs as KILLED |
+| `--project` | `-p` | | Limit to specific project |
+| `--dry-run` | `-n` | | Preview without changing anything |
+| `--format` | | `pretty` | Output format: `pretty` or `json` |
+
+**Examples:**
+
+```bash
+# Preview stale runs (older than 6h by default)
+devqubit doctor --dry-run
+
+# Auto-recover stale runs
+devqubit doctor --auto
+
+# Custom threshold
+devqubit doctor --auto --older-than 2h --project nightly-ci
+```
+
+---
+
+### gc
+
+All-in-one cleanup: optionally prune old runs, then collect orphaned objects.
+
+```bash
+devqubit gc [OPTIONS]
+```
+
+Without `--older-than`, only orphaned objects are cleaned (safe default). With `--older-than`, old runs are pruned first, then orphans are collected.
+
+**Options:**
+
+| Option | Short | Default | Description |
+|--------|-------|---------|-------------|
+| `--older-than` | | | Prune runs older than this (e.g., `90d`, `24h`) |
+| `--keep-last` | | 10 | Always keep N most recent runs per project |
+| `--status` | `-s` | | Only prune runs with this status (e.g., FAILED) |
+| `--project` | `-p` | | Limit to specific project |
+| `--dry-run` | `-n` | | Preview without deleting |
+| `--yes` | `-y` | | Skip confirmation |
+| `--format` | | `pretty` | Output format: `pretty` or `json` |
+
+**Examples:**
+
+```bash
+# Clean orphaned objects only (safe)
+devqubit gc
+
+# Preview what would be pruned
+devqubit gc --older-than 90d --dry-run
+
+# Prune old failed runs, then clean orphans
+devqubit gc --older-than 30d --status FAILED --yes
+
+# Keep at least 50 runs per project
+devqubit gc --older-than 7d --keep-last 50 --project nightly-ci
+```
+
+---
+
 ## Configuration
 
 ### config
@@ -1014,9 +1102,13 @@ devqubit replay 01JD7X... --backend aer_simulator --experimental
 # Check health
 devqubit storage health
 
-# Clean up orphaned objects
-devqubit storage gc
+# Recover stale runs
+devqubit doctor --auto
 
-# Prune old failed runs
+# One-command cleanup: prune old failures + collect orphans
+devqubit gc --older-than 30d --status FAILED
+
+# Or step-by-step:
 devqubit storage prune --status FAILED --older-than 30
+devqubit storage gc
 ```

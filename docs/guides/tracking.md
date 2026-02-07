@@ -76,6 +76,37 @@ with track(project="opt", parent_run_id=parent_id) as child:
 
 Exceptions are captured automatically; failed runs are persisted and queryable.
 
+## Analyzing Runs
+
+Export runs to a pandas DataFrame for analysis and plotting:
+
+```python
+from devqubit.runs import runs_to_dataframe
+
+# All runs in a project
+df = runs_to_dataframe(project="vqe")
+
+# Columns: run_id, created_at, status, param.shots, metric.fidelity, tag.backend, ...
+df.sort_values("metric.fidelity", ascending=False).head(10)
+```
+
+Filter by status, time range, or group:
+
+```python
+# Only finished runs from last month
+df = runs_to_dataframe(
+    project="vqe",
+    status="FINISHED",
+    since="2026-01-01",
+    until="2026-01-31",
+)
+
+# All runs in a parameter sweep
+df = runs_to_dataframe(group_id="sweep_20260115")
+```
+
+Requires `pandas` package installed.
+
 ## Inspecting Runs
 
 ```bash

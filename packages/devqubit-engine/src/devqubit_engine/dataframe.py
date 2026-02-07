@@ -8,8 +8,6 @@ Provides :func:`runs_to_dataframe` which loads runs from the registry,
 flattens nested params/metrics/tags into dot-prefixed columns, and
 returns a ``pandas.DataFrame``.
 
-Requires ``pandas`` — install with ``pip install devqubit[pandas]``.
-
 Examples
 --------
 >>> from devqubit_engine.dataframe import runs_to_dataframe
@@ -40,7 +38,7 @@ def _require_pandas() -> Any:
     except ImportError:
         raise ImportError(
             "pandas is required for DataFrame export. "
-            "Install it with: pip install devqubit[pandas]"
+            "Install it with: pip install pandas"
         ) from None
 
 

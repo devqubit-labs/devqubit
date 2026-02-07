@@ -673,8 +673,6 @@ def runs_to_dataframe(
     …).  Params, metrics, and tags are expanded into ``param.*``,
     ``metric.*``, ``tag.*`` columns.
 
-    Requires ``pandas`` — install with ``pip install devqubit[pandas]``.
-
     Parameters
     ----------
     project : str, optional
