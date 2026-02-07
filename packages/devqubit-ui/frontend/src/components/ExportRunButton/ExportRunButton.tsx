@@ -103,12 +103,6 @@ export function ExportRunButton({
 
       setToast({ message: 'Bundle downloaded successfully', variant: 'success' });
 
-      // Auto-close modal after success
-      setTimeout(() => {
-        setShowModal(false);
-        setProgress({ status: 'idle' });
-      }, 2000);
-
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Export failed';
       setProgress({ status: 'error', message });

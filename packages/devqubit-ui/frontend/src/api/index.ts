@@ -5,4 +5,4 @@
  */
 
 export { ApiClient, ApiError, api } from './client';
-export type { ApiConfig } from './client';
+export type { ApiConfig, RequestOptions } from './client';

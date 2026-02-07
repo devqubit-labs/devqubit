@@ -29,6 +29,15 @@ export interface ApiConfig {
   headers?: Record<string, string>;
 }
 
+export interface RequestOptions {
+  body?: unknown;
+  params?: Record<string, unknown>;
+  /** Per-request headers (merged with instance headers; per-request wins). */
+  headers?: Record<string, string>;
+  /** Fetch credentials mode (e.g. 'same-origin', 'include'). */
+  credentials?: RequestCredentials;
+}
+
 /**
  * DevQubit API Client.
  *
@@ -49,7 +58,7 @@ export class ApiClient {
   protected async request<T>(
     method: string,
     path: string,
-    options: { body?: unknown; params?: Record<string, unknown> } = {}
+    options: RequestOptions = {}
   ): Promise<T> {
     let url = `${this.baseUrl}${path}`;
 
@@ -66,8 +75,9 @@ export class ApiClient {
 
     const response = await fetch(url, {
       method,
-      headers: this.headers,
+      headers: { ...this.headers, ...options.headers },
       body: options.body ? JSON.stringify(options.body) : undefined,
+      credentials: options.credentials,
     });
 
     if (!response.ok) {

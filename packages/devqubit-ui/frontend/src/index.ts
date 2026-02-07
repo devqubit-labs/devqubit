@@ -18,7 +18,7 @@ export { router, createRouter, coreRoutes } from './router';
 
 // API Client
 export { ApiClient, ApiError, api } from './api';
-export type { ApiConfig } from './api';
+export type { ApiConfig, RequestOptions } from './api';
 
 // Hooks
 export {
