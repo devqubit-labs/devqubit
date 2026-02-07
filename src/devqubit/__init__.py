@@ -18,6 +18,11 @@ With Backend Wrapping
 ...     backend = run.wrap(AerSimulator())
 ...     job = backend.run(circuit, shots=1000)
 
+# Or use the module-level convenience function:
+>>> from devqubit import track, wrap_backend
+>>> with track(project="bell_state") as run:
+...     backend = wrap_backend(run, AerSimulator())
+
 Comparison & Verification
 -------------------------
 >>> from devqubit.compare import diff, verify_baseline

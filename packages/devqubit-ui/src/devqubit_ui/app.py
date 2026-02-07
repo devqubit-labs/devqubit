@@ -45,6 +45,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         getattr(app.state, "workspace", "unknown"),
     )
     yield
+    from devqubit_ui.routers.export import bundle_cache
+
+    removed = bundle_cache.cleanup()
+    if removed:
+        logger.info("Cleaned up %d cached export bundle(s)", removed)
     logger.info("devqubit UI shutting down")
 
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""JSON API router for React frontend."""
+"""JSON API router for the React frontend."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ from devqubit_ui.services import (
     GroupService,
     ProjectService,
     RunService,
+    serialize_record,
+    serialize_record_summary,
 )
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
@@ -25,14 +27,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Capabilities
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
-@router.get("/v1/capabilities")
+@router.get("/capabilities")
 async def get_capabilities() -> dict[str, Any]:
-    """Get server capabilities."""
+    """
+    Server capabilities.
+
+    Returns the running mode and available feature flags.  The hub will
+    extend this with auth, workspaces, RBAC, etc.
+    """
     return {
         "mode": "local",
         "version": "0.1.11",
@@ -45,9 +52,9 @@ async def get_capabilities() -> dict[str, Any]:
     }
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Runs
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
 @router.get("/runs")
@@ -56,51 +63,74 @@ async def list_runs(
     project: str = Query("", description="Filter by project"),
     status: str = Query("", description="Filter by status"),
     limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     q: str = Query("", description="Search query"),
 ):
-    """List runs with optional filtering."""
+    """
+    List or search runs.
+
+    Returns a consistent paginated envelope regardless of whether a
+    full-text search (``q``) or a plain listing is used.
+    """
     service = RunService(registry)
 
     if q:
-        runs_data = service.search_runs(q, limit=limit)
-    else:
-        runs_data = service.list_runs(
-            project=project or None,
-            status=status or None,
-            limit=limit,
+        runs = service.search_runs(q, limit=limit)
+        return JSONResponse(
+            content={
+                "runs": runs,
+                "count": len(runs),
+                "total": len(runs),
+                "offset": 0,
+                "has_more": False,
+            }
         )
 
-    return JSONResponse(content={"runs": runs_data, "count": len(runs_data)})
+    runs = service.list_runs(
+        project=project or None,
+        status=status or None,
+        limit=limit,
+        offset=offset,
+    )
+    total = service.count_runs(
+        project=project or None,
+        status=status or None,
+    )
+
+    return JSONResponse(
+        content={
+            "runs": runs,
+            "count": len(runs),
+            "total": total,
+            "offset": offset,
+            "has_more": offset + len(runs) < total,
+        }
+    )
 
 
 @router.get("/runs/{run_id}")
 async def get_run(run_id: str, registry: RegistryDep):
-    """Get run details."""
+    """Get full run details."""
     service = RunService(registry)
-
     try:
         record = service.get_run(run_id)
-    except KeyError:
+    except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Run not found")
-
-    return JSONResponse(content={"run": _record_to_dict(record)})
+    return JSONResponse(content={"run": serialize_record(record)})
 
 
 @router.delete("/runs/{run_id}")
 async def delete_run(run_id: str, registry: RegistryDep):
     """Delete a run."""
     service = RunService(registry)
-    deleted = service.delete_run(run_id)
-
-    if not deleted:
+    if not service.delete_run(run_id):
         raise HTTPException(status_code=404, detail="Run not found")
-
     return JSONResponse(content={"status": "deleted", "run_id": run_id})
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Artifacts
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
 @router.get("/runs/{run_id}/artifacts/{idx}")
@@ -156,16 +186,14 @@ async def get_artifact_raw(
 ):
     """Download raw artifact."""
     service = ArtifactService(registry, store)
-
     try:
         data, media_type, filename = service.get_artifact_raw(run_id, idx)
     except KeyError:
         raise HTTPException(status_code=404, detail="Run not found")
     except IndexError:
         raise HTTPException(status_code=404, detail="Artifact not found")
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
     return Response(
         content=data,
         media_type=media_type,
@@ -173,17 +201,16 @@ async def get_artifact_raw(
     )
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Projects
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
 @router.get("/projects")
 async def list_projects(registry: RegistryDep):
     """List all projects with stats."""
     service = ProjectService(registry)
-    projects = service.list_projects_with_stats()
-    return JSONResponse(content={"projects": projects})
+    return JSONResponse(content={"projects": service.list_projects_with_stats()})
 
 
 @router.post("/projects/{project}/baseline/{run_id}")
@@ -195,27 +222,24 @@ async def set_baseline(
 ):
     """Set project baseline."""
     service = RunService(registry)
-
     try:
         record = service.get_run(run_id)
-    except KeyError:
+    except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Run not found")
-
     if record.project != project:
         raise HTTPException(
             status_code=400,
             detail=f"Run belongs to '{record.project}', not '{project}'",
         )
-
     service.set_baseline(project, run_id)
     return JSONResponse(
         content={"status": "ok", "project": project, "baseline_run_id": run_id}
     )
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Groups
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
 @router.get("/groups")
@@ -227,7 +251,6 @@ async def list_groups(
     service = GroupService(registry)
     groups = service.list_groups(project=project or None)
 
-    # Convert to serializable dicts
     groups_data = []
     for g in groups:
         if hasattr(g, "__dict__"):
@@ -243,7 +266,6 @@ async def list_groups(
             groups_data.append(g)
         else:
             groups_data.append({"group_id": str(g)})
-
     return JSONResponse(content={"groups": groups_data})
 
 
@@ -267,13 +289,12 @@ async def get_group(group_id: str, registry: RegistryDep):
             )
         elif isinstance(r, dict):
             runs_data.append(r)
-
     return JSONResponse(content={"group_id": group_id, "runs": runs_data})
 
 
-# =============================================================================
+# ---------------------------------------------------------------------------
 # Diff
-# =============================================================================
+# ---------------------------------------------------------------------------
 
 
 @router.get("/diff")
@@ -285,60 +306,14 @@ async def get_diff(
 ):
     """Compare two runs."""
     diff_service = DiffService(registry, store)
-
     try:
         record_a, record_b, report = diff_service.compare_runs(a, b)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
     return JSONResponse(
         content={
-            "run_a": _record_to_summary(record_a),
-            "run_b": _record_to_summary(record_b),
+            "run_a": serialize_record_summary(record_a),
+            "run_b": serialize_record_summary(record_b),
             "report": report,
         }
     )
-
-
-# =============================================================================
-# Helpers
-# =============================================================================
-
-
-def _record_to_dict(record: Any) -> dict[str, Any]:
-    """Convert RunRecord to full dict."""
-    return {
-        "run_id": record.run_id,
-        "run_name": record.run_name,
-        "project": record.project,
-        "adapter": record.adapter,
-        "status": record.status,
-        "created_at": str(record.created_at) if record.created_at else None,
-        "ended_at": record.ended_at,
-        "fingerprints": record.fingerprints,
-        "group_id": record.group_id,
-        "group_name": record.group_name,
-        "backend": record.record.get("backend", {}),
-        "data": record.record.get("data", {}),
-        "artifacts": [
-            {
-                "kind": a.kind,
-                "role": a.role,
-                "media_type": a.media_type,
-                "digest": a.digest,
-            }
-            for a in (record.artifacts or [])
-        ],
-        "errors": record.record.get("info", {}).get("errors", []),
-    }
-
-
-def _record_to_summary(record: Any) -> dict[str, Any]:
-    """Convert RunRecord to summary dict."""
-    return {
-        "run_id": record.run_id,
-        "run_name": record.run_name,
-        "project": record.project,
-        "status": record.status,
-        "created_at": str(record.created_at) if record.created_at else None,
-    }

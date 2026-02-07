@@ -30,6 +30,8 @@ export {
   useDiff,
   useArtifact,
   useMutation,
+  usePolling,
+  POLL_INTERVAL,
   ThemeProvider,
   useTheme,
   useThemeOptional,
@@ -113,6 +115,10 @@ export type { ProjectsTableProps } from './components/ProjectsTable';
 export { GroupsTable } from './components/GroupsTable';
 export type { GroupsTableProps } from './components/GroupsTable';
 
+// Export Run
+export { ExportRunButton } from './components/ExportRunButton';
+export type { ExportRunButtonProps, ExportProgress } from './components/ExportRunButton';
+
 // Pages
 export {
   RunsPage,
@@ -136,6 +142,9 @@ export {
   truncate,
   buildUrl,
   cn,
+  isTerminalStatus,
+  elapsedSeconds,
+  formatDuration,
 } from './utils';
 
 // Types

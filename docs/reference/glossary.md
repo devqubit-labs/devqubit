@@ -9,10 +9,12 @@
 | **Calibration** | Device-specific error rates, T1/T2 times, and gate fidelities. |
 | **DeviceSnapshot** | Captured backend state: topology, calibration, SDK versions. |
 | **Digest** | SHA-256 hash identifying an artifact in the content-addressed store. |
+| **Doctor** | CLI command (`devqubit doctor`) that detects and recovers stale RUNNING runs. |
 | **ExecutionEnvelope** | Standardized record of an execution (UEC): device + program + execution + result snapshots. |
 | **ExecutionSnapshot** | Submission metadata: shots, job IDs, transpilation info. |
 | **Fingerprint** | Hash computed from run contents for reproducibility tracking. |
 | **Frontend** | In multi-layer stacks (e.g., PennyLane), the user-facing API layer. |
+| **GC** | Garbage collection — `devqubit gc` prunes old runs and cleans orphaned objects. |
 | **Group** | Collection of related runs (e.g., parameter sweep) identified by `group_id`. |
 | **JUnit** | XML test report format used for CI integration (`write_junit`). |
 | **Lineage** | Parent-child relationship between runs (`parent_run_id`). |

@@ -144,3 +144,4 @@ Browse runs, view artifacts, compare experiments, and manage baselines.
 - {doc}`../concepts/overview` — Core concepts and architecture
 - {doc}`../concepts/workspace` — How to configure the workspace
 - {doc}`../concepts/uec` — Uniform Execution Contract (what gets captured)
+- {doc}`../guides/tracking` — Advanced tracking, groups, and DataFrame analysis

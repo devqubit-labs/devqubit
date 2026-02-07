@@ -4,24 +4,9 @@
 """
 Service layer for devqubit UI.
 
-This module provides a thin abstraction between route handlers and the
-underlying registry/store. It simplifies router code, improves testability,
-and makes future migration (e.g., to a remote API) easier.
-
-The services here are intentionally simple - they're not a full domain layer,
-just enough to keep routes focused on HTTP concerns.
-
-Examples
---------
-Using services in a route:
-
->>> from devqubit_ui.services import RunService
->>>
->>> @router.get("/runs/{run_id}")
->>> async def run_detail(run_id: str, registry: RegistryDep):
-...     service = RunService(registry)
-...     run = service.get_run(run_id)
-...     return JSONResponse(content={"run": run})
+Provides a thin abstraction between route handlers and the underlying
+registry / store.  Keeps routes focused on HTTP concerns, improves
+testability, and prepares a clean seam for hub-backed remote APIs.
 """
 
 from __future__ import annotations
@@ -35,30 +20,92 @@ from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 
 logger = logging.getLogger(__name__)
 
-# Maximum artifact size to load into memory for preview (2 MB)
 MAX_ARTIFACT_PREVIEW_SIZE = 2 * 1024 * 1024
+"""Maximum artifact size (bytes) to load into memory for preview."""
+
+
+# ---------------------------------------------------------------------------
+# Record serialization
+# ---------------------------------------------------------------------------
+
+
+def serialize_record(record: Any) -> dict[str, Any]:
+    """
+    Full run record for detail views.
+
+    Includes artifacts, fingerprints, backend info, and errors.
+    """
+    return {
+        "run_id": record.run_id,
+        "run_name": record.run_name,
+        "project": record.project,
+        "adapter": record.adapter,
+        "status": record.status,
+        "created_at": str(record.created_at) if record.created_at else None,
+        "ended_at": record.ended_at,
+        "fingerprints": record.fingerprints,
+        "group_id": record.group_id,
+        "group_name": record.group_name,
+        "backend": record.record.get("backend", {}),
+        "data": record.record.get("data", {}),
+        "artifacts": [
+            {
+                "kind": a.kind,
+                "role": a.role,
+                "media_type": a.media_type,
+                "digest": a.digest,
+            }
+            for a in (record.artifacts or [])
+        ],
+        "errors": record.record.get("info", {}).get("errors", []),
+    }
+
+
+def serialize_record_summary(record: Any) -> dict[str, Any]:
+    """Compact run summary for lists, diffs, and search results."""
+    ended_at = getattr(record, "ended_at", None)
+    if ended_at is None and hasattr(record, "record"):
+        ended_at = record.record.get("info", {}).get("ended_at")
+
+    return {
+        "run_id": record.run_id,
+        "run_name": record.run_name,
+        "project": record.project,
+        "adapter": getattr(record, "adapter", None),
+        "status": record.status,
+        "created_at": str(record.created_at) if record.created_at else None,
+        "ended_at": ended_at,
+    }
+
+
+def extract_record_data(record: Any) -> dict[str, Any]:
+    """
+    Extract the raw data dictionary from a run record.
+
+    Handles ``to_dict()``, ``.record`` attribute, and plain dicts.
+    Validates the result at each step so that duck-typing mismatches
+    (e.g. a non-callable ``to_dict``) fall through gracefully.
+    """
+    to_dict = getattr(record, "to_dict", None)
+    if callable(to_dict):
+        result = to_dict()
+        if isinstance(result, dict):
+            return result
+    if hasattr(record, "record") and isinstance(record.record, dict):
+        return record.record
+    if isinstance(record, dict):
+        return record
+    raise ValueError(f"Cannot convert record to dict: {type(record)}")
+
+
+# ---------------------------------------------------------------------------
+# Data containers
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class ArtifactContent:
-    """
-    Container for artifact content with metadata.
-
-    Attributes
-    ----------
-    data : bytes or None
-        Raw artifact bytes, or None if too large for preview.
-    size : int
-        Total size in bytes.
-    is_text : bool
-        Whether content is text-based.
-    is_json : bool
-        Whether content is JSON.
-    preview_available : bool
-        Whether preview data is available (size <= MAX_ARTIFACT_PREVIEW_SIZE).
-    error : str or None
-        Error message if loading failed.
-    """
+    """Container for artifact content with metadata."""
 
     data: bytes | None
     size: int
@@ -68,212 +115,113 @@ class ArtifactContent:
     error: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Services
+# ---------------------------------------------------------------------------
+
+
 class RunService:
     """
-    Service for run-related operations.
-
-    Encapsulates run listing, filtering, retrieval, and deletion logic.
+    Run-related operations.
 
     Parameters
     ----------
     registry : RegistryProtocol
         The run registry instance.
     store : ObjectStoreProtocol, optional
-        The object store instance (needed for artifacts).
-
-    Examples
-    --------
-    >>> service = RunService(registry, store)
-    >>> runs = service.list_runs(project="vqe", limit=50)
-    >>> run = service.get_run("abc123")
-    >>> service.delete_run("abc123")
+        The object store (needed for artifacts).
     """
 
     def __init__(
         self,
-        registry: "RegistryProtocol",
-        store: "ObjectStoreProtocol | None" = None,
+        registry: RegistryProtocol,
+        store: ObjectStoreProtocol | None = None,
     ) -> None:
         self._registry = registry
         self._store = store
+
+    # -- queries -----------------------------------------------------------
 
     def list_runs(
         self,
         project: str | None = None,
         status: str | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """
-        List runs with optional filtering.
-
-        Parameters
-        ----------
-        project : str, optional
-            Filter by project name.
-        status : str, optional
-            Filter by run status.
-        limit : int, default=50
-            Maximum number of runs to return.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of run summaries as dictionaries.
-        """
-        kwargs: dict[str, Any] = {"limit": limit}
+        """List runs with optional filtering and offset-based pagination."""
+        kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
         if project:
             kwargs["project"] = project
         if status:
             kwargs["status"] = status
+        return [dict(s) for s in self._registry.list_runs(**kwargs)]
 
-        run_summaries = self._registry.list_runs(**kwargs)
-        return [dict(s) for s in run_summaries]
+    def count_runs(
+        self,
+        project: str | None = None,
+        status: str | None = None,
+    ) -> int:
+        """Count runs matching the given filters."""
+        kwargs: dict[str, Any] = {}
+        if project:
+            kwargs["project"] = project
+        if status:
+            kwargs["status"] = status
+        return self._registry.count_runs(**kwargs)
 
     def search_runs(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
-        """
-        Search runs using query syntax.
-
-        Parameters
-        ----------
-        query : str
-            Search query (e.g., "metric.fidelity > 0.9").
-        limit : int, default=50
-            Maximum number of results.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of matching runs as dictionaries.
-        """
-        logger.debug("Searching runs with query: %s", query)
+        """Search runs using query syntax."""
+        logger.debug("Searching runs: %s", query)
         records = self._registry.search_runs(query, limit=limit)
-        return [self._record_to_dict(r) for r in records]
+        return [serialize_record_summary(r) for r in records]
 
     def get_run(self, run_id: str) -> Any:
         """
-        Get a run by ID.
+        Load a run by ID.
 
-        Parameters
-        ----------
-        run_id : str
-            The run identifier.
-
-        Returns
-        -------
-        RunRecord
-            The run record.
-
-        Raises
-        ------
-        KeyError
-            If run not found.
+        Exceptions from the registry propagate to the caller so that
+        routers can map them to the appropriate HTTP status.
         """
-        try:
-            return self._registry.load(run_id)
-        except Exception as e:
-            logger.warning("Run not found: %s", run_id)
-            raise KeyError(f"Run not found: {run_id}") from e
+        return self._registry.load(run_id)
+
+    # -- mutations ---------------------------------------------------------
 
     def delete_run(self, run_id: str) -> bool:
-        """
-        Delete a run by ID.
-
-        Parameters
-        ----------
-        run_id : str
-            The run identifier.
-
-        Returns
-        -------
-        bool
-            True if run was deleted, False if it didn't exist.
-        """
+        """Delete a run.  Returns ``True`` if it existed."""
         logger.info("Deleting run: %s", run_id)
         return self._registry.delete(run_id)
 
-    def get_baseline(self, project: str) -> dict[str, Any] | None:
-        """
-        Get the baseline run for a project.
-
-        Parameters
-        ----------
-        project : str
-            The project name.
-
-        Returns
-        -------
-        dict or None
-            Baseline run info, or None if not set.
-        """
-        return self._registry.get_baseline(project)
-
     def set_baseline(self, project: str, run_id: str) -> None:
-        """
-        Set a run as the baseline for a project.
-
-        Parameters
-        ----------
-        project : str
-            The project name.
-        run_id : str
-            The run ID to set as baseline.
-        """
+        """Set a run as the baseline for *project*."""
         logger.info("Setting baseline for project %s: %s", project, run_id)
         self._registry.set_baseline(project, run_id)
 
+    def get_baseline(self, project: str) -> dict[str, Any] | None:
+        """Get the baseline run for *project*."""
+        return self._registry.get_baseline(project)
+
     def list_projects(self) -> list[str]:
-        """
-        List all project names.
-
-        Returns
-        -------
-        list[str]
-            List of project names.
-        """
+        """List all project names."""
         return self._registry.list_projects()
-
-    @staticmethod
-    def _record_to_dict(record: Any) -> dict[str, Any]:
-        """Convert RunRecord to dictionary."""
-        return {
-            "run_id": record.run_id,
-            "run_name": record.run_name,
-            "project": record.project,
-            "adapter": record.adapter,
-            "status": record.status,
-            "created_at": record.created_at,
-            "ended_at": record.record.get("info", {}).get("ended_at"),
-        }
 
 
 class ArtifactService:
     """
-    Service for artifact operations.
-
-    Handles artifact retrieval with size limits to prevent memory issues.
+    Artifact retrieval with size-limited previews.
 
     Parameters
     ----------
     registry : RegistryProtocol
-        The run registry instance.
     store : ObjectStoreProtocol
-        The object store instance.
-    max_preview_size : int, default=MAX_ARTIFACT_PREVIEW_SIZE
-        Maximum size (bytes) for artifact preview. Larger artifacts
-        require download.
-
-    Examples
-    --------
-    >>> service = ArtifactService(registry, store)
-    >>> content = service.get_artifact_content("run123", 0)
-    >>> if content.preview_available:
-    ...     print(content.data.decode())
+    max_preview_size : int
+        Artifacts larger than this are not loaded for preview.
     """
 
     def __init__(
         self,
-        registry: "RegistryProtocol",
-        store: "ObjectStoreProtocol",
+        registry: RegistryProtocol,
+        store: ObjectStoreProtocol,
         max_preview_size: int = MAX_ARTIFACT_PREVIEW_SIZE,
     ) -> None:
         self._registry = registry
@@ -281,75 +229,27 @@ class ArtifactService:
         self._max_preview_size = max_preview_size
 
     def get_artifact_metadata(self, run_id: str, idx: int) -> tuple[Any, Any]:
-        """
-        Get artifact metadata without loading content.
-
-        Parameters
-        ----------
-        run_id : str
-            The run identifier.
-        idx : int
-            Zero-based artifact index.
-
-        Returns
-        -------
-        tuple[RunRecord, Artifact]
-            The run record and artifact metadata.
-
-        Raises
-        ------
-        KeyError
-            If run not found.
-        IndexError
-            If artifact index out of range.
-        """
+        """Return ``(record, artifact)`` or raise ``KeyError``/``IndexError``."""
         try:
             record = self._registry.load(run_id)
-        except Exception as e:
-            raise KeyError(f"Run not found: {run_id}") from e
-
+        except Exception as exc:
+            raise KeyError(f"Run not found: {run_id}") from exc
         if idx < 0 or idx >= len(record.artifacts):
             raise IndexError(f"Artifact index {idx} out of range")
-
         return record, record.artifacts[idx]
 
     def get_artifact_content(self, run_id: str, idx: int) -> ArtifactContent:
-        """
-        Get artifact content with size safety.
-
-        If the artifact is larger than max_preview_size, returns metadata
-        only without loading content into memory.
-
-        Parameters
-        ----------
-        run_id : str
-            The run identifier.
-        idx : int
-            Zero-based artifact index.
-
-        Returns
-        -------
-        ArtifactContent
-            Container with content (if small enough) and metadata.
-
-        Notes
-        -----
-        For large artifacts (> 5MB by default), use `get_artifact_raw()`
-        with streaming response instead.
-        """
+        """Load artifact content with size guard."""
         _, artifact = self.get_artifact_metadata(run_id, idx)
 
-        # Check size first
         try:
             size = self._store.get_size(artifact.digest)
         except AttributeError:
-            # Fallback if get_size not available
             size = None
-        except Exception as e:
-            logger.warning("Failed to get artifact size: %s", e)
+        except Exception as exc:
+            logger.warning("Failed to get artifact size: %s", exc)
             size = None
 
-        # Determine content type
         is_text = (
             artifact.media_type.startswith("text/")
             or artifact.media_type == "application/json"
@@ -358,7 +258,6 @@ class ArtifactService:
             ".json"
         )
 
-        # If size known and too large, don't load
         if size is not None and size > self._max_preview_size:
             return ArtifactContent(
                 data=None,
@@ -368,12 +267,9 @@ class ArtifactService:
                 preview_available=False,
             )
 
-        # Load content
         try:
             data = self._store.get_bytes(artifact.digest)
             actual_size = len(data)
-
-            # Double-check size after loading
             if actual_size > self._max_preview_size:
                 return ArtifactContent(
                     data=None,
@@ -382,7 +278,6 @@ class ArtifactService:
                     is_json=is_json,
                     preview_available=False,
                 )
-
             return ArtifactContent(
                 data=data,
                 size=actual_size,
@@ -390,197 +285,88 @@ class ArtifactService:
                 is_json=is_json,
                 preview_available=True,
             )
-
-        except Exception as e:
-            logger.warning("Failed to load artifact %s: %s", artifact.digest[:16], e)
+        except Exception as exc:
+            logger.warning("Failed to load artifact %s: %s", artifact.digest[:16], exc)
             return ArtifactContent(
                 data=None,
                 size=size or 0,
                 is_text=is_text,
                 is_json=is_json,
                 preview_available=False,
-                error=str(e),
+                error=str(exc),
             )
 
     def get_artifact_raw(self, run_id: str, idx: int) -> tuple[bytes, str, str]:
-        """
-        Get raw artifact bytes for download.
-
-        Parameters
-        ----------
-        run_id : str
-            The run identifier.
-        idx : int
-            Zero-based artifact index.
-
-        Returns
-        -------
-        tuple[bytes, str, str]
-            Tuple of (data, media_type, filename).
-
-        Raises
-        ------
-        KeyError
-            If run not found.
-        IndexError
-            If artifact index out of range.
-        RuntimeError
-            If artifact data cannot be loaded.
-        """
+        """Return ``(data, media_type, filename)`` for download."""
         _, artifact = self.get_artifact_metadata(run_id, idx)
-
         try:
             data = self._store.get_bytes(artifact.digest)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load artifact: {e}") from e
-
-        # Sanitize filename
+        except Exception as exc:
+            raise RuntimeError(f"Failed to load artifact: {exc}") from exc
         filename = artifact.kind.replace("/", "_").replace("\\", "_")
-
         return data, artifact.media_type, filename
 
 
 class ProjectService:
-    """
-    Service for project operations.
+    """Project listing with stats."""
 
-    Parameters
-    ----------
-    registry : RegistryProtocol
-        The run registry instance.
-    """
-
-    def __init__(self, registry: "RegistryProtocol") -> None:
+    def __init__(self, registry: RegistryProtocol) -> None:
         self._registry = registry
 
     def list_projects_with_stats(self) -> list[dict[str, Any]]:
-        """
-        List all projects with run counts and baseline info.
-
-        Returns
-        -------
-        list[dict[str, Any]]
-            List of project info dictionaries with keys:
-            name, run_count, baseline.
-        """
+        """List all projects with run counts and baseline info."""
         projects = self._registry.list_projects()
         result = []
-
         for proj in projects:
             run_count = self._registry.count_runs(project=proj)
             baseline = self._registry.get_baseline(proj)
-            result.append(
-                {
-                    "name": proj,
-                    "run_count": run_count,
-                    "baseline": baseline,
-                }
-            )
-
+            result.append({"name": proj, "run_count": run_count, "baseline": baseline})
         return result
 
 
 class GroupService:
-    """
-    Service for run group operations.
+    """Run group operations."""
 
-    Parameters
-    ----------
-    registry : RegistryProtocol
-        The run registry instance.
-    """
-
-    def __init__(self, registry: "RegistryProtocol") -> None:
+    def __init__(self, registry: RegistryProtocol) -> None:
         self._registry = registry
 
     def list_groups(self, project: str | None = None) -> list[Any]:
-        """
-        List run groups with optional project filter.
-
-        Parameters
-        ----------
-        project : str, optional
-            Filter groups by project.
-
-        Returns
-        -------
-        list
-            List of group info objects.
-        """
         kwargs: dict[str, Any] = {}
         if project:
             kwargs["project"] = project
         return self._registry.list_groups(**kwargs)
 
     def get_group_runs(self, group_id: str) -> list[Any]:
-        """
-        Get all runs in a group.
-
-        Parameters
-        ----------
-        group_id : str
-            The group identifier.
-
-        Returns
-        -------
-        list
-            List of runs in the group.
-        """
         return self._registry.list_runs_in_group(group_id)
 
 
 class DiffService:
-    """
-    Service for run comparison operations.
-
-    Parameters
-    ----------
-    registry : RegistryProtocol
-        The run registry instance.
-    store : ObjectStoreProtocol
-        The object store instance.
-    """
+    """Run comparison."""
 
     def __init__(
         self,
-        registry: "RegistryProtocol",
-        store: "ObjectStoreProtocol",
+        registry: RegistryProtocol,
+        store: ObjectStoreProtocol,
     ) -> None:
         self._registry = registry
         self._store = store
 
     def compare_runs(self, run_id_a: str, run_id_b: str) -> tuple[Any, Any, dict]:
         """
-        Compare two runs and generate a diff report.
+        Compare two runs.
 
-        Parameters
-        ----------
-        run_id_a : str
-            ID of the baseline run (Run A).
-        run_id_b : str
-            ID of the candidate run (Run B).
-
-        Returns
-        -------
-        tuple[RunRecord, RunRecord, dict]
-            Tuple of (record_a, record_b, report_dict).
-
-        Raises
-        ------
-        KeyError
-            If either run is not found.
+        Returns ``(record_a, record_b, report_dict)``.
+        Raises ``KeyError`` if either run is missing.
         """
         try:
             record_a = self._registry.load(run_id_a)
-        except Exception as e:
-            raise KeyError(f"Run A not found: {run_id_a}") from e
-
+        except Exception as exc:
+            raise KeyError(f"Run A not found: {run_id_a}") from exc
         try:
             record_b = self._registry.load(run_id_b)
-        except Exception as e:
-            raise KeyError(f"Run B not found: {run_id_b}") from e
+        except Exception as exc:
+            raise KeyError(f"Run B not found: {run_id_b}") from exc
 
-        # Use devqubit's diff_runs function
         from devqubit_engine.compare.diff import diff_runs
 
         logger.debug("Comparing runs: %s vs %s", run_id_a, run_id_b)
@@ -590,5 +376,4 @@ class DiffService:
             store_a=self._store,
             store_b=self._store,
         )
-
         return record_a, record_b, result.to_dict()
