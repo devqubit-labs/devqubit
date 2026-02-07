@@ -83,10 +83,15 @@ def extract_record_data(record: Any) -> dict[str, Any]:
     Extract the raw data dictionary from a run record.
 
     Handles ``to_dict()``, ``.record`` attribute, and plain dicts.
+    Validates the result at each step so that duck-typing mismatches
+    (e.g. a non-callable ``to_dict``) fall through gracefully.
     """
-    if hasattr(record, "to_dict"):
-        return record.to_dict()
-    if hasattr(record, "record"):
+    to_dict = getattr(record, "to_dict", None)
+    if callable(to_dict):
+        result = to_dict()
+        if isinstance(result, dict):
+            return result
+    if hasattr(record, "record") and isinstance(record.record, dict):
         return record.record
     if isinstance(record, dict):
         return record
