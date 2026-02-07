@@ -8,13 +8,15 @@ from __future__ import annotations
 import json
 import logging
 import tempfile
+import time
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from devqubit_engine.bundle.pack import BUNDLE_FORMAT_VERSION
 from devqubit_ui.dependencies import RegistryDep, StoreDep
+from devqubit_ui.services import extract_record_data
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -22,23 +24,101 @@ from fastapi.responses import FileResponse, JSONResponse
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+_DEFAULT_TTL_SECONDS = 3600
+_DEFAULT_MAX_ENTRIES = 64
+
+
+# ---------------------------------------------------------------------------
+# Bundle cache
+# ---------------------------------------------------------------------------
+
 
 @dataclass
-class ExportResult:
-    """Result of export operation."""
+class _CacheEntry:
+    """Single entry in the bundle cache."""
 
-    run_id: str
-    artifact_count: int
-    object_count: int
-    missing_objects: list[str]
+    path: Path
+    created_at: float
 
 
-# In-memory cache for prepared bundles (in production, use Redis or similar)
-_bundle_cache: dict[str, Path] = {}
+@dataclass
+class BundleCache:
+    """
+    In-process bundle cache with TTL eviction and max-entry cap.
+
+    Attributes
+    ----------
+    ttl_seconds : int
+        Maximum age before an entry is evicted.
+    max_entries : int
+        Maximum number of bundles kept on disk.
+    """
+
+    ttl_seconds: int = _DEFAULT_TTL_SECONDS
+    max_entries: int = _DEFAULT_MAX_ENTRIES
+    _entries: dict[str, _CacheEntry] = field(default_factory=dict, repr=False)
+
+    def get(self, run_id: str) -> Path | None:
+        """Return cached bundle path if present and not expired."""
+        entry = self._entries.get(run_id)
+        if entry is None:
+            return None
+        if time.monotonic() - entry.created_at > self.ttl_seconds:
+            self._evict(run_id)
+            return None
+        if not entry.path.exists():
+            self._entries.pop(run_id, None)
+            return None
+        return entry.path
+
+    def put(self, run_id: str, path: Path) -> None:
+        """Store a bundle; evict oldest when limit is exceeded."""
+        self._entries[run_id] = _CacheEntry(path=path, created_at=time.monotonic())
+        self._enforce_limit()
+
+    def pop(self, run_id: str) -> Path | None:
+        """Remove and return a bundle path."""
+        entry = self._entries.pop(run_id, None)
+        return entry.path if entry else None
+
+    def cleanup(self) -> int:
+        """Remove all cached bundles from disk.  Returns files removed."""
+        removed = 0
+        for entry in self._entries.values():
+            try:
+                if entry.path.exists():
+                    entry.path.unlink()
+                    removed += 1
+            except OSError as exc:
+                logger.warning("Failed to remove cached bundle: %s", exc)
+        self._entries.clear()
+        return removed
+
+    def _evict(self, run_id: str) -> None:
+        entry = self._entries.pop(run_id, None)
+        if entry is not None:
+            try:
+                if entry.path.exists():
+                    entry.path.unlink()
+            except OSError:
+                pass
+
+    def _enforce_limit(self) -> None:
+        while len(self._entries) > self.max_entries:
+            oldest_id = min(self._entries, key=lambda k: self._entries[k].created_at)
+            self._evict(oldest_id)
+
+
+bundle_cache = BundleCache()
+"""Module-level bundle cache used by export endpoints."""
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _utc_now_iso() -> str:
-    """Get current UTC time as ISO string."""
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
@@ -50,7 +130,7 @@ def _build_manifest(
     written: list[str],
     missing: list[str],
 ) -> dict[str, Any]:
-    """Build bundle manifest from record."""
+    """Build a bundle manifest from a run record."""
     fingerprints = record.get("fingerprints") or {}
     provenance = record.get("provenance") or {}
     git = provenance.get("git") if isinstance(provenance, dict) else None
@@ -82,15 +162,9 @@ def _build_manifest(
     }
 
 
-def _record_to_dict(record: Any) -> dict[str, Any]:
-    """Convert RunRecord to exportable dict."""
-    if hasattr(record, "to_dict"):
-        return record.to_dict()
-    if hasattr(record, "record"):
-        return record.record
-    if isinstance(record, dict):
-        return record
-    raise ValueError(f"Cannot convert record to dict: {type(record)}")
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @router.post("/runs/{run_id}/export")
@@ -101,28 +175,25 @@ async def create_export(
     include_artifacts: bool = True,
 ):
     """
-    Create a run export bundle.
+    Create a portable ZIP bundle for a run.
 
-    Prepares a portable ZIP archive containing the run record
-    and all referenced artifact objects.
+    The archive contains ``run.json``, a ``manifest.json``, and all
+    referenced artifact objects under ``objects/``.
     """
     logger.info("Creating export bundle for run %s", run_id)
 
-    # Load run record
     try:
         run_record = registry.load(run_id)
     except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Run not found")
 
-    record = _record_to_dict(run_record)
+    record = extract_record_data(run_record)
     artifacts = record.get("artifacts", []) or []
     if not isinstance(artifacts, list):
         artifacts = []
 
-    # Collect unique digests
     digests: list[str] = []
     seen: set[str] = set()
-
     if include_artifacts:
         for art in artifacts:
             if not isinstance(art, dict):
@@ -140,7 +211,6 @@ async def create_export(
         "Found %d unique digests in %d artifacts", len(digests), len(artifacts)
     )
 
-    # Create temporary bundle file
     temp_dir = Path(tempfile.gettempdir()) / "devqubit_exports"
     temp_dir.mkdir(parents=True, exist_ok=True)
     bundle_path = temp_dir / f"{run_id}.zip"
@@ -150,28 +220,23 @@ async def create_export(
 
     try:
         with zipfile.ZipFile(bundle_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            # Write run record
             zf.writestr("run.json", json.dumps(record, indent=2, default=str))
 
-            # Write artifact objects
             for digest in digests:
                 hex_part = digest[len("sha256:") :]
                 obj_path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
-
                 try:
                     data = store.get_bytes(digest)
                     zf.writestr(obj_path, data)
                     written.append(digest)
-                except Exception as e:
-                    logger.warning("Missing object %s: %s", digest[:24], e)
+                except Exception as exc:
+                    logger.warning("Missing object %s: %s", digest[:24], exc)
                     missing.append(digest)
 
-            # Build and write manifest
             manifest = _build_manifest(record, run_id, written, missing)
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
-        # Cache the bundle path
-        _bundle_cache[run_id] = bundle_path
+        bundle_cache.put(run_id, bundle_path)
 
         logger.info(
             "Created export bundle for run %s: %d objects, %d missing",
@@ -190,40 +255,34 @@ async def create_export(
             }
         )
 
-    except Exception as e:
-        logger.error("Failed to create export bundle: %s", e)
+    except Exception as exc:
+        logger.error("Failed to create export bundle: %s", exc)
         if bundle_path.exists():
             bundle_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
 
 
 @router.get("/runs/{run_id}/export/download")
 async def download_export(run_id: str, registry: RegistryDep):
-    """
-    Download a previously created export bundle.
-    """
-    # Check if bundle exists in cache
-    bundle_path = _bundle_cache.get(run_id)
+    """Download a previously created export bundle."""
+    bundle_path = bundle_cache.get(run_id)
 
-    if bundle_path is None or not bundle_path.exists():
-        # Try to find existing bundle or create new one
+    if bundle_path is None:
         temp_dir = Path(tempfile.gettempdir()) / "devqubit_exports"
-        bundle_path = temp_dir / f"{run_id}.zip"
-
-        if not bundle_path.exists():
+        candidate = temp_dir / f"{run_id}.zip"
+        if not candidate.exists():
             raise HTTPException(
                 status_code=404,
-                detail="Export bundle not found. Please create export first.",
+                detail="Export bundle not found. Create export first.",
             )
+        bundle_path = candidate
 
-    # Get run name for filename
     try:
         run_record = registry.load(run_id)
         run_name = getattr(run_record, "run_name", None) or run_id[:8]
     except Exception:
         run_name = run_id[:8]
 
-    # Sanitize filename
     safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in run_name)
     filename = f"{safe_name}_{run_id[:8]}.devqubit.zip"
 
@@ -240,18 +299,15 @@ async def download_export(run_id: str, registry: RegistryDep):
 
 @router.get("/runs/{run_id}/export/info")
 async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
-    """
-    Get information about what would be exported without creating the bundle.
-    """
+    """Preview what would be exported without creating the bundle."""
     try:
         run_record = registry.load(run_id)
     except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Run not found")
 
-    record = _record_to_dict(run_record)
+    record = extract_record_data(run_record)
     artifacts = record.get("artifacts", []) or []
 
-    # Count unique objects
     digests = set()
     for art in artifacts:
         if isinstance(art, dict):
@@ -259,17 +315,16 @@ async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
             if isinstance(digest, str) and digest.startswith("sha256:"):
                 digests.add(digest)
 
-    # Check which objects exist
     available = 0
-    missing = 0
+    missing_count = 0
     for digest in digests:
         try:
             if store.exists(digest):
                 available += 1
             else:
-                missing += 1
+                missing_count += 1
         except Exception:
-            missing += 1
+            missing_count += 1
 
     return JSONResponse(
         content={
@@ -279,23 +334,19 @@ async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
             "artifact_count": len(artifacts),
             "object_count": len(digests),
             "available_objects": available,
-            "missing_objects": missing,
+            "missing_objects": missing_count,
         }
     )
 
 
 @router.delete("/runs/{run_id}/export")
 async def cleanup_export(run_id: str):
-    """
-    Clean up a previously created export bundle.
-    """
-    bundle_path = _bundle_cache.pop(run_id, None)
-
+    """Remove a previously created export bundle from disk."""
+    bundle_path = bundle_cache.pop(run_id)
     if bundle_path is not None and bundle_path.exists():
         try:
             bundle_path.unlink()
             logger.info("Cleaned up export bundle for run %s", run_id)
-        except Exception as e:
-            logger.warning("Failed to clean up bundle: %s", e)
-
+        except Exception as exc:
+            logger.warning("Failed to clean up bundle: %s", exc)
     return JSONResponse(content={"status": "cleaned", "run_id": run_id})
