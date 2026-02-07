@@ -9,8 +9,8 @@ import { ApiClient, api as defaultApi, ApiError } from '../api';
 import { isTerminalStatus } from '../utils';
 import type { Capabilities, Workspace } from '../types';
 
-/** Polling interval for all data fetching (ms). */
-const POLL_INTERVAL = 1_000;
+/** Default polling interval for data fetching (ms). */
+export const POLL_INTERVAL = 1_000;
 
 /** Async state for data fetching */
 interface AsyncState<T> {
@@ -121,7 +121,7 @@ function useAsync<T>(
  * The visibility listener covers the typical workflow: user starts a run in the
  * terminal, switches to the browser, and expects the UI to be up-to-date instantly.
  */
-function usePolling(refetch: () => void, intervalMs: number, active: boolean) {
+export function usePolling(refetch: () => void, intervalMs: number, active: boolean) {
   useEffect(() => {
     if (!active) return;
 

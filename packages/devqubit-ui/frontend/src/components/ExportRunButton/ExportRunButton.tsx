@@ -2,10 +2,13 @@
  * ExportRunButton Component
  *
  * Provides run export functionality (bundle creation) for devqubit-ui.
+ * Uses the ApiClient from AppProvider so that Hub's CSRF / auth headers
+ * are included automatically.
  */
 
 import { useState } from 'react';
 import { Button, Spinner, Modal, Toast, Badge } from '../ui';
+import { useApp } from '../../hooks';
 
 export interface ExportRunButtonProps {
   /** Run ID to export */
@@ -18,8 +21,6 @@ export interface ExportRunButtonProps {
   size?: 'default' | 'sm';
   /** Additional class name */
   className?: string;
-  /** Base URL for API requests */
-  apiBaseUrl?: string;
 }
 
 export interface ExportProgress {
@@ -40,8 +41,8 @@ export function ExportRunButton({
   variant = 'secondary',
   size = 'sm',
   className = '',
-  apiBaseUrl = '',
 }: ExportRunButtonProps) {
+  const { api } = useApp();
   const [progress, setProgress] = useState<ExportProgress>({ status: 'idle' });
   const [showModal, setShowModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
@@ -51,18 +52,8 @@ export function ExportRunButton({
     setShowModal(true);
 
     try {
-      // Request bundle creation
-      const response = await fetch(`${apiBaseUrl}/api/runs/${runId}/export`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: 'Export failed' }));
-        throw new Error(errorData.detail || `Export failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
+      // Create bundle via ApiClient (includes CSRF / auth headers)
+      const result = await api.createExport(runId);
 
       setProgress({
         status: 'packing',
@@ -71,15 +62,17 @@ export function ExportRunButton({
         objectCount: result.object_count,
       });
 
-      // Start download
+      // Download the ZIP blob
       setProgress(prev => ({
         ...prev,
         status: 'downloading',
         message: 'Downloading bundle...',
       }));
 
-      // Fetch the bundle file
-      const downloadResponse = await fetch(`${apiBaseUrl}/api/runs/${runId}/export/download`);
+      const downloadUrl = api.getExportDownloadUrl(runId);
+      const downloadResponse = await fetch(downloadUrl, {
+        credentials: 'same-origin',
+      });
 
       if (!downloadResponse.ok) {
         throw new Error('Download failed');
@@ -90,7 +83,7 @@ export function ExportRunButton({
         ? `${runName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${runId.slice(0, 8)}.zip`
         : `run_${runId.slice(0, 8)}.zip`;
 
-      // Trigger download
+      // Trigger browser download
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
