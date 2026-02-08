@@ -85,7 +85,7 @@ class TranspilationInfo:
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
-            "mode": self.mode.value if hasattr(self.mode, "value") else str(self.mode),
+            "mode": self.mode.value,
         }
         if self.transpiled_by:
             d["transpiled_by"] = self.transpiled_by
@@ -144,7 +144,7 @@ class ProgramArtifact:
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "ref": self.ref.to_dict(),
-            "role": self.role.value if hasattr(self.role, "value") else str(self.role),
+            "role": self.role.value,
             "format": self.format,
         }
         if self.name:

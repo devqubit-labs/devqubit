@@ -30,7 +30,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Pattern
+from typing import Any, ClassVar
 
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,12 @@ DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
 )
 
 # Module-level compiled patterns cache for default patterns
-_compiled_default_patterns: tuple[Pattern[str], ...] | None = None
+_compiled_default_patterns: tuple[re.Pattern[str], ...] | None = None
 
 
-def _get_compiled_patterns(patterns: tuple[str, ...] | list[str]) -> list[Pattern[str]]:
+def _get_compiled_patterns(
+    patterns: tuple[str, ...] | list[str],
+) -> list[re.Pattern[str]]:
     """
     Compile regex patterns with caching for default patterns.
 
@@ -110,7 +112,7 @@ class RedactionConfig:
     replacement: str = "[REDACTED]"
 
     # Internal compiled patterns cache (not part of init/repr/compare)
-    _compiled: list[Pattern[str]] | None = field(
+    _compiled: list[re.Pattern[str]] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -123,7 +125,7 @@ class RedactionConfig:
         compare=False,
     )
 
-    def _get_compiled(self) -> list[Pattern[str]]:
+    def _get_compiled(self) -> list[re.Pattern[str]]:
         """Get compiled patterns, recompiling when patterns change."""
         current_key = tuple(self.patterns)
         if self._compiled is None or self._compiled_key != current_key:

@@ -21,7 +21,7 @@ import hashlib
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from devqubit_engine.storage.types import ArtifactRef
 
@@ -529,7 +529,7 @@ class ResultSnapshot:
     schema_version: str = "devqubit.result_snapshot/1.0"
 
     #: Valid status values for ResultSnapshot.
-    VALID_STATUSES: tuple[str, ...] = (
+    VALID_STATUSES: ClassVar[tuple[str, ...]] = (
         "completed",
         "failed",
         "cancelled",

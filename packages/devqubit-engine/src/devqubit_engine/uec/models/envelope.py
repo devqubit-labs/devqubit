@@ -41,9 +41,9 @@ def _generate_envelope_id() -> str:
     """
     Generate a unique envelope ID.
 
-    Returns a UUID4 without hyphens (26 chars, matches schema pattern).
+    Uses UUID4 hex (32 chars) to avoid entropy loss from truncation.
     """
-    return uuid.uuid4().hex[:26]
+    return uuid.uuid4().hex
 
 
 @dataclass
@@ -390,7 +390,7 @@ class ExecutionEnvelope:
         except ImportError:
             logger.warning(
                 "Schema validation not available: "
-                "devqubit_engine..core.schema.validation module not found"
+                "devqubit_engine.schema.validation module not found"
             )
             return ValidationResult(
                 valid=True,
