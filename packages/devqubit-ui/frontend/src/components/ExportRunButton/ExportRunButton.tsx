@@ -101,8 +101,6 @@ export function ExportRunButton({
         objectCount: result.object_count,
       });
 
-      setToast({ message: 'Bundle downloaded successfully', variant: 'success' });
-
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Export failed';
       setProgress({ status: 'error', message });

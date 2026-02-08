@@ -37,7 +37,7 @@ export function ArtifactPage() {
       a.click();
       URL.revokeObjectURL(a.href);
 
-      setToast({ message: 'Download started', variant: 'success' });
+      setToast({ message: 'Download complete', variant: 'success' });
     } catch {
       setToast({ message: 'Download failed', variant: 'error' });
     }
