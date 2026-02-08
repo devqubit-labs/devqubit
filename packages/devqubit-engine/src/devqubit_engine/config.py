@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
@@ -435,6 +436,7 @@ def load_config() -> Config:
 
 # Global cached configuration instance
 _config: Config | None = None
+_config_lock = threading.Lock()
 
 
 def get_config() -> Config:
@@ -457,9 +459,13 @@ def get_config() -> Config:
     load_config : Load configuration from environment.
     """
     global _config
-    if _config is None:
-        _config = load_config()
-    return _config
+    if _config is not None:
+        return _config
+    with _config_lock:
+        # Double-checked locking
+        if _config is None:
+            _config = load_config()
+        return _config
 
 
 def reset_config() -> None:
@@ -475,8 +481,9 @@ def reset_config() -> None:
     set_config : Set a custom configuration.
     """
     global _config, _compiled_default_patterns
-    _config = None
-    _compiled_default_patterns = None
+    with _config_lock:
+        _config = None
+        _compiled_default_patterns = None
     logger.debug("Configuration cache reset")
 
 
@@ -506,5 +513,6 @@ def set_config(config: Config) -> None:
     PosixPath('/tmp/test')
     """
     global _config
-    _config = config
+    with _config_lock:
+        _config = config
     logger.debug("Configuration set programmatically: %s", config.root_dir)
