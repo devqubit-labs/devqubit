@@ -12,6 +12,27 @@ import type { Capabilities, Workspace } from '../types';
 /** Default polling interval for data fetching (ms). */
 export const POLL_INTERVAL = 1_000;
 
+/**
+ * Configurable polling intervals.
+ *
+ * Providers can override these to tune polling frequency for their
+ * deployment scale (e.g. longer intervals for multi-user servers).
+ */
+export interface PollingConfig {
+  /** Interval while active (non-terminal) runs exist (ms). */
+  runsActive?: number;
+  /** Interval when all runs are terminal (ms). */
+  runsIdle?: number;
+  /** Interval for single-run detail while running (ms). */
+  runDetail?: number;
+}
+
+const DEFAULT_POLLING: Required<PollingConfig> = {
+  runsActive: POLL_INTERVAL,
+  runsIdle: POLL_INTERVAL,
+  runDetail: POLL_INTERVAL,
+};
+
 /** Async state for data fetching */
 interface AsyncState<T> {
   data: T | null;
@@ -25,6 +46,7 @@ interface AppContextValue {
   capabilities: Capabilities | null;
   currentWorkspace: Workspace | null;
   setCurrentWorkspace: (workspace: Workspace | null) => void;
+  pollingConfig: Required<PollingConfig>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -36,6 +58,7 @@ export interface AppProviderProps {
   children: React.ReactNode;
   api?: ApiClient;
   initialWorkspace?: Workspace | null;
+  pollingConfig?: PollingConfig;
 }
 
 /**
@@ -47,16 +70,22 @@ export function AppProvider({
   children,
   api = defaultApi,
   initialWorkspace = null,
+  pollingConfig,
 }: AppProviderProps) {
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(initialWorkspace);
+
+  const resolvedPolling: Required<PollingConfig> = {
+    ...DEFAULT_POLLING,
+    ...pollingConfig,
+  };
 
   useEffect(() => {
     api.getCapabilities().then(setCapabilities).catch(console.error);
   }, [api]);
 
   return (
-    <AppContext.Provider value={{ api, capabilities, currentWorkspace, setCurrentWorkspace }}>
+    <AppContext.Provider value={{ api, capabilities, currentWorkspace, setCurrentWorkspace, pollingConfig: resolvedPolling }}>
       {children}
     </AppContext.Provider>
   );
@@ -73,11 +102,14 @@ export function useApp(): AppContextValue {
 
 /**
  * Generic async data fetcher hook.
+ *
+ * Background refetches (from polling) are silent — they keep previous
+ * data visible instead of flashing a loading indicator on every tick.
  */
 function useAsync<T>(
   fetcher: () => Promise<T>,
   deps: unknown[] = []
-): AsyncState<T> & { refetch: () => void } {
+): AsyncState<T> & { refetch: () => Promise<void> } {
   const [state, setState] = useState<AsyncState<T>>({
     data: null,
     loading: true,
@@ -87,8 +119,10 @@ function useAsync<T>(
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
 
-  const fetch = useCallback(async () => {
-    setState(s => ({ ...s, loading: true, error: null }));
+  const doFetch = useCallback(async (silent: boolean) => {
+    if (!silent) {
+      setState(s => ({ ...s, loading: true, error: null }));
+    }
     try {
       const data = await fetcherRef.current();
       if (mountedRef.current) {
@@ -96,44 +130,73 @@ function useAsync<T>(
       }
     } catch (err) {
       if (mountedRef.current) {
-        setState({
-          data: null,
+        const apiError = err instanceof ApiError ? err : new ApiError(500, String(err));
+        // On silent error keep previous data visible.
+        setState(s => ({
+          data: silent ? s.data : null,
           loading: false,
-          error: err instanceof ApiError ? err : new ApiError(500, String(err)),
-        });
+          error: apiError,
+        }));
       }
     }
   }, []);
 
   useEffect(() => {
     mountedRef.current = true;
-    fetch();
+    doFetch(false);
     return () => { mountedRef.current = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return { ...state, refetch: fetch };
+  const refetch = useCallback(() => doFetch(true), [doFetch]);
+
+  return { ...state, refetch };
 }
 
 /**
- * Poll with setInterval + immediate refetch when the browser tab regains focus.
+ * Poll with setTimeout chain + visibility awareness.
  *
- * The visibility listener covers the typical workflow: user starts a run in the
- * terminal, switches to the browser, and expects the UI to be up-to-date instantly.
+ * Uses setTimeout (not setInterval) so the next tick only starts after
+ * the previous fetch completes — prevents request pileup on slow connections.
+ * Pauses while the tab is hidden; refetches immediately on focus.
  */
-export function usePolling(refetch: () => void, intervalMs: number, active: boolean) {
+export function usePolling(
+  refetch: () => void | Promise<void>,
+  intervalMs: number,
+  active: boolean,
+) {
   useEffect(() => {
     if (!active) return;
 
-    const id = setInterval(refetch, intervalMs);
+    let timeoutId: ReturnType<typeof setTimeout>;
+    let cancelled = false;
+
+    const schedule = () => {
+      if (cancelled) return;
+      // ±10 % jitter to spread load across concurrent clients.
+      const jitter = intervalMs * 0.1 * (Math.random() * 2 - 1);
+      timeoutId = setTimeout(tick, Math.max(500, intervalMs + jitter));
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === 'hidden') return;
+      try { await refetch(); } catch { /* useAsync handles errors */ }
+      schedule();
+    };
+
+    schedule();
 
     const onVisible = () => {
-      if (document.visibilityState === 'visible') refetch();
+      if (cancelled || document.visibilityState !== 'visible') return;
+      clearTimeout(timeoutId);
+      Promise.resolve(refetch()).catch(() => {}).finally(schedule);
     };
     document.addEventListener('visibilitychange', onVisible);
 
     return () => {
-      clearInterval(id);
+      cancelled = true;
+      clearTimeout(timeoutId);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refetch, intervalMs, active]);
@@ -142,7 +205,7 @@ export function usePolling(refetch: () => void, intervalMs: number, active: bool
 /**
  * Fetch runs list with filters.
  *
- * Polls every second so new runs and status changes appear immediately.
+ * Uses adaptive polling: faster while active runs exist, slower when idle.
  * Also refetches instantly when the browser tab regains focus.
  */
 export function useRuns(params?: {
@@ -151,13 +214,16 @@ export function useRuns(params?: {
   q?: string;
   limit?: number;
 }) {
-  const { api, currentWorkspace } = useApp();
+  const { api, currentWorkspace, pollingConfig } = useApp();
   const result = useAsync(
     () => api.listRuns({ ...params, workspace: currentWorkspace?.id }),
     [api, currentWorkspace?.id, params?.project, params?.status, params?.q, params?.limit]
   );
 
-  usePolling(result.refetch, POLL_INTERVAL, true);
+  const hasActiveRuns = result.data?.runs.some(r => !isTerminalStatus(r.status)) ?? false;
+  const interval = hasActiveRuns ? pollingConfig.runsActive : pollingConfig.runsIdle;
+
+  usePolling(result.refetch, interval, true);
 
   return result;
 }
@@ -165,10 +231,10 @@ export function useRuns(params?: {
 /**
  * Fetch single run by ID.
  *
- * Polls every second while the run is still in a non-terminal state.
+ * Polls while the run is in a non-terminal state.
  */
 export function useRun(runId: string) {
-  const { api } = useApp();
+  const { api, pollingConfig } = useApp();
   const result = useAsync(
     async () => {
       const { run } = await api.getRun(runId);
@@ -179,7 +245,7 @@ export function useRun(runId: string) {
 
   const isRunning = result.data ? !isTerminalStatus(result.data.status) : false;
 
-  usePolling(result.refetch, POLL_INTERVAL, isRunning);
+  usePolling(result.refetch, pollingConfig.runDetail, isRunning);
 
   return result;
 }

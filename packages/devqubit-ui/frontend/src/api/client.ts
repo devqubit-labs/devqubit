@@ -32,9 +32,9 @@ export interface ApiConfig {
 export interface RequestOptions {
   body?: unknown;
   params?: Record<string, unknown>;
-  /** Per-request headers (merged with instance headers; per-request wins). */
+  /** Per-request headers merged over instance headers. */
   headers?: Record<string, string>;
-  /** Fetch credentials mode (e.g. 'same-origin', 'include'). */
+  /** Fetch credentials mode. */
   credentials?: RequestCredentials;
 }
 
@@ -78,6 +78,7 @@ export class ApiClient {
       headers: { ...this.headers, ...options.headers },
       body: options.body ? JSON.stringify(options.body) : undefined,
       credentials: options.credentials,
+      cache: 'no-store',
     });
 
     if (!response.ok) {

@@ -11,7 +11,7 @@ export { App } from './App';
 export type { AppProps } from './App';
 
 export { AppProvider, useApp } from './hooks';
-export type { AppProviderProps, AppContextValue, AsyncState } from './hooks';
+export type { AppProviderProps, AppContextValue, AsyncState, PollingConfig } from './hooks';
 
 // Router
 export { router, createRouter, coreRoutes } from './router';
