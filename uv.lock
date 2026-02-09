@@ -12,6 +12,7 @@ members = [
     "devqubit",
     "devqubit-braket",
     "devqubit-cirq",
+    "devqubit-cudaq",
     "devqubit-engine",
     "devqubit-pennylane",
     "devqubit-qiskit",
@@ -674,6 +675,12 @@ wheels = [
 ]
 
 [[package]]
+name = "cudaq"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple/" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/7e/e87a3f735e24e8355a290ebf34ab8ab35a05afea3ca98d5c166392997304/cudaq-0.13.0.tar.gz", hash = "sha256:9b49d281780f7c62b17cd16f840cc2d03fae4da76459c7f15dbfc1f44159c6e5", size = 9188, upload-time = "2025-11-18T22:18:25.72Z" }
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple/" }
@@ -754,6 +761,7 @@ dependencies = [
 all = [
     { name = "devqubit-braket" },
     { name = "devqubit-cirq" },
+    { name = "devqubit-cudaq" },
     { name = "devqubit-pennylane" },
     { name = "devqubit-qiskit" },
     { name = "devqubit-qiskit-runtime" },
@@ -763,6 +771,9 @@ braket = [
 ]
 cirq = [
     { name = "devqubit-cirq" },
+]
+cudaq = [
+    { name = "devqubit-cudaq" },
 ]
 gcs = [
     { name = "devqubit-engine", extra = ["gcs"] },
@@ -808,6 +819,8 @@ requires-dist = [
     { name = "devqubit-braket", marker = "extra == 'braket'", editable = "packages/devqubit-braket" },
     { name = "devqubit-cirq", marker = "extra == 'all'", editable = "packages/devqubit-cirq" },
     { name = "devqubit-cirq", marker = "extra == 'cirq'", editable = "packages/devqubit-cirq" },
+    { name = "devqubit-cudaq", marker = "extra == 'all'", editable = "packages/devqubit-cudaq" },
+    { name = "devqubit-cudaq", marker = "extra == 'cudaq'", editable = "packages/devqubit-cudaq" },
     { name = "devqubit-engine", editable = "packages/devqubit-engine" },
     { name = "devqubit-engine", extras = ["gcs"], marker = "extra == 'gcs'", editable = "packages/devqubit-engine" },
     { name = "devqubit-engine", extras = ["s3"], marker = "extra == 's3'", editable = "packages/devqubit-engine" },
@@ -819,7 +832,7 @@ requires-dist = [
     { name = "devqubit-qiskit-runtime", marker = "extra == 'qiskit-runtime'", editable = "packages/devqubit-qiskit-runtime" },
     { name = "devqubit-ui", marker = "extra == 'ui'", editable = "packages/devqubit-ui" },
 ]
-provides-extras = ["s3", "gcs", "qiskit", "qiskit-runtime", "pennylane", "cirq", "braket", "all", "ui"]
+provides-extras = ["s3", "gcs", "qiskit", "qiskit-runtime", "pennylane", "cirq", "cudaq", "braket", "all", "ui"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -870,6 +883,21 @@ requires-dist = [
     { name = "cirq", specifier = ">=1.6,<2" },
     { name = "devqubit-engine", editable = "packages/devqubit-engine" },
     { name = "ply", specifier = ">=3.11" },
+]
+
+[[package]]
+name = "devqubit-cudaq"
+version = "0.1.11"
+source = { editable = "packages/devqubit-cudaq" }
+dependencies = [
+    { name = "cudaq" },
+    { name = "devqubit-engine" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "cudaq", specifier = ">=0.13.0" },
+    { name = "devqubit-engine", editable = "packages/devqubit-engine" },
 ]
 
 [[package]]

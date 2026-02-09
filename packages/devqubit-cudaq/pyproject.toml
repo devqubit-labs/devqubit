@@ -1,0 +1,48 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-cudaq"
+version = "0.1.11"
+description = "devqubit adapter for CUDA-Q"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "cudaq", "nvidia", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "cudaq>=0.10.0",
+    "devqubit-engine>=0.1.11,<0.2.0",
+]
+
+[project.entry-points."devqubit.adapters"]
+cudaq = "devqubit_cudaq.adapter:CudaqAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+cudaq = "devqubit_cudaq.serialization:CudaqCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+cudaq = "devqubit_cudaq.serialization:CudaqCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+cudaq = "devqubit_cudaq.serialization:summarize_cudaq_circuit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_cudaq"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }

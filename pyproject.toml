@@ -47,12 +47,14 @@ qiskit = ["devqubit-qiskit>=0.1.11,<0.2.0"]
 qiskit-runtime = ["devqubit-qiskit-runtime>=0.1.11,<0.2.0"]
 pennylane = ["devqubit-pennylane>=0.1.11,<0.2.0"]
 cirq = ["devqubit-cirq>=0.1.11,<0.2.0"]
+cudaq = ["devqubit-cudaq>=0.1.11,<0.2.0"]
 braket = ["devqubit-braket>=0.1.11,<0.2.0"]
 all = [
   "devqubit-qiskit>=0.1.11,<0.2.0",
   "devqubit-qiskit-runtime>=0.1.11,<0.2.0",
   "devqubit-pennylane>=0.1.11,<0.2.0",
   "devqubit-cirq>=0.1.11,<0.2.0",
+  "devqubit-cudaq>=0.1.11,<0.2.0",
   "devqubit-braket>=0.1.11,<0.2.0",
 ]
 
@@ -91,6 +93,7 @@ members = [
     "packages/devqubit-qiskit-runtime",
     "packages/devqubit-pennylane",
     "packages/devqubit-cirq",
+    "packages/devqubit-cudaq",
     "packages/devqubit-braket",
     "packages/devqubit-ui",
 ]
@@ -103,6 +106,7 @@ devqubit-pennylane = { workspace = true }
 devqubit-cirq = { workspace = true }
 devqubit-braket = { workspace = true }
 devqubit-ui = { workspace = true }
+devqubit-cudaq = { workspace = true }
 
 [[tool.uv.index]]
 name = "pypi"
