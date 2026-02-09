@@ -896,7 +896,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cudaq", specifier = ">=0.13.0" },
+    { name = "cudaq", specifier = ">=0.10.0" },
     { name = "devqubit-engine", editable = "packages/devqubit-engine" },
 ]
 
