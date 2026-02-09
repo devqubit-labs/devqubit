@@ -136,6 +136,8 @@ class TargetInfo:
         ``True`` if the target is a simulator.
     is_remote : bool
         ``True`` if the target routes to a remote/cloud backend.
+    is_emulated : bool
+        ``True`` if the target is an emulated backend.
     """
 
     name: str
@@ -145,6 +147,7 @@ class TargetInfo:
     num_qpus: int = 1
     is_simulator: bool = True
     is_remote: bool = False
+    is_emulated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to serialisable dictionary."""
@@ -156,10 +159,11 @@ class TargetInfo:
             "num_qpus": self.num_qpus,
             "is_simulator": self.is_simulator,
             "is_remote": self.is_remote,
+            "is_emulated": self.is_emulated,
         }
 
 
-# Known hardware-backed targets
+# Known hardware-backed targets (fallback for targets without API methods)
 _HARDWARE_TARGETS: frozenset[str] = frozenset(
     {
         "ionq",
@@ -176,23 +180,14 @@ _HARDWARE_TARGETS: frozenset[str] = frozenset(
     }
 )
 
-_SIMULATOR_TARGETS: frozenset[str] = frozenset(
-    {
-        "qpp-cpu",
-        "nvidia",
-        "nvidia-mqpu",
-        "nvidia-mgpu",
-        "density-matrix-cpu",
-        "tensornet",
-        "tensornet-mps",
-        "stim",
-    }
-)
-
 
 def get_target_info() -> TargetInfo:
     """
     Get structured information about the active CUDA-Q target.
+
+    Uses ``Target.is_remote()``, ``Target.is_remote_simulator()``, and
+    ``Target.is_emulated()`` when available, falling back to heuristics
+    only for older CUDA-Q versions that lack these methods.
 
     Returns
     -------
@@ -210,15 +205,32 @@ def get_target_info() -> TargetInfo:
 
         num_qpus = 1
         try:
-            num_qpus = target.num_qpus()
+            nq = target.num_qpus
+            num_qpus = nq() if callable(nq) else int(nq)
         except Exception:
             pass
 
-        name_lower = name.lower()
-        is_remote = any(hw in name_lower for hw in _HARDWARE_TARGETS)
-        is_simulator = bool(simulator) or name_lower in _SIMULATOR_TARGETS
-        if is_remote and not simulator:
-            is_simulator = False
+        # Prefer Target API methods for classification
+        is_remote = _safe_call(target, "is_remote", default=None)
+        is_remote_sim = _safe_call(target, "is_remote_simulator", default=None)
+        is_emulated = _safe_call(target, "is_emulated", default=None)
+
+        if is_remote is not None:
+            # API methods available — use them directly
+            if is_remote_sim:
+                is_simulator = True
+            elif is_remote:
+                is_simulator = False
+            else:
+                # Local target — simulator if it has a simulator backend name
+                is_simulator = bool(simulator)
+        else:
+            # Fallback heuristics for older CUDA-Q
+            name_lower = name.lower()
+            is_remote = any(hw in name_lower for hw in _HARDWARE_TARGETS)
+            is_simulator = bool(simulator) or not is_remote
+            if is_remote and not simulator:
+                is_simulator = False
 
         return TargetInfo(
             name=name,
@@ -227,11 +239,23 @@ def get_target_info() -> TargetInfo:
             description=description,
             num_qpus=num_qpus,
             is_simulator=is_simulator,
-            is_remote=is_remote,
+            is_remote=bool(is_remote),
+            is_emulated=bool(is_emulated) if is_emulated is not None else False,
         )
     except Exception as exc:
         logger.debug("Failed to get CUDA-Q target info: %s", exc)
         return TargetInfo(name="unknown")
+
+
+def _safe_call(obj: Any, method_name: str, *, default: Any = None) -> Any:
+    """Call a method on *obj* if it exists, returning *default* on failure."""
+    fn = getattr(obj, method_name, None)
+    if fn is None:
+        return default
+    try:
+        return fn() if callable(fn) else fn
+    except Exception:
+        return default
 
 
 def get_target_name() -> str:

@@ -10,8 +10,10 @@ Contract (UEC).
 
 Bitstring Convention
 --------------------
-CUDA-Q uses MSB-first (qubit 0 = leftmost bit), which maps to
-``cbit0_left`` in UEC terms. We document this without transforming.
+CUDA-Q returns bitstrings in allocation order (qubit 0 = leftmost bit),
+which corresponds to ``cbit0_left`` in UEC terms. This module transforms
+all bitstrings to the UEC canonical ``cbit0_right`` order and marks the
+result format accordingly.
 """
 
 from __future__ import annotations
@@ -31,13 +33,40 @@ from devqubit_engine.uec.models.result import (
 
 logger = logging.getLogger(__name__)
 
-# Pre-built counts format for CUDA-Q (static, never changes)
-# CUDA-Q uses qubit 0 as leftmost bit = cbit0_left (big-endian) in UEC
+
+# ============================================================================
+# Bitstring normalization
+# ============================================================================
+
+
+def _normalize_bitstrings_to_cbit0_right(
+    counts: dict[str, int],
+) -> dict[str, int]:
+    """
+    Reverse every bitstring key so that qubit-0 is the rightmost bit.
+
+    CUDA-Q allocation order places qubit-0 on the left.  UEC canonical
+    form is ``cbit0_right`` (qubit-0 on the right), so we reverse each key.
+
+    Parameters
+    ----------
+    counts : dict[str, int]
+        Raw counts from CUDA-Q (allocation order, cbit0_left).
+
+    Returns
+    -------
+    dict[str, int]
+        Counts with reversed bitstring keys (cbit0_right).
+    """
+    return {k[::-1]: v for k, v in counts.items()}
+
+
+# Pre-built counts format for normalized CUDA-Q results
 _CUDAQ_COUNTS_FORMAT: dict[str, Any] = CountsFormat(
     source_sdk="cudaq",
-    source_key_format="cudaq_bitstring",
-    bit_order="cbit0_left",
-    transformed=False,
+    source_key_format="cudaq.__global__",
+    bit_order="cbit0_right",
+    transformed=True,
 ).to_dict()
 
 
@@ -50,17 +79,30 @@ def detect_result_type(result: Any) -> str:
     """
     Determine the result type from a CUDA-Q result object.
 
+    Handles both single results and broadcasting (list results).
+
     Parameters
     ----------
     result : Any
-        CUDA-Q execution result (``SampleResult`` or ``ObserveResult``).
+        CUDA-Q execution result (``SampleResult``, ``ObserveResult``,
+        or a list of either).
 
     Returns
     -------
     str
-        Result type: ``"sample"``, ``"observe"``, or ``"unknown"``.
+        Result type: ``"sample"``, ``"observe"``, ``"batch_sample"``,
+        ``"batch_observe"``, or ``"unknown"``.
     """
     if result is None:
+        return "unknown"
+
+    # Handle broadcasting (list results)
+    if isinstance(result, list):
+        if not result:
+            return "unknown"
+        inner = detect_result_type(result[0])
+        if inner in ("sample", "observe"):
+            return f"batch_{inner}"
         return "unknown"
 
     type_name = type(result).__name__.lower()
@@ -86,39 +128,59 @@ def detect_result_type(result: Any) -> str:
 # ============================================================================
 
 
-def _extract_counts_from_sample(result: Any) -> dict[str, int] | None:
+def _extract_counts_and_meta(
+    sample_obj: Any,
+) -> tuple[dict[str, int] | None, dict[str, Any]]:
     """
-    Extract bitstring counts from a ``SampleResult``.
+    Extract bitstring counts and metadata from a ``SampleResult``.
+
+    Uses the proper ``SampleResult`` API: ``.items()`` for iteration
+    and ``.get_total_shots()`` for shot count.
 
     Parameters
     ----------
-    result : Any
+    sample_obj : Any
         CUDA-Q ``SampleResult``.
 
     Returns
     -------
-    dict or None
-        Mapping of bitstring → count, or None on failure.
+    tuple[dict[str, int] | None, dict]
+        (counts dict, metadata dict with shots/register_names).
     """
+    meta: dict[str, Any] = {}
+
+    # Extract total shots via API
+    if hasattr(sample_obj, "get_total_shots"):
+        try:
+            meta["shots"] = int(sample_obj.get_total_shots())
+        except Exception:
+            pass
+
+    # Extract register names
+    if hasattr(sample_obj, "register_names"):
+        try:
+            names = list(sample_obj.register_names)
+            if names:
+                meta["register_names"] = names
+        except Exception:
+            pass
+
+    # Extract counts via .items() (primary API)
     try:
-        # SampleResult supports dict-like .items()
-        if hasattr(result, "items"):
-            return {str(k): int(v) for k, v in result.items()}
+        if hasattr(sample_obj, "items"):
+            counts = {str(k): int(v) for k, v in sample_obj.items()}
+            return counts, meta
+    except Exception as exc:
+        logger.debug("SampleResult.items() failed: %s", exc)
 
-        # Fallback: try __iter__ for register-based results
-        if hasattr(result, "register_names"):
-            combined: dict[str, int] = {}
-            for reg_name in result.register_names:
-                sub = result.get_register_counts(reg_name)
-                for k, v in sub.items():
-                    combined[str(k)] = combined.get(str(k), 0) + int(v)
-            if combined:
-                return combined
-
+    # Fallback: try dict-like iteration
+    try:
+        counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
+        return counts, meta
     except Exception as exc:
         logger.debug("Failed to extract counts from SampleResult: %s", exc)
 
-    return None
+    return None, meta
 
 
 def _extract_expectation_from_observe(result: Any) -> float | None:
@@ -142,7 +204,9 @@ def _extract_expectation_from_observe(result: Any) -> float | None:
         return None
 
 
-def _extract_counts_from_observe(result: Any) -> dict[str, int] | None:
+def _extract_counts_from_observe(
+    result: Any,
+) -> tuple[dict[str, int] | None, dict[str, Any]]:
     """
     Extract counts from an ``ObserveResult`` (shot-based observe).
 
@@ -153,16 +217,111 @@ def _extract_counts_from_observe(result: Any) -> dict[str, int] | None:
 
     Returns
     -------
-    dict or None
-        Bitstring counts if available, or None.
+    tuple[dict[str, int] | None, dict]
+        (counts dict, metadata) or (None, {}).
     """
     try:
         sample_result = result.counts()
-        if sample_result and hasattr(sample_result, "items"):
-            return {str(k): int(v) for k, v in sample_result.items()}
+        if sample_result is not None:
+            return _extract_counts_and_meta(sample_result)
     except Exception as exc:
         logger.debug("Failed to extract counts from ObserveResult: %s", exc)
-    return None
+    return None, {}
+
+
+# ============================================================================
+# Single-result item builders
+# ============================================================================
+
+
+def _build_sample_items(
+    result: Any,
+    *,
+    item_offset: int = 0,
+) -> list[ResultItem]:
+    """Build ResultItems for a single SampleResult."""
+    items: list[ResultItem] = []
+
+    counts, meta = _extract_counts_and_meta(result)
+    if not counts:
+        return items
+
+    # Normalize bitstrings to UEC canonical cbit0_right
+    counts = _normalize_bitstrings_to_cbit0_right(counts)
+    total_shots = meta.get("shots") or sum(counts.values())
+
+    items.append(
+        ResultItem(
+            item_index=item_offset,
+            success=True,
+            counts={
+                "counts": counts,
+                "shots": total_shots,
+                "format": dict(_CUDAQ_COUNTS_FORMAT),
+            },
+        )
+    )
+
+    # Derive quasi-probability distribution
+    if total_shots > 0:
+        distribution = {k: float(v) / total_shots for k, v in counts.items()}
+        probs_values = list(distribution.values())
+        items.append(
+            ResultItem(
+                item_index=item_offset + 1,
+                success=True,
+                quasi_probability=QuasiProbability(
+                    distribution=distribution,
+                    sum_probs=sum(probs_values),
+                    min_prob=min(probs_values),
+                    max_prob=max(probs_values),
+                ),
+            )
+        )
+
+    return items
+
+
+def _build_observe_items(
+    result: Any,
+    *,
+    item_offset: int = 0,
+) -> list[ResultItem]:
+    """Build ResultItems for a single ObserveResult."""
+    items: list[ResultItem] = []
+
+    exp_val = _extract_expectation_from_observe(result)
+    if exp_val is not None:
+        items.append(
+            ResultItem(
+                item_index=item_offset,
+                success=True,
+                expectation=NormalizedExpectation(
+                    circuit_index=0,
+                    observable_index=0,
+                    value=exp_val,
+                    std_error=None,
+                ),
+            )
+        )
+
+    obs_counts, _ = _extract_counts_from_observe(result)
+    if obs_counts:
+        obs_counts = _normalize_bitstrings_to_cbit0_right(obs_counts)
+        total_shots = sum(obs_counts.values())
+        items.append(
+            ResultItem(
+                item_index=item_offset + 1,
+                success=True,
+                counts={
+                    "counts": obs_counts,
+                    "shots": total_shots,
+                    "format": dict(_CUDAQ_COUNTS_FORMAT),
+                },
+            )
+        )
+
+    return items
 
 
 # ============================================================================
@@ -183,12 +342,14 @@ def build_result_snapshot(
     """
     Build a ``ResultSnapshot`` from CUDA-Q execution results.
 
-    Follows UEC structure with ``items[]`` for per-circuit results.
+    Handles both single results and broadcasting (list results).
+    Bitstrings are normalized to UEC canonical ``cbit0_right`` order.
 
     Parameters
     ----------
     result : Any
-        CUDA-Q execution result (``SampleResult`` or ``ObserveResult``).
+        CUDA-Q execution result (``SampleResult``, ``ObserveResult``,
+        or a list of either for broadcasting).
     result_type : str, optional
         Override result type. Auto-detected if not provided.
     backend_name : str, optional
@@ -224,72 +385,29 @@ def build_result_snapshot(
 
         try:
             if result_type == "observe":
-                # Extract expectation value
-                exp_val = _extract_expectation_from_observe(result)
-                if exp_val is not None:
-                    items.append(
-                        ResultItem(
-                            item_index=0,
-                            success=True,
-                            expectation=NormalizedExpectation(
-                                circuit_index=0,
-                                observable_index=0,
-                                value=exp_val,
-                                std_error=None,
-                            ),
-                        )
-                    )
-
-                # Also extract counts if shots were used
-                obs_counts = _extract_counts_from_observe(result)
-                if obs_counts:
-                    total_shots = sum(obs_counts.values())
-                    items.append(
-                        ResultItem(
-                            item_index=1,
-                            success=True,
-                            counts={
-                                "counts": obs_counts,
-                                "shots": total_shots,
-                                "format": dict(_CUDAQ_COUNTS_FORMAT),
-                            },
-                        )
-                    )
+                items = _build_observe_items(result)
 
             elif result_type == "sample":
-                counts = _extract_counts_from_sample(result)
-                if counts:
-                    total_shots = sum(counts.values())
-                    items.append(
-                        ResultItem(
-                            item_index=0,
-                            success=True,
-                            counts={
-                                "counts": counts,
-                                "shots": total_shots,
-                                "format": dict(_CUDAQ_COUNTS_FORMAT),
-                            },
-                        )
-                    )
+                items = _build_sample_items(result)
 
-                    # Derive quasi-probability distribution
-                    if total_shots > 0:
-                        distribution = {
-                            k: float(v) / total_shots for k, v in counts.items()
-                        }
-                        probs_values = list(distribution.values())
-                        items.append(
-                            ResultItem(
-                                item_index=1,
-                                success=True,
-                                quasi_probability=QuasiProbability(
-                                    distribution=distribution,
-                                    sum_probs=sum(probs_values),
-                                    min_prob=min(probs_values),
-                                    max_prob=max(probs_values),
-                                ),
-                            )
-                        )
+            elif result_type == "batch_sample" and isinstance(result, list):
+                offset = 0
+                for i, single in enumerate(result):
+                    sub_items = _build_sample_items(single, item_offset=offset)
+                    # tag each sub-item with the batch index
+                    for si in sub_items:
+                        si.item_index = offset
+                        offset += 1
+                    items.extend(sub_items)
+
+            elif result_type == "batch_observe" and isinstance(result, list):
+                offset = 0
+                for i, single in enumerate(result):
+                    sub_items = _build_observe_items(single, item_offset=offset)
+                    for si in sub_items:
+                        si.item_index = offset
+                        offset += 1
+                    items.extend(sub_items)
 
         except Exception as exc:
             logger.debug("Failed to extract normalized results: %s", exc)
