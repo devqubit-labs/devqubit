@@ -68,8 +68,7 @@ from devqubit_engine.utils.serialization import to_jsonable
 from devqubit_pennylane.circuits import (
     _get_tapes,
     _is_tape_like,
-    compute_parametric_hash,
-    compute_structural_hash,
+    compute_circuit_hashes,
 )
 from devqubit_pennylane.results import build_result_snapshot, extract_result_type
 from devqubit_pennylane.serialization import PennyLaneCircuitSerializer, tapes_to_text
@@ -434,10 +433,8 @@ def patch_device(
                     }
                 return result
 
-            # Compute structural hash (ignores parameter values - for deduplication)
-            structural_hash = compute_structural_hash(circuits)
-            # Compute parametric hash (includes parameter values - for exact match)
-            parametric_hash = compute_parametric_hash(circuits)
+            # Compute both hashes in one pass (avoids 2× tape_to_op_stream)
+            structural_hash, parametric_hash = compute_circuit_hashes(circuits)
 
             # Use structural hash for deduplication (same circuit template)
             is_new_circuit = structural_hash and structural_hash not in seen_hashes
@@ -637,8 +634,11 @@ def patch_device(
 
                 # Create and finalize ExecutionEnvelope
                 if self._devqubit_device_snapshot is not None:
-                    # Create ProducerInfo
-                    sdk_versions = collect_sdk_versions()
+                    # Reuse sdk_versions from device snapshot (already collected)
+                    sdk_versions = (
+                        self._devqubit_device_snapshot.sdk_versions
+                        or collect_sdk_versions()
+                    )
                     producer = ProducerInfo.create(
                         adapter="devqubit-pennylane",
                         adapter_version=get_adapter_version(),
@@ -647,19 +647,11 @@ def patch_device(
                         frontends=["pennylane"],
                     )
 
-                    # Create pending result (will be updated when finalized)
-                    pending_result = ResultSnapshot(
-                        success=False,
-                        status="failed",  # Will be updated by _finalize_envelope_with_result
-                        items=[],
-                        metadata={"state": "pending"},
-                    )
-
                     self._devqubit_envelope = ExecutionEnvelope(
                         envelope_id=uuid.uuid4().hex[:26],
                         created_at=utc_now_iso(),
                         producer=producer,
-                        result=pending_result,
+                        result=self._devqubit_result_snapshot,
                         device=self._devqubit_device_snapshot,
                         program=self._devqubit_program_snapshot,
                         execution=self._devqubit_execution_snapshot,
