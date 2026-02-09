@@ -11,9 +11,19 @@ They use real LocalSimulator where possible for realistic validation.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
+import pytest
 from braket.circuits import Circuit
-from devqubit_braket.adapter import BraketAdapter, TrackedDevice, TrackedTaskBatch
+from devqubit_braket.adapter import (
+    BraketAdapter,
+    TrackedDevice,
+    TrackedTaskBatch,
+    _extract_circuits_from_program_set,
+    _get_program_set_metadata,
+    _is_program_set,
+    _materialize_task_spec,
+)
 from devqubit_engine.tracking.run import track
 
 
@@ -403,3 +413,230 @@ class TestProviderDetection:
 
         loaded = registry.load(run.run_id)
         assert loaded.record["data"]["tags"]["provider"] == "aws_braket"
+
+
+# ============================================================================
+# Braket ProgramSet Tests
+# ============================================================================
+
+
+class TestIsProgramSet:
+    """Tests for ProgramSet detection."""
+
+    def test_none(self):
+        assert _is_program_set(None) is False
+
+    def test_regular_circuit(self):
+        c = Circuit().h(0)
+        assert _is_program_set(c) is False
+
+    def test_with_entries_and_to_ir(self):
+        obj = SimpleNamespace(entries=[], to_ir=lambda: None)
+        assert _is_program_set(obj) is True
+
+    def test_with_entries_and_total_executables(self):
+        obj = SimpleNamespace(entries=[], total_executables=2)
+        assert _is_program_set(obj) is True
+
+    def test_by_class_name(self):
+        """Detects ProgramSet by class name as fallback."""
+
+        class MockProgramSetV2:
+            pass
+
+        assert _is_program_set(MockProgramSetV2()) is True
+
+    def test_entries_alone_not_enough(self):
+        """entries without to_ir/total_executables and non-ProgramSet name."""
+        obj = SimpleNamespace(entries=[])
+        assert _is_program_set(obj) is False
+
+
+# ============================================================================
+# ProgramSet Circuit Extraction Tests
+# ============================================================================
+
+
+class TestExtractCircuitsFromProgramSet:
+    """Tests for circuit extraction from ProgramSets."""
+
+    def test_extracts_circuit_attr(self):
+        c = Circuit().h(0)
+        entry = SimpleNamespace(circuit=c)
+        ps = SimpleNamespace(entries=[entry])
+        assert _extract_circuits_from_program_set(ps) == [c]
+
+    def test_extracts_program_attr(self):
+        c = Circuit().x(0)
+        entry = SimpleNamespace(program=c)
+        ps = SimpleNamespace(entries=[entry])
+        assert _extract_circuits_from_program_set(ps) == [c]
+
+    def test_no_entries(self):
+        ps = SimpleNamespace(entries=None)
+        assert _extract_circuits_from_program_set(ps) == []
+
+    def test_entry_is_circuit(self):
+        """Entry itself is a circuit (no circuit/program attr)."""
+        c = Circuit().h(0)
+        ps = SimpleNamespace(entries=[c])
+        assert _extract_circuits_from_program_set(ps) == [c]
+
+
+# ============================================================================
+# ProgramSet Metadata Tests
+# ============================================================================
+
+
+class TestGetProgramSetMetadata:
+    """Tests for ProgramSet metadata extraction."""
+
+    def test_extracts_all_fields(self):
+        ps = SimpleNamespace(
+            total_executables=5,
+            shots_per_executable=100,
+            total_shots=500,
+        )
+        meta = _get_program_set_metadata(ps)
+        assert meta["is_program_set"] is True
+        assert meta["total_executables"] == 5
+        assert meta["shots_per_executable"] == 100
+        assert meta["total_shots"] == 500
+
+    def test_missing_fields(self):
+        ps = SimpleNamespace()
+        meta = _get_program_set_metadata(ps)
+        assert meta == {"is_program_set": True}
+
+
+# ============================================================================
+# ProgramSet Task Tests
+# ============================================================================
+
+
+class TestMaterializeTaskSpec:
+    """Tests for task specification materialization."""
+
+    def test_none(self):
+        payload, circuits, single, meta = _materialize_task_spec(None)
+        assert payload is None
+        assert circuits == []
+        assert single is False
+        assert meta is None
+
+    def test_single_circuit(self):
+        c = Circuit().h(0)
+        payload, circuits, single, meta = _materialize_task_spec(c)
+        assert payload is c
+        assert circuits == [c]
+        assert single is True
+        assert meta is None
+
+    def test_list_passthrough(self):
+        """List input is returned without copy."""
+        lst = [Circuit().h(0), Circuit().x(0)]
+        payload, circuits, single, meta = _materialize_task_spec(lst)
+        assert payload is lst  # Same object — no copy
+        assert circuits is lst
+        assert single is False
+
+    def test_tuple_converted_to_list(self):
+        """Tuple input is converted to list."""
+        t = (Circuit().h(0), Circuit().x(0))
+        payload, circuits, single, meta = _materialize_task_spec(t)
+        assert isinstance(payload, list)
+        assert len(payload) == 2
+        assert single is False
+
+    def test_program_set(self):
+        """ProgramSet is passed through as run_payload."""
+        c = Circuit().h(0)
+        entry = SimpleNamespace(circuit=c)
+        ps = SimpleNamespace(
+            entries=[entry],
+            to_ir=lambda: None,
+            total_executables=1,
+        )
+        payload, circuits, single, meta = _materialize_task_spec(ps)
+        assert payload is ps
+        assert circuits == [c]
+        assert single is False
+        assert meta is not None
+        assert meta["is_program_set"] is True
+
+    def test_generator_materialized(self):
+        """Generator is materialized to list."""
+
+        def gen():
+            yield Circuit().h(0)
+            yield Circuit().x(0)
+
+        payload, circuits, single, meta = _materialize_task_spec(gen())
+        assert isinstance(payload, list)
+        assert len(payload) == 2
+        assert single is False
+
+    def test_non_iterable_wrapped(self):
+        """Non-iterable, non-circuit treated as single."""
+        payload, circuits, single, meta = _materialize_task_spec(42)
+        assert payload == 42
+        assert circuits == [42]
+        assert single is True
+
+
+# ============================================================================
+# Logging Tests
+# ============================================================================
+
+
+class TestShouldLog:
+    """Tests for logging frequency logic."""
+
+    @pytest.fixture
+    def _device(self):
+        """Minimal TrackedDevice for testing _should_log."""
+        tracker = SimpleNamespace(
+            run_id="test",
+            set_tag=lambda *a: None,
+            log_param=lambda *a: None,
+            record={},
+        )
+        # Create with minimal mock device
+        mock_dev = SimpleNamespace(
+            __module__="braket.devices",
+            name="test",
+            run=lambda *a, **kw: None,
+        )
+        return TrackedDevice(
+            device=mock_dev,
+            tracker=tracker,
+            log_every_n=0,
+            log_new_circuits=True,
+        )
+
+    def test_first_execution_always_logged(self, _device):
+        assert _device._should_log(1, "hash1", True) is True
+
+    def test_second_execution_same_hash_not_logged(self, _device):
+        _device.log_every_n = 0
+        assert _device._should_log(2, "hash1", False) is False
+
+    def test_log_every_n_minus_1_always(self, _device):
+        _device.log_every_n = -1
+        assert _device._should_log(999, "hash1", False) is True
+
+    def test_log_every_n_positive(self, _device):
+        _device.log_every_n = 3
+        assert _device._should_log(3, "hash1", False) is True
+        assert _device._should_log(4, "hash1", False) is False
+        assert _device._should_log(6, "hash1", False) is True
+
+    def test_log_new_circuits(self, _device):
+        _device.log_every_n = 0
+        _device.log_new_circuits = True
+        assert _device._should_log(5, "new_hash", True) is True
+
+    def test_log_new_circuits_disabled(self, _device):
+        _device.log_every_n = 0
+        _device.log_new_circuits = False
+        assert _device._should_log(5, "new_hash", True) is False
