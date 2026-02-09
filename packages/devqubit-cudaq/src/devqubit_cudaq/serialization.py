@@ -215,7 +215,7 @@ def serialize_kernel(
     return CircuitData(
         data=native_json,
         format=CircuitFormat.TAPE_JSON,
-        sdk=SDK.OTHER,
+        sdk=SDK.CUDAQ,
         name=kernel_name,
         index=index,
     )
@@ -234,7 +234,7 @@ class CudaqCircuitSerializer:
 
     @property
     def sdk(self) -> SDK:
-        return SDK.OTHER
+        return SDK.CUDAQ
 
     @property
     def supported_formats(self) -> list[CircuitFormat]:
@@ -276,14 +276,14 @@ class CudaqCircuitLoader:
 
     @property
     def sdk(self) -> SDK:
-        return SDK.OTHER
+        return SDK.CUDAQ
 
     @property
     def supported_formats(self) -> list[CircuitFormat]:
         return [CircuitFormat.TAPE_JSON]
 
     def can_load(self, data: CircuitData) -> bool:
-        return data.sdk == SDK.OTHER and data.format == CircuitFormat.TAPE_JSON
+        return data.sdk == SDK.CUDAQ and data.format == CircuitFormat.TAPE_JSON
 
     def load(self, data: CircuitData) -> LoadedCircuit:
         """
@@ -309,7 +309,7 @@ class CudaqCircuitLoader:
 
         return LoadedCircuit(
             circuit=kernel,
-            sdk=SDK.OTHER,
+            sdk=SDK.CUDAQ,
             source_format=CircuitFormat.TAPE_JSON,
             name=data.name,
             index=data.index,
@@ -364,5 +364,5 @@ def summarize_cudaq_kernel(
         parameter_count=param_count if has_params else 0,
         is_clifford=stats["is_clifford"],
         source_format=CircuitFormat.TAPE_JSON,
-        sdk=SDK.OTHER,
+        sdk=SDK.CUDAQ,
     )
