@@ -7,16 +7,6 @@ Utility functions for the CUDA-Q adapter.
 Provides version utilities, target introspection, and common helpers used
 across the adapter components following the devqubit Uniform Execution
 Contract (UEC).
-
-CUDA-Q Architecture
--------------------
-Unlike other quantum SDKs, CUDA-Q uses a module-level execution model:
-
-- ``cudaq.sample(kernel, *args, shots_count=1000)`` → ``SampleResult``
-- ``cudaq.observe(kernel, hamiltonian, *args)`` → ``ObserveResult``
-- ``cudaq.set_target(name)`` controls the backend globally
-
-There is no persistent "device" object — the target is a global singleton.
 """
 
 from __future__ import annotations
