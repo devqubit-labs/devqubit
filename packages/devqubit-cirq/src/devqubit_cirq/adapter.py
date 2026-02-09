@@ -33,8 +33,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from devqubit_cirq.circuits import (
-    compute_parametric_hash,
-    compute_structural_hash,
+    compute_circuit_hashes,
 )
 from devqubit_cirq.results import normalize_counts_payload
 from devqubit_cirq.serialization import (
@@ -58,7 +57,6 @@ from devqubit_engine.uec.models.program import (
     TranspilationMode,
 )
 from devqubit_engine.uec.models.result import (
-    CountsFormat,
     ResultError,
     ResultItem,
     ResultSnapshot,
@@ -268,6 +266,7 @@ def _create_result_snapshot(
     repetitions: int | None,
     is_sweep: bool = False,
     error_info: dict[str, Any] | None = None,
+    counts_payload: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
     Create a ResultSnapshot from Cirq result(s).
@@ -285,6 +284,9 @@ def _create_result_snapshot(
     error_info : dict, optional
         Error information if execution failed.
         Contains "type" and "message" keys.
+    counts_payload : dict, optional
+        Pre-computed normalized counts payload.  When provided the expensive
+        ``normalize_counts_payload`` call is skipped.
 
     Returns
     -------
@@ -319,25 +321,18 @@ def _create_result_snapshot(
         )
 
     # Process successful result
-    try:
-        counts_payload = normalize_counts_payload(result)
-    except Exception as e:
-        logger.debug("Failed to normalize counts payload: %s", e)
-        counts_payload = {"experiments": [], "format": {}}
+    if counts_payload is None:
+        try:
+            counts_payload = normalize_counts_payload(result)
+        except Exception as e:
+            logger.debug("Failed to normalize counts payload: %s", e)
+            counts_payload = {"experiments": [], "format": {}}
 
     # Build items list
     items: list[ResultItem] = []
 
-    # Get format from payload
+    # Use format dict directly from payload (already a CountsFormat.to_dict())
     format_dict = counts_payload.get("format", {})
-    counts_format = CountsFormat(
-        source_sdk=format_dict.get("source_sdk", "cirq"),
-        source_key_format=format_dict.get(
-            "source_key_format", "measurement_key_concatenated"
-        ),
-        bit_order=format_dict.get("bit_order", "cbit0_left"),
-        transformed=format_dict.get("transformed", False),
-    )
 
     for exp in counts_payload.get("experiments", []):
         circuit_index = exp.get("index", 0)
@@ -350,7 +345,7 @@ def _create_result_snapshot(
                 counts={
                     "counts": counts,
                     "shots": repetitions,
-                    "format": counts_format.to_dict(),
+                    "format": format_dict,
                 },
             )
         )
@@ -441,30 +436,25 @@ def _create_and_log_envelope(
     # Serialize and log circuits
     artifact_refs = _serialize_and_log_circuits(tracker, circuits, simulator_name)
 
-    # Create ProducerInfo
-    sdk_version = cirq_version()
+    # Create ProducerInfo – reuse version from device snapshot
     producer = ProducerInfo.create(
         adapter="devqubit-cirq",
         adapter_version=get_adapter_version(),
         sdk="cirq",
-        sdk_version=sdk_version,
+        sdk_version=device_snapshot.sdk_versions.get("cirq", cirq_version()),
         frontends=["cirq"],
-    )
-
-    # Create pending result (will be updated when execution completes)
-    # requires status to be one of: completed, failed, cancelled, partial
-    pending_result = ResultSnapshot(
-        success=False,
-        status="failed",  # Valid status - will be updated by _finalize_envelope_with_result
-        items=[],
-        metadata={"state": "pending"},
     )
 
     return ExecutionEnvelope(
         envelope_id=uuid.uuid4().hex[:26],
         created_at=utc_now_iso(),
         producer=producer,
-        result=pending_result,  # Must be valid ResultSnapshot, not None
+        # Placeholder – overwritten by _finalize_envelope_with_result
+        result=ResultSnapshot(
+            success=False,
+            status="failed",
+            items=[],
+        ),
         device=device_snapshot,
         program=_create_program_snapshot(
             circuits, artifact_refs, structural_hash, parametric_hash
@@ -539,6 +529,14 @@ def _finalize_envelope_with_result(
         except Exception as e:
             logger.warning("Failed to log raw result: %s", e)
 
+    # Compute counts payload once (used by both result snapshot and counts logging)
+    counts_payload: dict[str, Any] = {"experiments": []}
+    if result is not None and error_info is None:
+        try:
+            counts_payload = normalize_counts_payload(result)
+        except Exception as e:
+            logger.debug("Failed to normalize counts payload: %s", e)
+
     # Update envelope with result snapshot (handles both success and failure)
     envelope.result = _create_result_snapshot(
         result=result,
@@ -546,17 +544,11 @@ def _finalize_envelope_with_result(
         repetitions=repetitions,
         is_sweep=is_sweep,
         error_info=error_info,
+        counts_payload=counts_payload,
     )
 
     if envelope.execution:
         envelope.execution.completed_at = utc_now_iso()
-
-    # Extract counts for separate logging
-    try:
-        counts_payload = normalize_counts_payload(result)
-    except Exception as e:
-        logger.debug("Failed to normalize counts payload: %s", e)
-        counts_payload = {"experiments": []}
 
     # Validate and log envelope - EnvelopeValidationError must propagate
     # to enforce strict validation for adapter runs
@@ -693,9 +685,7 @@ class TrackedSimulator:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute both structural and parametric hashes
-        structural_hash = compute_structural_hash(circuit_list)
-
+        # Compute both structural and parametric hashes in one pass
         # Extract resolver from params for parametric hash
         # params can be: ParamResolver, Sweep, list of resolvers, or None
         resolver = None
@@ -712,7 +702,9 @@ class TrackedSimulator:
                 except Exception:
                     pass
 
-        parametric_hash = compute_parametric_hash(circuit_list, resolver)
+        structural_hash, parametric_hash = compute_circuit_hashes(
+            circuit_list, resolver
+        )
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes

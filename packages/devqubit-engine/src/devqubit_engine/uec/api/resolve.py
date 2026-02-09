@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from devqubit_engine.storage.types import ArtifactRef
 from devqubit_engine.uec.api.synthesize import synthesize_envelope
 from devqubit_engine.uec.errors import EnvelopeValidationError, MissingEnvelopeError
 from devqubit_engine.utils.common import is_manual_run_record
@@ -110,7 +111,7 @@ def load_envelope(
 
 
 def _try_load_envelope(
-    artifact: object,
+    artifact: ArtifactRef,
     record: RunRecord,
     store: ObjectStoreProtocol,
     raise_on_error: bool,
@@ -148,19 +149,21 @@ def _try_load_envelope(
 
 
 def _select_best_envelope_artifact(
-    artifacts: list,
+    artifacts: list[ArtifactRef],
     store: ObjectStoreProtocol,
-) -> object | None:
+) -> ArtifactRef | None:
     """
     Select the best envelope artifact from multiple candidates.
 
-    Selection criteria:
-    1. Envelope with latest ``execution.completed_at``
-    2. If no ``completed_at``, use last artifact in list
+    Selection criteria (in priority order):
+
+    1. Prefer envelopes with ``execution.completed_at`` over those without.
+    2. Among those with timestamps, prefer the latest ``completed_at``.
+    3. If no ``completed_at``, prefer the last artifact in the list.
     """
     from devqubit_engine.storage.artifacts.io import load_artifact_json
 
-    candidates: list[tuple[object, str | None]] = []
+    candidates: list[tuple[ArtifactRef, str | None]] = []
 
     for artifact in artifacts:
         try:
@@ -179,13 +182,16 @@ def _select_best_envelope_artifact(
     if not candidates:
         return None
 
-    # Sort: None values last, then by completed_at desc, then by position
-    def sort_key(item: tuple[object, str | None]) -> tuple[int, str, int]:
+    # Sort: envelopes WITH completed_at first (descending by date),
+    # then envelopes WITHOUT completed_at (descending by list position).
+    def sort_key(item: tuple[ArtifactRef, str | None]) -> tuple[int, str, int]:
         artifact, completed_at = item
         idx = artifacts.index(artifact)
         if completed_at is None:
-            return (1, "", idx)
-        return (0, completed_at, idx)
+            # Lower priority (0) — sorted after entries with timestamps
+            return (0, "", idx)
+        # Higher priority (1) — latest completed_at wins
+        return (1, completed_at, idx)
 
     candidates.sort(key=sort_key, reverse=True)
     return candidates[0][0]

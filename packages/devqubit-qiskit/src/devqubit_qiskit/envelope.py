@@ -287,7 +287,16 @@ def create_result_snapshot(
 
 
 def _log_statevector_if_present(tracker: Run, result: Any) -> ArtifactRef | None:
-    """Log statevector as artifact if present (simulator results)."""
+    """
+    Log statevector as artifact if present (simulator results).
+
+    Statevectors grow exponentially with qubit count. To prevent
+    memory exhaustion, amplitudes are only expanded for circuits
+    with <= 20 qubits (~1M amplitudes). Larger statevectors are
+    logged as metadata-only references.
+    """
+    _MAX_SV_QUBITS = 20  # 2^20 = 1M amplitudes
+
     try:
         if not hasattr(result, "get_statevector"):
             return None
@@ -301,10 +310,23 @@ def _log_statevector_if_present(tracker: Run, result: Any) -> ArtifactRef | None
 
         if hasattr(sv, "data"):
             # Qiskit Statevector object
-            data = sv.data
-            sv_data["amplitudes_real"] = [float(x.real) for x in data]
-            sv_data["amplitudes_imag"] = [float(x.imag) for x in data]
-            sv_data["num_qubits"] = int(getattr(sv, "num_qubits", 0))
+            num_qubits = int(getattr(sv, "num_qubits", 0))
+            sv_data["num_qubits"] = num_qubits
+
+            if num_qubits <= _MAX_SV_QUBITS:
+                data = sv.data
+                sv_data["amplitudes_real"] = [float(x.real) for x in data]
+                sv_data["amplitudes_imag"] = [float(x.imag) for x in data]
+            else:
+                sv_data["truncated"] = True
+                sv_data["reason"] = (
+                    f"Statevector too large to expand ({num_qubits} qubits, "
+                    f"{2**num_qubits} amplitudes)"
+                )
+                logger.debug(
+                    "Skipping statevector amplitude expansion: %d qubits",
+                    num_qubits,
+                )
         else:
             # Raw array
             sv_data["raw"] = str(sv)[:10000]

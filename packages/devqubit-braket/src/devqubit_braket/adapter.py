@@ -28,7 +28,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_braket.circuits import compute_parametric_hash, compute_structural_hash
+from devqubit_braket.circuits import compute_circuit_hashes
 from devqubit_braket.envelope import create_envelope, log_submission_failure
 from devqubit_braket.execution import TrackedTask, TrackedTaskBatch
 from devqubit_braket.serialization import is_braket_circuit
@@ -175,7 +175,10 @@ def _materialize_task_spec(
     if is_braket_circuit(task_specification):
         return task_specification, [task_specification], True, None
 
-    if isinstance(task_specification, (list, tuple)):
+    if isinstance(task_specification, list):
+        return task_specification, task_specification, False, None
+
+    if isinstance(task_specification, tuple):
         circuit_list = list(task_specification)
         return circuit_list, circuit_list, False, None
 
@@ -353,7 +356,11 @@ class TrackedDevice:
         """
         device_name = get_backend_name(self.device)
         submitted_at = utc_now_iso()
-        circuits_for_logging = list(task_specifications)
+        circuits_for_logging = (
+            task_specifications
+            if isinstance(task_specifications, list)
+            else list(task_specifications)
+        )
 
         # Prepare execution context
         ctx = self._prepare_execution_context(
@@ -428,10 +435,11 @@ class TrackedDevice:
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute hashes
-        structural_hash = compute_structural_hash(circuits_for_logging)
+        # Compute both hashes in one pass (avoids 2× circuit_to_op_stream)
         inputs = kwargs.get("inputs")
-        parametric_hash = compute_parametric_hash(circuits_for_logging, inputs)
+        structural_hash, parametric_hash = compute_circuit_hashes(
+            circuits_for_logging, inputs
+        )
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes

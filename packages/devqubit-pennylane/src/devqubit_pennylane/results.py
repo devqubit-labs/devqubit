@@ -10,6 +10,7 @@ following the devqubit Uniform Execution Contract (UEC).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -26,6 +27,15 @@ from devqubit_engine.uec.models.result import (
 
 
 logger = logging.getLogger(__name__)
+
+# Pre-built counts format for PennyLane (static, never changes)
+# PennyLane uses wire[0] as leftmost bit = cbit0_left (big-endian) in UEC
+_PENNYLANE_COUNTS_FORMAT: dict[str, Any] = CountsFormat(
+    source_sdk="pennylane",
+    source_key_format="pennylane_bitstring",
+    bit_order="cbit0_left",
+    transformed=False,
+).to_dict()
 
 
 # Internal dataclass for intermediate counts extraction
@@ -173,9 +183,6 @@ def _sample_to_bitstring(sample: Any) -> str:
 
     except Exception as e:
         logger.debug("Failed to convert sample to bitstring: %s", e)
-        # Use deterministic SHA256 hash instead of Python's hash()
-        import hashlib
-
         digest = hashlib.sha256(str(sample).encode("utf-8")).hexdigest()[:8]
         return f"sample_{digest}"
 
@@ -553,15 +560,6 @@ def build_result_snapshot(
             # Handle counts/samples
             elif "counts" in rt_lower or "sample" in rt_lower:
                 counts_list = _extract_sample_counts(results, num_circuits)
-                # PennyLane counts format
-                # NOTE: PennyLane uses wire[0] as leftmost bit in bitstrings
-                # This is cbit0_left (big-endian) in UEC terminology
-                counts_format = CountsFormat(
-                    source_sdk="pennylane",
-                    source_key_format="pennylane_bitstring",
-                    bit_order="cbit0_left",  # PennyLane native: wire[0] = leftmost
-                    transformed=False,
-                )
                 for cd in counts_list:
                     items.append(
                         ResultItem(
@@ -570,7 +568,7 @@ def build_result_snapshot(
                             counts={
                                 "counts": cd.counts,
                                 "shots": cd.shots,
-                                "format": counts_format.to_dict(),
+                                "format": dict(_PENNYLANE_COUNTS_FORMAT),
                             },
                         )
                     )

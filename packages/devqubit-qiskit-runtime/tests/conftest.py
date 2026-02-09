@@ -10,7 +10,9 @@ Only mocks job submission/results since those require network access.
 from __future__ import annotations
 
 import warnings
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_qiskit_runtime.pubs import extract_circuit_from_pub, iter_pubs
@@ -401,3 +403,81 @@ def mock_session():
         max_time = 7200
 
     return Session()
+
+
+# =============================================================================
+# Results & Pubs Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def make_bitarray():
+    """Factory for BitArray-like objects."""
+
+    def _factory(counts: dict):
+        class BitArray:
+            def __init__(self, c):
+                self._counts = c
+
+            def get_counts(self):
+                return self._counts
+
+            def get_bitstrings(self):
+                return [bs for bs, n in self._counts.items() for _ in range(n)]
+
+        return BitArray(counts)
+
+    return _factory
+
+
+@pytest.fixture
+def make_sampler_pub_result(make_bitarray):
+    """Factory for mock Sampler PubResult."""
+
+    def _factory(counts: dict, shots: int | None = None):
+        ba = make_bitarray(counts)
+        total = shots if shots is not None else sum(counts.values())
+        data = SimpleNamespace(meas=ba)
+        return SimpleNamespace(
+            data=data,
+            metadata={"shots": total},
+            join_data=lambda: ba,
+        )
+
+    return _factory
+
+
+@pytest.fixture
+def make_estimator_pub_result():
+    """Factory for mock Estimator PubResult."""
+
+    def _factory(evs, stds=None):
+        evs_arr = np.asarray(evs)
+        stds_arr = np.asarray(stds) if stds is not None else np.zeros_like(evs_arr)
+        data = SimpleNamespace(evs=evs_arr, stds=stds_arr)
+        return SimpleNamespace(data=data, metadata={})
+
+    return _factory
+
+
+@pytest.fixture
+def make_primitive_result():
+    """Factory wrapping pub results into an iterable PrimitiveResult."""
+
+    def _factory(pub_results: list):
+        class Result:
+            def __init__(self, items):
+                self._items = items
+
+            def __iter__(self):
+                return iter(self._items)
+
+            def __len__(self):
+                return len(self._items)
+
+            def __getitem__(self, idx):
+                return self._items[idx]
+
+        return Result(pub_results)
+
+    return _factory

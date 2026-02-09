@@ -26,7 +26,7 @@ from devqubit_braket.serialization import (
     is_braket_circuit,
     serialize_jaqcd,
     serialize_openqasm,
-    summarize_circuit,
+    summarize_braket_circuit,
 )
 from devqubit_engine.circuit.models import SDK, CircuitFormat
 
@@ -260,7 +260,7 @@ class TestCircuitSummary:
 
     def test_bell_circuit_summary(self, bell_circuit):
         """Correctly summarizes Bell circuit."""
-        summary = summarize_circuit(bell_circuit)
+        summary = summarize_braket_circuit(bell_circuit)
 
         assert summary.num_qubits == 2
         assert summary.gate_count_1q == 1  # H
@@ -271,7 +271,7 @@ class TestCircuitSummary:
         """Detects non-Clifford circuits."""
         circuit = Circuit().h(0).t(0).cnot(0, 1)
 
-        summary = summarize_circuit(circuit)
+        summary = summarize_braket_circuit(circuit)
 
         assert summary.is_clifford is False
 

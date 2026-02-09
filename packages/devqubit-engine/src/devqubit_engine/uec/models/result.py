@@ -18,12 +18,16 @@ UEC standard: ``cbit0_right`` (little-endian string, LSB on right)
 from __future__ import annotations
 
 import hashlib
+import logging
 import traceback
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
 from devqubit_engine.storage.types import ArtifactRef
+
+
+logger = logging.getLogger(__name__)
 
 
 class ResultType(str, Enum):
@@ -529,7 +533,7 @@ class ResultSnapshot:
     schema_version: str = "devqubit.result_snapshot/1.0"
 
     #: Valid status values for ResultSnapshot.
-    VALID_STATUSES: tuple[str, ...] = (
+    VALID_STATUSES: ClassVar[tuple[str, ...]] = (
         "completed",
         "failed",
         "cancelled",
@@ -796,6 +800,15 @@ def canonicalize_bitstrings(
     # Already canonical or already transformed
     if bit_order == "cbit0_right" or transformed:
         # Just clean whitespace
+        return {k.replace(" ", ""): v for k, v in distribution.items()}
+
+    if bit_order != "cbit0_left":
+        logger.warning(
+            "Unknown bit_order %r in canonicalize_bitstrings; "
+            "treating as cbit0_right (no transformation). "
+            "Expected 'cbit0_right' or 'cbit0_left'.",
+            bit_order,
+        )
         return {k.replace(" ", ""): v for k, v in distribution.items()}
 
     # Need to reverse: cbit0_left -> cbit0_right

@@ -10,8 +10,14 @@ import json
 import cirq
 import pytest
 import sympy
-from devqubit_cirq.adapter import CirqAdapter, _materialize_circuits
-from devqubit_engine.tracking.run import track
+from devqubit_cirq.adapter import (
+    CirqAdapter,
+    TrackedSimulator,
+    _create_result_snapshot,
+    _materialize_circuits,
+)
+from devqubit_cirq.results import normalize_counts_payload
+from devqubit_engine.tracking.run import Run, track
 
 
 def _artifacts_of_kind(loaded, kind: str):
@@ -49,6 +55,27 @@ class TestCirqAdapter:
         assert adapter.supports_executor(None) is False
         assert adapter.supports_executor("sampler") is False
         assert adapter.supports_executor([]) is False
+
+    def test_supports_density_matrix_simulator(self, density_matrix_simulator):
+        """Adapter supports DensityMatrixSimulator."""
+        adapter = CirqAdapter()
+        assert adapter.supports_executor(density_matrix_simulator) is True
+
+    def test_describe_executor(self, simulator):
+        """describe_executor returns correct structure."""
+        adapter = CirqAdapter()
+        desc = adapter.describe_executor(simulator)
+
+        assert desc["name"] == "Simulator"
+        assert desc["provider"] == "local"
+        assert desc["sdk"] == "cirq"
+
+    def test_wrap_executor(self, simulator, store, registry):
+        """wrap_executor returns TrackedSimulator."""
+        adapter = CirqAdapter()
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = adapter.wrap_executor(simulator, tracker)
+        assert isinstance(wrapped, TrackedSimulator)
 
 
 class TestBellRunEndToEnd:
@@ -402,6 +429,19 @@ class TestMaterializeCircuits:
         assert was_single2 is False
         assert circuits2 == [bell_circuit, ghz_circuit]
 
+    def test_none_input(self):
+        """None returns empty list."""
+        circuits, was_single = _materialize_circuits(None)
+        assert circuits == []
+        assert was_single is False
+
+    def test_generator(self, bell_circuit, ghz_circuit):
+        """Generator of circuits is materialized into list."""
+        gen = (c for c in [bell_circuit, ghz_circuit])
+        circuits, was_single = _materialize_circuits(gen)
+        assert len(circuits) == 2
+        assert was_single is False
+
 
 class TestBackendTypeCompliance:
     """Tests that device snapshots have schema-compliant backend_type."""
@@ -494,3 +534,165 @@ class TestEnvelopeValidation:
             "partial",
             "cancelled",
         )
+
+
+# ---------------------------------------------------------------------------
+# Pre-computed counts_payload pass-through
+# ---------------------------------------------------------------------------
+
+
+class TestCreateResultSnapshotPrecomputed:
+    """Test that counts_payload pass-through avoids recomputation."""
+
+    def test_precomputed_payload_used(self, bell_circuit, simulator):
+        """When counts_payload is provided, it is used directly."""
+        result = simulator.run(bell_circuit, repetitions=100)
+        payload = normalize_counts_payload(result)
+
+        snap = _create_result_snapshot(
+            result=result,
+            raw_result_ref=None,
+            repetitions=100,
+            counts_payload=payload,
+        )
+        assert snap.success is True
+        assert snap.status == "completed"
+        assert len(snap.items) == 1
+        item = snap.items[0]
+        assert item.counts["format"]["source_sdk"] == "cirq"
+        total = sum(item.counts["counts"].values())
+        assert total == 100
+
+    def test_error_ignores_payload(self):
+        """When error_info is provided, counts_payload is irrelevant."""
+        snap = _create_result_snapshot(
+            result=None,
+            raw_result_ref=None,
+            repetitions=100,
+            error_info={"type": "TestError", "message": "boom"},
+            counts_payload={"experiments": [{"index": 0, "counts": {"00": 50}}]},
+        )
+        assert snap.success is False
+        assert snap.error.type == "TestError"
+
+    def test_none_result_without_error(self):
+        """None result without error_info yields NullResult."""
+        snap = _create_result_snapshot(
+            result=None,
+            raw_result_ref=None,
+            repetitions=100,
+        )
+        assert snap.success is False
+        assert snap.error.type == "NullResult"
+
+
+# ---------------------------------------------------------------------------
+# TrackedSimulator internals
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterInternals:
+    """Low-level TrackedSimulator tests with real simulator execution."""
+
+    def test_execution_count_increments(self, bell_circuit, simulator, store, registry):
+        """Each run() increments _execution_count."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = TrackedSimulator(
+            simulator=simulator,
+            tracker=tracker,
+            log_every_n=-1,
+        )
+
+        for _ in range(3):
+            wrapped.run(bell_circuit, repetitions=10)
+
+        assert wrapped._execution_count == 3
+
+    def test_deduplication_by_structural_hash(
+        self, bell_circuit, simulator, store, registry
+    ):
+        """Same circuit logged once with log_every_n=0, log_new_circuits=False."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = TrackedSimulator(
+            simulator=simulator,
+            tracker=tracker,
+            log_every_n=0,
+            log_new_circuits=False,
+        )
+
+        for _ in range(3):
+            wrapped.run(bell_circuit, repetitions=10)
+
+        assert wrapped._execution_count == 3
+        assert wrapped._logged_execution_count == 1
+
+    def test_new_circuit_triggers_logging(
+        self, bell_circuit, ghz_circuit, simulator, store, registry
+    ):
+        """Different circuit structures trigger logging when log_new_circuits=True."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = TrackedSimulator(
+            simulator=simulator,
+            tracker=tracker,
+            log_every_n=0,
+            log_new_circuits=True,
+        )
+
+        wrapped.run(bell_circuit, repetitions=10)
+        wrapped.run(ghz_circuit, repetitions=10)
+        wrapped.run(bell_circuit, repetitions=10)  # already seen
+
+        assert wrapped._logged_execution_count == 2
+        assert len(wrapped._seen_circuit_hashes) == 2
+
+    def test_getattr_delegates(self, simulator, store, registry):
+        """TrackedSimulator delegates unknown attributes to simulator."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = TrackedSimulator(simulator=simulator, tracker=tracker)
+        assert wrapped.__class__.__name__ == "TrackedSimulator"
+        # __getattr__ delegates to simulator
+        assert callable(getattr(wrapped.simulator, "run"))
+
+    def test_error_propagation(self, bell_circuit, store, registry):
+        """Execution error is re-raised after logging failure envelope."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+
+        class BrokenSimulator(cirq.Simulator):
+            def run(self, *args, **kwargs):
+                raise RuntimeError("simulated failure")
+
+        wrapped = TrackedSimulator(
+            simulator=BrokenSimulator(),
+            tracker=tracker,
+            log_every_n=-1,
+        )
+
+        with pytest.raises(RuntimeError, match="simulated failure"):
+            wrapped.run(bell_circuit, repetitions=10)
+
+        assert wrapped._execution_count == 1
+
+    def test_sweep_tracked(
+        self,
+        parameterized_circuit,
+        simulator,
+        store,
+        registry,
+    ):
+        """run_sweep() tracks sweep execution via TrackedSimulator."""
+        tracker = Run(store=store, registry=registry, project="test-cirq")
+        wrapped = TrackedSimulator(
+            simulator=simulator,
+            tracker=tracker,
+            log_every_n=-1,
+        )
+
+        theta = sympy.Symbol("theta")
+        resolvers = [cirq.ParamResolver({theta: v}) for v in [0.0, 1.0, 2.0]]
+        results = wrapped.run_sweep(
+            parameterized_circuit,
+            resolvers,
+            repetitions=50,
+        )
+
+        assert len(results) == 3

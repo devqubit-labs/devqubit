@@ -88,7 +88,16 @@ class AdapterProtocol(Protocol):
         """
         ...
 
-    def wrap_executor(self, executor: Any, tracker: Any) -> Any:
+    def wrap_executor(
+        self,
+        executor: Any,
+        tracker: Any,
+        *,
+        log_every_n: int = 0,
+        log_new_circuits: bool = True,
+        stats_update_interval: int = 1000,
+        **kwargs: Any,
+    ) -> Any:
         """
         Wrap the executor for automatic tracking.
 
@@ -98,6 +107,15 @@ class AdapterProtocol(Protocol):
             SDK executor instance to wrap.
         tracker : Any
             Run tracker instance for logging artifacts.
+        log_every_n : int, optional
+            Logging frequency: 0 = first only, N = every Nth, -1 = all.
+            Default is 0.
+        log_new_circuits : bool, optional
+            Auto-log when circuit structure changes. Default is True.
+        stats_update_interval : int, optional
+            Update execution stats every N runs. Default is 1000.
+        **kwargs : Any
+            Additional adapter-specific options.
 
         Returns
         -------
@@ -191,14 +209,8 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
         _adapters = []
         _adapter_errors = []
 
-        # Get entry points (compatible with Python 3.10+)
-        eps = entry_points()
-        if hasattr(eps, "select"):
-            # Python 3.10+ / importlib_metadata 3.6+
-            group_eps = eps.select(group=ADAPTER_ENTRY_POINT_GROUP)
-        else:
-            # Fallback for older versions
-            group_eps = eps.get(ADAPTER_ENTRY_POINT_GROUP, [])
+        # Get entry points for adapter group (Python 3.9+)
+        group_eps = entry_points(group=ADAPTER_ENTRY_POINT_GROUP)
 
         for ep in group_eps:
             ep_spec = f"{ep.name}={ep.value}"
@@ -262,7 +274,8 @@ def adapter_load_errors() -> list[AdapterLoadError]:
         List of adapter load errors. Empty if no errors occurred
         or if adapters haven't been loaded yet.
     """
-    return list(_adapter_errors)
+    with _cache_lock:
+        return list(_adapter_errors)
 
 
 def list_available_adapters(*, force_reload: bool = False) -> list[str]:

@@ -12,6 +12,7 @@ the devqubit Uniform Execution Contract (UEC).
 from __future__ import annotations
 
 import io
+import logging
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +30,9 @@ from devqubit_engine.circuit.registry import LoaderError, SerializerError
 from devqubit_engine.circuit.summary import CircuitSummary
 from qiskit import qpy
 from qiskit.qasm3 import dumps as qasm3_dumps
+
+
+logger = logging.getLogger(__name__)
 
 
 _QISKIT_GATES: dict[str, GateInfo] = {
@@ -360,9 +364,7 @@ class QiskitCircuitLoader:
             # qpy.load always returns a list
             if isinstance(circuits, list):
                 if len(circuits) > 1:
-                    import logging
-
-                    logging.getLogger(__name__).warning(
+                    logger.warning(
                         "QPY file contains %d circuits, returning first only. "
                         "Use load_batch() to get all circuits.",
                         len(circuits),

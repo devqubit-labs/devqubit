@@ -28,9 +28,10 @@ from __future__ import annotations
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Pattern
+from typing import Any, ClassVar
 
 
 logger = logging.getLogger(__name__)
@@ -55,10 +56,12 @@ DEFAULT_REDACT_PATTERNS: tuple[str, ...] = (
 )
 
 # Module-level compiled patterns cache for default patterns
-_compiled_default_patterns: tuple[Pattern[str], ...] | None = None
+_compiled_default_patterns: tuple[re.Pattern[str], ...] | None = None
 
 
-def _get_compiled_patterns(patterns: tuple[str, ...] | list[str]) -> list[Pattern[str]]:
+def _get_compiled_patterns(
+    patterns: tuple[str, ...] | list[str],
+) -> list[re.Pattern[str]]:
     """
     Compile regex patterns with caching for default patterns.
 
@@ -110,7 +113,7 @@ class RedactionConfig:
     replacement: str = "[REDACTED]"
 
     # Internal compiled patterns cache (not part of init/repr/compare)
-    _compiled: list[Pattern[str]] | None = field(
+    _compiled: list[re.Pattern[str]] | None = field(
         default=None,
         init=False,
         repr=False,
@@ -123,7 +126,7 @@ class RedactionConfig:
         compare=False,
     )
 
-    def _get_compiled(self) -> list[Pattern[str]]:
+    def _get_compiled(self) -> list[re.Pattern[str]]:
         """Get compiled patterns, recompiling when patterns change."""
         current_key = tuple(self.patterns)
         if self._compiled is None or self._compiled_key != current_key:
@@ -433,6 +436,7 @@ def load_config() -> Config:
 
 # Global cached configuration instance
 _config: Config | None = None
+_config_lock = threading.Lock()
 
 
 def get_config() -> Config:
@@ -455,9 +459,13 @@ def get_config() -> Config:
     load_config : Load configuration from environment.
     """
     global _config
-    if _config is None:
-        _config = load_config()
-    return _config
+    if _config is not None:
+        return _config
+    with _config_lock:
+        # Double-checked locking
+        if _config is None:
+            _config = load_config()
+        return _config
 
 
 def reset_config() -> None:
@@ -473,8 +481,9 @@ def reset_config() -> None:
     set_config : Set a custom configuration.
     """
     global _config, _compiled_default_patterns
-    _config = None
-    _compiled_default_patterns = None
+    with _config_lock:
+        _config = None
+        _compiled_default_patterns = None
     logger.debug("Configuration cache reset")
 
 
@@ -504,5 +513,6 @@ def set_config(config: Config) -> None:
     PosixPath('/tmp/test')
     """
     global _config
-    _config = config
+    with _config_lock:
+        _config = config
     logger.debug("Configuration set programmatically: %s", config.root_dir)

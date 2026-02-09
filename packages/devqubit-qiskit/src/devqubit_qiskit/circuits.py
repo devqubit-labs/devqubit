@@ -18,6 +18,8 @@ All hashing is delegated to ``devqubit_engine.circuit.hashing`` to ensure:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from typing import Any
 
@@ -28,6 +30,7 @@ from devqubit_engine.uec.models.program import ProgramArtifact, ProgramRole
 from devqubit_qiskit.serialization import QiskitCircuitSerializer
 from devqubit_qiskit.utils import qiskit_version
 from qiskit import QuantumCircuit
+from qiskit.circuit import Parameter, ParameterExpression
 
 
 logger = logging.getLogger(__name__)
@@ -193,10 +196,12 @@ def _extract_params(raw_params: Any) -> dict[str, Any] | None:
     for i, p in enumerate(raw_params):
         key = f"p{i}"
 
-        if hasattr(p, "name") and hasattr(p, "_symbol_expr"):
+        if isinstance(p, Parameter):
+            # Unbound parameter (no value yet)
             params[key] = None
             params[f"{key}_name"] = str(p.name)
-        elif hasattr(p, "parameters") and hasattr(p, "_symbol_expr"):
+        elif isinstance(p, ParameterExpression):
+            # Bound or compound expression
             params[key] = None
             params[f"{key}_expr"] = str(p)
         else:
@@ -388,9 +393,6 @@ def _compute_binds_digest(
     str or None
         SHA-256 digest of canonicalized binds, or None if empty.
     """
-    import hashlib
-    import json
-
     if not parameter_binds:
         return None
 
@@ -437,8 +439,6 @@ def _combine_hash_with_binds(base_hash: str, binds_digest: str) -> str:
     str
         Combined hash in format "sha256:<hex>".
     """
-    import hashlib
-
     # Extract hex from base hash
     if base_hash.startswith("sha256:"):
         base_hex = base_hash[7:]

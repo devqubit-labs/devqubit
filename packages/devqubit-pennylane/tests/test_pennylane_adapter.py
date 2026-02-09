@@ -3,8 +3,11 @@
 
 """End-to-end tests for PennyLane adapter."""
 
+import numpy as np
 import pennylane as qml
-from devqubit_engine.tracking.run import track
+import pytest
+from devqubit_engine.storage.factory import create_registry, create_store
+from devqubit_engine.tracking.run import Run, track
 from devqubit_pennylane.adapter import (
     PennyLaneAdapter,
     is_device_patched,
@@ -401,3 +404,160 @@ class TestUECCompliance:
         artifact_kinds = {a.kind for a in loaded.artifacts}
 
         assert "devqubit.envelope.json" in artifact_kinds
+
+
+# =============================================================================
+# Patching / unpatching Tests
+# =============================================================================
+
+
+class TestPatchUnpatch:
+    def test_patch_idempotent(self):
+        dev = qml.device("default.qubit", wires=2)
+        patch_device(dev)
+        patch_device(dev)  # Second call should not crash
+        assert is_device_patched(dev) is True
+        unpatch_device(dev)
+
+    def test_unpatch_returns_false_if_not_patched(self):
+        dev = qml.device("default.qubit", wires=2)
+        assert unpatch_device(dev) is False
+
+    def test_unpatch_cleans_all_attrs(self):
+        dev = qml.device("default.qubit", wires=2)
+        patch_device(dev)
+        assert is_device_patched(dev) is True
+        unpatch_device(dev)
+        assert is_device_patched(dev) is False
+        assert not hasattr(dev, "_devqubit_tracker")
+
+    def test_execute_passthrough_without_tracker(self):
+        """Patched device without tracker executes normally."""
+        dev = qml.device("default.qubit", wires=2)
+        patch_device(dev)
+        tape = qml.tape.QuantumScript(
+            [qml.Hadamard(0), qml.CNOT([0, 1])],
+            [qml.expval(qml.PauliZ(0))],
+        )
+        result = dev.execute(tape)
+        assert result is not None
+        unpatch_device(dev)
+
+
+# =============================================================================
+# End-to-end Execution Tracking Tests
+# =============================================================================
+
+
+class TestAdapterEndToEnd:
+    @pytest.fixture
+    def run_context(self, tmp_path):
+        root = tmp_path / ".devqubit"
+        store = create_store(f"file://{root}/objects")
+        registry = create_registry(f"file://{root}")
+        return store, registry
+
+    def test_expval_tracked(self, run_context):
+        store, registry = run_context
+        dev = qml.device("default.qubit", wires=2)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.Hadamard(wires=0)
+            qml.CNOT(wires=[0, 1])
+            return qml.expval(qml.PauliZ(0))
+
+        adapter = PennyLaneAdapter()
+        with Run(store=store, registry=registry, project="test") as run:
+            adapter.wrap_executor(dev, run)
+            result = circuit()
+
+        assert isinstance(result, (float, np.floating))
+        assert "execute" in run.record or "execution_stats" in run.record
+
+    def test_probs_tracked(self, run_context):
+        store, registry = run_context
+        dev = qml.device("default.qubit", wires=2)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.Hadamard(wires=0)
+            qml.CNOT(wires=[0, 1])
+            return qml.probs(wires=[0, 1])
+
+        adapter = PennyLaneAdapter()
+        with Run(store=store, registry=registry, project="test") as run:
+            adapter.wrap_executor(dev, run)
+            result = circuit()
+
+        assert len(result) == 4
+        assert abs(sum(result) - 1.0) < 1e-10
+
+    def test_counts_tracked(self, run_context):
+        store, registry = run_context
+        dev = qml.device("default.qubit", wires=2)
+
+        @qml.qnode(dev, shots=100)
+        def circuit():
+            qml.Hadamard(wires=0)
+            qml.CNOT(wires=[0, 1])
+            return qml.counts(wires=[0, 1])
+
+        adapter = PennyLaneAdapter()
+        with Run(store=store, registry=registry, project="test") as run:
+            adapter.wrap_executor(dev, run)
+            result = circuit()
+
+        assert isinstance(result, dict)
+        assert sum(result.values()) == 100
+
+    def test_execution_count_increments(self, run_context):
+        store, registry = run_context
+        dev = qml.device("default.qubit", wires=1)
+
+        @qml.qnode(dev)
+        def circuit(x):
+            qml.RX(x, wires=0)
+            return qml.expval(qml.PauliZ(0))
+
+        adapter = PennyLaneAdapter()
+        with Run(store=store, registry=registry, project="test") as run:
+            adapter.wrap_executor(dev, run, log_every_n=-1)
+            circuit(0.1)
+            circuit(0.2)
+            circuit(0.3)
+
+        assert dev._devqubit_execution_count == 3
+
+    def test_deduplication_by_structural_hash(self, run_context):
+        """Same circuit structure executed twice should be logged once."""
+        store, registry = run_context
+        dev = qml.device("default.qubit", wires=1)
+
+        @qml.qnode(dev)
+        def circuit(x):
+            qml.RX(x, wires=0)
+            return qml.expval(qml.PauliZ(0))
+
+        adapter = PennyLaneAdapter()
+        with Run(store=store, registry=registry, project="test") as run:
+            adapter.wrap_executor(dev, run)
+            circuit(0.1)
+            circuit(0.2)
+
+        # Structural hash should be same → only logged once
+        assert len(dev._devqubit_logged_circuit_hashes) == 1
+
+    def test_describe_executor(self):
+        dev = qml.device("default.qubit", wires=3)
+        adapter = PennyLaneAdapter()
+        desc = adapter.describe_executor(dev)
+        assert "name" in desc
+        assert desc["sdk"] == "pennylane"
+        assert desc.get("num_wires") == 3 or len(desc.get("wires", [])) == 3
+
+    def test_supports_executor(self):
+        dev = qml.device("default.qubit", wires=2)
+        adapter = PennyLaneAdapter()
+        assert adapter.supports_executor(dev) is True
+        assert adapter.supports_executor("not a device") is False

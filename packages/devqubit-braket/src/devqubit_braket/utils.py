@@ -18,6 +18,9 @@ from typing import Any
 # =============================================================================
 
 
+_braket_version: str | None = None
+
+
 def braket_version() -> str:
     """
     Get the installed Amazon Braket SDK version.
@@ -27,13 +30,24 @@ def braket_version() -> str:
     str
         Braket SDK version string (e.g., "1.70.0"), or "unknown" if
         Braket is not installed or version cannot be determined.
+
+    Notes
+    -----
+    Result is cached: SDK version is immutable during process lifetime.
     """
+    global _braket_version
+    if _braket_version is not None:
+        return _braket_version
     try:
         import braket
 
-        return getattr(braket, "__version__", "unknown")
+        _braket_version = getattr(braket, "__version__", "unknown")
     except ImportError:
-        return "unknown"
+        _braket_version = "unknown"
+    return _braket_version
+
+
+_adapter_version: str | None = None
 
 
 def get_adapter_version() -> str:
@@ -44,13 +58,21 @@ def get_adapter_version() -> str:
     -------
     str
         Adapter version string, or "unknown" if not installed.
+
+    Notes
+    -----
+    Result is cached: adapter version is immutable during process lifetime.
     """
+    global _adapter_version
+    if _adapter_version is not None:
+        return _adapter_version
     try:
         from importlib.metadata import version
 
-        return version("devqubit-braket")
+        _adapter_version = version("devqubit-braket")
     except Exception:
-        return "unknown"
+        _adapter_version = "unknown"
+    return _adapter_version
 
 
 # =============================================================================
@@ -255,19 +277,15 @@ def obj_to_dict(x: Any) -> dict[str, Any] | None:
     try:
         if isinstance(x, dict):
             return x
+        from devqubit_engine.utils.serialization import to_jsonable
+
         # pydantic v1 style
         if hasattr(x, "dict") and callable(getattr(x, "dict")):
-            from devqubit_engine.utils.serialization import to_jsonable
-
             return to_jsonable(x.dict())
         # pydantic v2 or custom style
         if hasattr(x, "to_dict") and callable(getattr(x, "to_dict")):
-            from devqubit_engine.utils.serialization import to_jsonable
-
             return to_jsonable(x.to_dict())
         # Fallback: attempt generic conversion
-        from devqubit_engine.utils.serialization import to_jsonable
-
         return to_jsonable(x)
     except Exception:
         return None

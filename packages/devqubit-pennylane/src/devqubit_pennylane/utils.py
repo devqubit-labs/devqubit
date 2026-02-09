@@ -194,9 +194,12 @@ def get_shots(device: Any) -> int | None:
     return extract_shots_info(device).total_shots
 
 
+_pennylane_version: str | None = None
+
+
 def pennylane_version() -> str:
     """
-    Get the installed PennyLane version.
+    Get the installed PennyLane version (cached after first call).
 
     Returns
     -------
@@ -204,27 +207,41 @@ def pennylane_version() -> str:
         PennyLane version string (e.g., "0.35.0"), or "unknown" if
         PennyLane is not installed or version cannot be determined.
     """
+    global _pennylane_version
+    if _pennylane_version is not None:
+        return _pennylane_version
     try:
         import pennylane as qml
 
-        return getattr(qml, "__version__", "unknown")
+        _pennylane_version = getattr(qml, "__version__", "unknown")
     except ImportError:
-        return "unknown"
+        _pennylane_version = "unknown"
+    return _pennylane_version
+
+
+_adapter_version: str | None = None
 
 
 def get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
+    """Get adapter version dynamically from package metadata (cached)."""
+    global _adapter_version
+    if _adapter_version is not None:
+        return _adapter_version
     try:
         from importlib.metadata import version
 
-        return version("devqubit-pennylane")
+        _adapter_version = version("devqubit-pennylane")
     except Exception:
-        return "unknown"
+        _adapter_version = "unknown"
+    return _adapter_version
+
+
+_sdk_versions: dict[str, str] | None = None
 
 
 def collect_sdk_versions() -> dict[str, str]:
     """
-    Collect version strings for all relevant SDK packages.
+    Collect version strings for all relevant SDK packages (cached).
 
     This follows the UEC requirement for tracking all SDK versions
     in the execution environment.
@@ -233,13 +250,11 @@ def collect_sdk_versions() -> dict[str, str]:
     -------
     dict
         Mapping of package name to version string.
-
-    Examples
-    --------
-    >>> versions = collect_sdk_versions()
-    >>> versions["pennylane"]
-    '0.35.0'
     """
+    global _sdk_versions
+    if _sdk_versions is not None:
+        return dict(_sdk_versions)
+
     versions: dict[str, str] = {}
 
     # Core PennyLane
@@ -323,7 +338,8 @@ def collect_sdk_versions() -> dict[str, str]:
     except ImportError:
         pass
 
-    return versions
+    _sdk_versions = versions
+    return dict(_sdk_versions)
 
 
 def get_device_name(device: Any) -> str:
