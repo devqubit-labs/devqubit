@@ -23,6 +23,7 @@ class SDK(str, Enum):
     BRAKET = "braket"
     CIRQ = "cirq"
     PENNYLANE = "pennylane"
+    CUDAQ = "cudaq"
     UNKNOWN = "unknown"
 
 
@@ -34,6 +35,7 @@ class CircuitFormat(str, Enum):
     JAQCD = "jaqcd"
     CIRQ_JSON = "cirq_json"
     TAPE_JSON = "tape_json"
+    CUDAQ_JSON = "cudaq_json"
 
     # Interchange
     OPENQASM3 = "openqasm3"
@@ -46,7 +48,13 @@ class CircuitFormat(str, Enum):
     @property
     def is_native(self) -> bool:
         """Check if format is SDK-native."""
-        return self in (self.QPY, self.JAQCD, self.CIRQ_JSON, self.TAPE_JSON)
+        return self in (
+            self.QPY,
+            self.JAQCD,
+            self.CIRQ_JSON,
+            self.TAPE_JSON,
+            self.CUDAQ_JSON,
+        )
 
     @property
     def sdk(self) -> SDK:
@@ -60,6 +68,7 @@ _FORMAT_TO_SDK: dict[CircuitFormat, SDK] = {
     CircuitFormat.JAQCD: SDK.BRAKET,
     CircuitFormat.CIRQ_JSON: SDK.CIRQ,
     CircuitFormat.TAPE_JSON: SDK.PENNYLANE,
+    CircuitFormat.CUDAQ_JSON: SDK.CUDAQ,
 }
 
 
