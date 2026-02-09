@@ -24,31 +24,29 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+_sdk_versions: dict[str, str] | None = None
+
+
 def collect_sdk_versions() -> dict[str, str]:
     """
     Collect version strings for all relevant SDK packages.
 
-    This follows the UEC requirement for tracking all SDK versions
-    in the execution environment.
+    Results are cached for the lifetime of the process since SDK
+    versions cannot change at runtime.
 
     Returns
     -------
     dict
         Mapping of package name to version string.
-
-    Examples
-    --------
-    >>> versions = collect_sdk_versions()
-    >>> versions["qiskit"]
-    '1.0.0'
-    >>> versions["qiskit_ibm_runtime"]
-    '0.20.0'
     """
+    global _sdk_versions
+    if _sdk_versions is not None:
+        return _sdk_versions
+
     versions: dict[str, str] = {
         "qiskit": getattr(qiskit, "__version__", "unknown"),
     }
 
-    # Optional packages
     for pkg_name, import_name in [
         ("qiskit_ibm_runtime", "qiskit_ibm_runtime"),
         ("qiskit_aer", "qiskit_aer"),
@@ -60,7 +58,8 @@ def collect_sdk_versions() -> dict[str, str]:
         except ImportError:
             pass
 
-    return versions
+    _sdk_versions = versions
+    return _sdk_versions
 
 
 def get_adapter_version() -> str:
@@ -111,18 +110,16 @@ def get_backend_obj(primitive: Any) -> Any | None:
     3. mode attribute (V2 primitives can use Backend/Session/Batch as mode)
     4. mode.backend attribute/method
     """
-    # Try backend() method
-    backend_fn = getattr(primitive, "backend", None)
-    if callable(backend_fn):
-        try:
-            return backend_fn()
-        except Exception:
-            pass
-
-    # Try backend as attribute
-    backend_attr = getattr(primitive, "backend", None)
-    if backend_attr is not None and not callable(backend_attr):
-        return backend_attr
+    # Try backend as method or attribute
+    backend = getattr(primitive, "backend", None)
+    if backend is not None:
+        if callable(backend):
+            try:
+                return backend()
+            except Exception:
+                pass
+        else:
+            return backend
 
     # V2 primitives: mode can be Backend/Session/Batch
     mode = getattr(primitive, "mode", None)

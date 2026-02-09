@@ -28,6 +28,15 @@ if TYPE_CHECKING:
     pass
 
 
+# Qiskit uses little-endian (cbit[0] on right) = UEC canonical
+_SAMPLER_COUNTS_FORMAT = CountsFormat(
+    source_sdk="qiskit-ibm-runtime",
+    source_key_format="qiskit_little_endian",
+    bit_order="cbit0_right",
+    transformed=False,
+)
+
+
 def is_bitarray_like(x: Any) -> bool:
     """
     Check if object has BitArray-like interface.
@@ -79,6 +88,9 @@ def extract_bitarrays_from_databin(databin: Any) -> list[tuple[str, Any]]:
         try:
             val = getattr(databin, name)
         except Exception:
+            continue
+        # Skip methods/functions — BitArray objects are not callable
+        if callable(val):
             continue
         if is_bitarray_like(val):
             out.append((name, val))
@@ -254,15 +266,6 @@ def build_sampler_result_snapshot(
 
     counts_data = extract_sampler_results(result)
 
-    # Qiskit Runtime counts format metadata
-    # Qiskit uses little-endian (cbit[0] on right) = UEC canonical
-    counts_format = CountsFormat(
-        source_sdk="qiskit-ibm-runtime",
-        source_key_format="qiskit_little_endian",
-        bit_order="cbit0_right",
-        transformed=False,
-    )
-
     items: list[ResultItem] = []
     if counts_data:
         for exp in counts_data.get("experiments", []):
@@ -277,7 +280,7 @@ def build_sampler_result_snapshot(
                     counts={
                         "counts": counts,
                         "shots": shots,
-                        "format": counts_format.to_dict(),
+                        "format": _SAMPLER_COUNTS_FORMAT.to_dict(),
                     },
                 )
             )
