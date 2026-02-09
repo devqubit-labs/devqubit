@@ -79,8 +79,6 @@ from devqubit_qiskit.serialization import QiskitCircuitSerializer
 from devqubit_qiskit_runtime.circuits import (
     circuits_to_text,
     compute_circuit_hashes_with_params,
-    compute_parametric_hash,
-    compute_structural_hash,
 )
 from devqubit_qiskit_runtime.device import (
     create_device_snapshot,
@@ -118,14 +116,16 @@ logger = logging.getLogger(__name__)
 _serializer = QiskitCircuitSerializer()
 
 
+_MODE_MAP: dict[str, TranspilationMode] = {
+    "auto": TranspilationMode.AUTO,
+    "managed": TranspilationMode.MANAGED,
+    "manual": TranspilationMode.MANUAL,
+}
+
+
 def _map_transpilation_mode(mode: str) -> TranspilationMode:
     """Map string mode to UEC TranspilationMode enum."""
-    mode_map = {
-        "auto": TranspilationMode.AUTO,
-        "managed": TranspilationMode.MANAGED,
-        "manual": TranspilationMode.MANUAL,
-    }
-    return mode_map.get(mode.lower(), TranspilationMode.AUTO)
+    return _MODE_MAP.get(mode.lower(), TranspilationMode.AUTO)
 
 
 # =============================================================================
@@ -381,16 +381,12 @@ class TrackedRuntimeJob:
                 expectations = exp_data.get("expectations", [])
                 if expectations:
                     evs = [e.get("value", 0.0) for e in expectations]
-                    stds = [
-                        e.get("std_error")
-                        for e in expectations
-                        if e.get("std_error") is not None
-                    ]
+                    stds = [e.get("std_error") for e in expectations]
                     exp_entry = {
                         "index": exp_data.get("index", 0),
                         "expectation_values": evs,
                     }
-                    if stds:
+                    if any(s is not None for s in stds):
                         exp_entry["standard_deviations"] = stds
                     experiments.append(exp_entry)
 
@@ -780,6 +776,20 @@ class TrackedRuntimePrimitive:
         if tmeta.get("transpiled_by_devqubit"):
             transpiled_circuits = extract_circuits_from_pubs(pubs_to_run)
 
+        # Compute executed hashes once
+        if transpiled_circuits:
+            transpiled_param_values = extract_parameter_values_from_pubs(
+                pubs_to_run, primitive_type=self.primitive_type
+            )
+            executed_structural_hash, executed_parametric_hash = (
+                compute_circuit_hashes_with_params(
+                    transpiled_circuits, transpiled_param_values
+                )
+            )
+        else:
+            executed_structural_hash = structural_hash
+            executed_parametric_hash = parametric_hash
+
         if should_log_structure:
             if circuits:
                 program_artifacts = self._log_circuits(
@@ -789,10 +799,6 @@ class TrackedRuntimePrimitive:
 
             # If devqubit transpiled, log transpiled circuits as physical
             if transpiled_circuits:
-                transpiled_structural_hash = compute_structural_hash(
-                    transpiled_circuits
-                )
-                _ = compute_parametric_hash(transpiled_circuits)
                 try:
                     qpy_data = _serializer.serialize(
                         (
@@ -810,7 +816,7 @@ class TrackedRuntimePrimitive:
                         meta={
                             "backend_name": exec_name,
                             "transpiled_by": "devqubit",
-                            "structural_hash": transpiled_structural_hash,
+                            "structural_hash": executed_structural_hash,
                         },
                     )
                     physical_artifacts.append(
@@ -838,19 +844,6 @@ class TrackedRuntimePrimitive:
             self._logged_execution_count += 1
 
         # Build ProgramSnapshot
-        if transpiled_circuits:
-            # For transpiled circuits, extract parameters from transpiled pubs
-            transpiled_param_values = extract_parameter_values_from_pubs(
-                pubs_to_run, primitive_type=self.primitive_type
-            )
-            executed_structural_hash = compute_structural_hash(transpiled_circuits)
-            _, executed_parametric_hash = compute_circuit_hashes_with_params(
-                transpiled_circuits, transpiled_param_values
-            )
-        else:
-            executed_structural_hash = structural_hash
-            executed_parametric_hash = parametric_hash
-
         self.program_snapshot = ProgramSnapshot(
             logical=program_artifacts,
             physical=physical_artifacts,

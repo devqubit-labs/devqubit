@@ -1,5 +1,5 @@
 """
-Internal IMB Qiskit Runtime adapter implementation package for devqubit.
+Internal IBM Qiskit Runtime adapter implementation package for devqubit.
 
 This package provides integration with Qiskit Runtime primitives,
 enabling automatic tracking of quantum circuit execution and results.

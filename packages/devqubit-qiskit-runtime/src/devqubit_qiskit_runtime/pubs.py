@@ -204,7 +204,8 @@ def extract_circuits_from_pubs(pubs: Any) -> list[QuantumCircuit]:
     [circuit]
     """
     circuits: list[QuantumCircuit] = []
-    for pub in materialize_pubs(pubs):
+    items = pubs if isinstance(pubs, list) else materialize_pubs(pubs)
+    for pub in items:
         c = extract_circuit_from_pub(pub)
         if c is not None:
             circuits.append(c)
@@ -224,6 +225,12 @@ def _count_observables(obs: Any) -> int | None:
     -------
     int or None
         Number of observables, or None if cannot determine.
+
+    Notes
+    -----
+    Operator objects (SparsePauliOp, Pauli, PauliSumOp) have ``__len__``
+    returning the number of internal Pauli terms, NOT the number of
+    observables.  A single operator is always 1 observable.
     """
     if obs is None:
         return None
@@ -232,7 +239,12 @@ def _count_observables(obs: Any) -> int | None:
     if isinstance(obs, (list, tuple)):
         return len(obs)
 
-    # Has __len__ (most observable collections)
+    # Operator-like objects: SparsePauliOp, Pauli, PauliSumOp, etc.
+    # Their __len__ returns Pauli term count, not observable count.
+    if hasattr(obs, "paulis") or hasattr(obs, "to_matrix"):
+        return 1
+
+    # Has __len__ (other observable collections, e.g. ObservablesArray)
     if hasattr(obs, "__len__"):
         try:
             return len(obs)
@@ -280,7 +292,8 @@ def extract_pubs_structure(
     """
     pubs_struct: list[dict[str, Any]] = []
 
-    for pub in materialize_pubs(pubs):
+    items = pubs if isinstance(pubs, list) else materialize_pubs(pubs)
+    for pub in items:
         info: dict[str, Any] = {
             "type": type(pub).__name__,
             "format": "unknown",
@@ -384,7 +397,8 @@ def extract_parameter_values_from_pubs(
     """
     param_values: list[Any] = []
 
-    for pub in materialize_pubs(pubs):
+    items = pubs if isinstance(pubs, list) else materialize_pubs(pubs)
+    for pub in items:
         pv: Any = None
 
         # Object-style pub with .parameter_values
