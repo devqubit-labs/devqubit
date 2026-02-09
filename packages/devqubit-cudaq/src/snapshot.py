@@ -1,0 +1,238 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 devqubit
+
+"""
+Target snapshot creation for CUDA-Q adapter.
+
+Creates structured ``DeviceSnapshot`` objects from CUDA-Q targets,
+capturing target configuration and execution settings following the
+devqubit Uniform Execution Contract (UEC).
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+from devqubit_cudaq.utils import (
+    TargetInfo,
+    collect_sdk_versions,
+    get_target_info,
+)
+from devqubit_engine.uec.models.device import DeviceSnapshot, FrontendConfig
+from devqubit_engine.utils.common import utc_now_iso
+
+
+if TYPE_CHECKING:
+    from devqubit_engine.tracking.run import Run
+
+logger = logging.getLogger(__name__)
+
+
+def _detect_provider(target_info: TargetInfo) -> str:
+    """
+    Detect the physical execution provider from target info.
+
+    Per UEC, provider should be the physical execution platform,
+    not the SDK name.
+
+    Parameters
+    ----------
+    target_info : TargetInfo
+        Introspected target information.
+
+    Returns
+    -------
+    str
+        Physical provider identifier.
+    """
+    name = target_info.name.lower()
+
+    # Map hardware target names to providers
+    _PROVIDER_MAP: dict[str, str] = {
+        "ionq": "ionq",
+        "quantinuum": "quantinuum",
+        "iqm": "iqm",
+        "oqc": "oqc",
+        "braket": "aws_braket",
+        "infleqtion": "infleqtion",
+        "pasqal": "pasqal",
+        "orca": "orca",
+        "quera": "quera",
+        "anyon": "anyon",
+        "qci": "qci",
+    }
+
+    for key, provider in _PROVIDER_MAP.items():
+        if key in name:
+            return provider
+
+    # Local simulators
+    if target_info.is_simulator:
+        return "local"
+
+    return "local"
+
+
+def _detect_backend_type(target_info: TargetInfo) -> str:
+    """
+    Detect the backend type (simulator vs hardware).
+
+    Parameters
+    ----------
+    target_info : TargetInfo
+        Introspected target information.
+
+    Returns
+    -------
+    str
+        ``"simulator"`` or ``"hardware"``.
+    """
+    return "simulator" if target_info.is_simulator else "hardware"
+
+
+def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
+    """
+    Build frontend configuration for CUDA-Q.
+
+    Parameters
+    ----------
+    target_info : TargetInfo
+        Introspected target information.
+
+    Returns
+    -------
+    FrontendConfig or None
+        Frontend configuration.
+    """
+    try:
+        config: dict[str, Any] = {
+            "target_name": target_info.name,
+            "platform": target_info.platform,
+        }
+        if target_info.simulator:
+            config["simulator"] = target_info.simulator
+        if target_info.num_qpus is not None:
+            config["num_qpus"] = target_info.num_qpus
+        if target_info.description:
+            config["description"] = target_info.description
+
+        return FrontendConfig(
+            name="cudaq",
+            version=None,  # Filled from sdk_versions
+            config=config,
+        )
+    except Exception as exc:
+        logger.debug("Failed to build frontend config: %s", exc)
+        return None
+
+
+def _build_raw_properties(target_info: TargetInfo) -> dict[str, Any]:
+    """
+    Collect raw target properties for artifact storage.
+
+    Parameters
+    ----------
+    target_info : TargetInfo
+        Introspected target information.
+
+    Returns
+    -------
+    dict
+        Raw target properties.
+    """
+    props: dict[str, Any] = {
+        "target_name": target_info.name,
+        "simulator": target_info.simulator,
+        "platform": target_info.platform,
+        "description": target_info.description,
+        "num_qpus": target_info.num_qpus,
+        "is_simulator": target_info.is_simulator,
+        "is_remote": target_info.is_remote,
+    }
+    return {k: v for k, v in props.items() if v is not None}
+
+
+# ============================================================================
+# Public API
+# ============================================================================
+
+
+def create_device_snapshot(
+    target_info: TargetInfo | None = None,
+    *,
+    tracker: "Run | None" = None,
+) -> DeviceSnapshot:
+    """
+    Create a ``DeviceSnapshot`` from the CUDA-Q target.
+
+    Parameters
+    ----------
+    target_info : TargetInfo, optional
+        Pre-introspected target info. If None, introspects ``cudaq.get_target()``.
+    tracker : Run, optional
+        Tracker instance for logging raw_properties as artifact.
+
+    Returns
+    -------
+    DeviceSnapshot
+        Structured device snapshot.
+
+    Raises
+    ------
+    RuntimeError
+        If CUDA-Q target cannot be introspected.
+    """
+    if target_info is None:
+        target_info = get_target_info()
+
+    captured_at = utc_now_iso()
+    sdk_versions = collect_sdk_versions()
+
+    try:
+        provider = _detect_provider(target_info)
+    except Exception as exc:
+        logger.debug("Failed to detect provider: %s", exc)
+        provider = "local"
+
+    try:
+        backend_type = _detect_backend_type(target_info)
+    except Exception as exc:
+        logger.debug("Failed to detect backend type: %s", exc)
+        backend_type = "simulator"
+
+    try:
+        frontend = _build_frontend_config(target_info)
+    except Exception as exc:
+        logger.debug("Failed to build frontend config: %s", exc)
+        frontend = None
+
+    # Log raw properties as artifact if tracker is provided
+    raw_properties_ref = None
+    if tracker is not None:
+        try:
+            raw_properties = _build_raw_properties(target_info)
+            raw_properties_ref = tracker.log_json(
+                name="device_raw_properties",
+                obj=raw_properties,
+                role="device_raw",
+                kind="device.cudaq.raw_properties.json",
+            )
+            logger.debug("Logged raw CUDA-Q target properties artifact")
+        except Exception as exc:
+            logger.warning("Failed to log raw_properties artifact: %s", exc)
+
+    return DeviceSnapshot(
+        captured_at=captured_at,
+        backend_name=target_info.name,
+        backend_type=backend_type,
+        provider=provider,
+        backend_id=None,  # CUDA-Q targets don't have stable IDs like ARNs
+        num_qubits=None,  # Not directly available from target
+        connectivity=None,
+        native_gates=None,
+        calibration=None,
+        frontend=frontend,
+        sdk_versions=sdk_versions,
+        raw_properties_ref=raw_properties_ref,
+    )
