@@ -18,29 +18,14 @@ import numpy as np
 from devqubit_engine.uec.models.result import CountsFormat
 
 
-def _get_cirq_counts_format() -> dict[str, Any]:
-    """
-    Get CountsFormat metadata for Cirq results.
-
-    Cirq measurement arrays are converted to bitstring counts by:
-    1. Sorting measurement keys alphabetically
-    2. Concatenating bits from each key in sorted order
-    3. Converting each row to a bitstring (left-to-right = first-to-last bit)
-
-    Cirq uses big-endian bit order (first qubit = leftmost bit),
-    which corresponds to cbit0_left in UEC canonical terminology.
-
-    Returns
-    -------
-    dict
-        CountsFormat as dictionary for JSON serialization.
-    """
-    return CountsFormat(
-        source_sdk="cirq",
-        source_key_format="measurement_key_concatenated",
-        bit_order="cbit0_left",  # Cirq big-endian = cbit0_left in UEC terminology
-        transformed=False,  # Not transformed to canonical cbit0_right
-    ).to_dict()
+# Pre-built CountsFormat dict – immutable metadata, no need to rebuild per call.
+# Callers MUST use ``dict(_CIRQ_COUNTS_FORMAT)`` when a mutable copy is needed.
+_CIRQ_COUNTS_FORMAT: dict[str, Any] = CountsFormat(
+    source_sdk="cirq",
+    source_key_format="measurement_key_concatenated",
+    bit_order="cbit0_left",  # Cirq big-endian = cbit0_left in UEC terminology
+    transformed=False,  # Not transformed to canonical cbit0_right
+).to_dict()
 
 
 def get_result_measurements(result: Any) -> dict[str, Any]:
@@ -331,7 +316,7 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
     'cirq'
     """
     if results is None:
-        return {"experiments": [], "format": _get_cirq_counts_format()}
+        return {"experiments": [], "format": dict(_CIRQ_COUNTS_FORMAT)}
 
     experiments: list[dict[str, Any]] = []
 
@@ -343,7 +328,7 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
             pass
         return {
             "experiments": experiments,
-            "format": _get_cirq_counts_format(),
+            "format": dict(_CIRQ_COUNTS_FORMAT),
         }
 
     # List of results
@@ -364,7 +349,7 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
                     idx += 1
             return {
                 "experiments": experiments,
-                "format": _get_cirq_counts_format(),
+                "format": dict(_CIRQ_COUNTS_FORMAT),
             }
 
         # Flat list of results (run_sweep)
@@ -376,5 +361,5 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
 
     return {
         "experiments": experiments,
-        "format": _get_cirq_counts_format(),
+        "format": dict(_CIRQ_COUNTS_FORMAT),
     }

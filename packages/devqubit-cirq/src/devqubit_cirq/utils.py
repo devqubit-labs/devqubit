@@ -13,9 +13,14 @@ from __future__ import annotations
 from typing import Any
 
 
+# Module-level caches – populated on first call, stable for process lifetime.
+_cirq_version: str | None = None
+_adapter_version: str | None = None
+
+
 def cirq_version() -> str:
     """
-    Get the installed Cirq version.
+    Get the installed Cirq version (cached after first call).
 
     Returns
     -------
@@ -23,22 +28,28 @@ def cirq_version() -> str:
         Cirq version string (e.g., "1.3.0"), or "unknown" if
         Cirq is not installed or version cannot be determined.
     """
-    try:
-        import cirq
+    global _cirq_version
+    if _cirq_version is None:
+        try:
+            import cirq
 
-        return getattr(cirq, "__version__", "unknown")
-    except ImportError:
-        return "unknown"
+            _cirq_version = getattr(cirq, "__version__", "unknown")
+        except ImportError:
+            _cirq_version = "unknown"
+    return _cirq_version
 
 
 def get_adapter_version() -> str:
-    """Get adapter version dynamically from package metadata."""
-    try:
-        from importlib.metadata import version
+    """Get adapter version dynamically from package metadata (cached)."""
+    global _adapter_version
+    if _adapter_version is None:
+        try:
+            from importlib.metadata import version
 
-        return version("devqubit-cirq")
-    except Exception:
-        return "unknown"
+            _adapter_version = version("devqubit-cirq")
+        except Exception:
+            _adapter_version = "unknown"
+    return _adapter_version
 
 
 def get_backend_name(executor: Any) -> str:
