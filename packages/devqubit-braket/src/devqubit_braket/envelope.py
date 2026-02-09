@@ -33,6 +33,7 @@ from devqubit_braket.serialization import (
 from devqubit_braket.utils import braket_version, get_adapter_version, get_backend_name
 from devqubit_engine.circuit.models import CircuitFormat
 from devqubit_engine.storage.types import ArtifactRef
+from devqubit_engine.uec.errors import EnvelopeValidationError
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.uec.models.execution import ExecutionSnapshot, ProducerInfo
@@ -59,6 +60,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _serializer = BraketCircuitSerializer()
+
+# Pre-computed base CountsFormat dict for Braket (source=braket, cbit0_left).
+# Dynamic fields (measured_qubits) are overlaid per-call.
+_BRAKET_COUNTS_FORMAT: dict[str, Any] = CountsFormat(
+    source_sdk="braket",
+    source_key_format="bitstring",
+    bit_order="cbit0_left",
+    transformed=False,
+).to_dict()
 
 
 # =============================================================================
@@ -95,7 +105,7 @@ def _get_braket_counts_format(
         bit_order="cbit0_left",
         transformed=transformed,
     )
-    result = fmt.to_dict()
+    result = fmt.to_dict() if transformed else dict(_BRAKET_COUNTS_FORMAT)
 
     if measured_qubits is not None:
         result["measured_qubits"] = measured_qubits
@@ -344,6 +354,7 @@ def _create_result_snapshot(
     raw_result_ref: ArtifactRef | None,
     shots: int | None,
     error: Exception | None = None,
+    counts_payload: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
     Create a ResultSnapshot from Braket result.
@@ -358,6 +369,9 @@ def _create_result_snapshot(
         Number of shots used.
     error : Exception or None
         Exception if execution failed.
+    counts_payload : dict or None
+        Pre-extracted counts payload. When provided, skips redundant
+        extraction. Callers should extract once and pass through.
 
     Returns
     -------
@@ -379,11 +393,12 @@ def _create_result_snapshot(
         # Extract measured qubits if available (for accurate bit-order semantics)
         measured_qubits = _extract_measured_qubits(result)
 
-        # Check if result is already a combined payload dict (from batch)
-        if isinstance(result, dict) and "experiments" in result:
-            counts_payload = result
-        else:
-            counts_payload = extract_counts_payload(result)
+        # Use pre-computed counts_payload if provided
+        if counts_payload is None:
+            if isinstance(result, dict) and "experiments" in result:
+                counts_payload = result
+            else:
+                counts_payload = extract_counts_payload(result)
 
         if counts_payload and counts_payload.get("experiments"):
             format_dict = _get_braket_counts_format(measured_qubits=measured_qubits)
@@ -632,8 +647,21 @@ def finalize_envelope(
         except Exception as e:
             logger.warning("Failed to log error: %s", e)
 
+    # Extract counts once (used for both result snapshot and separate logging)
+    counts_payload: dict[str, Any] | None = None
+    if result is not None and error is None:
+        try:
+            if isinstance(result, dict) and "experiments" in result:
+                counts_payload = result  # Batch: already structured
+            else:
+                counts_payload = extract_counts_payload(result)
+        except Exception as e:
+            logger.debug("Failed to extract counts payload: %s", e)
+
     # Create result snapshot
-    result_snapshot = _create_result_snapshot(result, raw_result_ref, shots, error)
+    result_snapshot = _create_result_snapshot(
+        result, raw_result_ref, shots, error, counts_payload=counts_payload
+    )
 
     # Update execution snapshot with completion time
     if envelope.execution:
@@ -641,18 +669,9 @@ def finalize_envelope(
 
     envelope.result = result_snapshot
 
-    # Extract counts for separate logging
-    counts_payload = None
-    if result is not None:
-        try:
-            counts_payload = extract_counts_payload(result)
-        except Exception as e:
-            logger.debug("Failed to extract counts payload: %s", e)
-
     # Validate and log envelope
     # EnvelopeValidationError is raised by log_envelope for adapter runs with
     # invalid envelopes - this MUST propagate to enforce UEC contract
-    from devqubit_engine.uec.errors import EnvelopeValidationError
 
     try:
         tracker.log_envelope(envelope=envelope)
