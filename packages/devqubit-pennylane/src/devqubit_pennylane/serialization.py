@@ -133,43 +133,6 @@ def is_pennylane_tape(obj: Any) -> bool:
         return False
 
 
-# Alias for backwards compatibility
-is_tape = is_pennylane_tape
-
-
-def materialize_tapes(circuits: Any) -> tuple[list[Any], Any]:
-    """
-    Materialize tape inputs exactly once.
-
-    Parameters
-    ----------
-    circuits : Any
-        A tape, list of tapes, or other circuit-like input.
-
-    Returns
-    -------
-    tape_list : list
-        List of tapes for logging.
-    exec_payload : Any
-        Payload to pass to device.execute.
-    """
-    if circuits is None:
-        return [], []
-
-    if is_pennylane_tape(circuits):
-        return [circuits], circuits
-
-    if isinstance(circuits, (list, tuple)):
-        tape_list = list(circuits)
-        return tape_list, tape_list
-
-    try:
-        tape_list = list(circuits)
-        return tape_list, tape_list
-    except TypeError:
-        return [circuits], circuits
-
-
 def _serialize_operation(op: Any) -> dict[str, Any]:
     """Serialize a single operation to dict."""
     op_dict: dict[str, Any] = {
