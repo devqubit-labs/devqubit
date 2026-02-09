@@ -6,6 +6,7 @@
 import cirq
 import numpy as np
 import pytest
+import sympy
 from devqubit_cirq.results import (
     _extract_params,
     counts_from_measurements,
@@ -320,8 +321,6 @@ class TestExtractParams:
 
     def test_handles_sympy_symbols(self):
         """Converts sympy symbol keys to strings."""
-        import sympy
-
         theta = sympy.Symbol("theta")
 
         class MockResolver:
@@ -339,6 +338,11 @@ class TestExtractParams:
             params = None
 
         assert _extract_params(NoParams()) is None
+
+
+# ---------------------------------------------------------------------------
+# Real simulator results
+# ---------------------------------------------------------------------------
 
 
 class TestRealSimulatorResults:
@@ -359,3 +363,40 @@ class TestRealSimulatorResults:
         exp = payload["experiments"][0]
         assert exp["measurement_keys"] == ["a", "b"]
         assert sum(exp["counts"].values()) == 100
+
+    def test_sweep_results(self, simulator):
+        """Sweep produces multiple experiments from real execution."""
+        theta = sympy.Symbol("theta")
+        q = cirq.LineQubit(0)
+        circuit = cirq.Circuit(cirq.rz(theta).on(q), cirq.measure(q, key="m"))
+
+        resolvers = [cirq.ParamResolver({"theta": v}) for v in [0.0, 3.14]]
+        results = simulator.run_sweep(circuit, resolvers, repetitions=30)
+        payload = normalize_counts_payload(results)
+
+        assert len(payload["experiments"]) == 2
+        for exp in payload["experiments"]:
+            assert sum(exp["counts"].values()) == 30
+
+    def test_multi_key_measurements(self, simulator):
+        """Circuit with multiple measurement keys preserves layout."""
+        q0, q1 = cirq.LineQubit.range(2)
+        circuit = cirq.Circuit(
+            cirq.H(q0),
+            cirq.X(q1),
+            cirq.measure(q0, key="a"),
+            cirq.measure(q1, key="b"),
+        )
+        result = simulator.run(circuit, repetitions=20)
+        payload = normalize_counts_payload(result)
+
+        exp = payload["experiments"][0]
+        assert exp["measurement_keys"] == ["a", "b"]
+        assert exp["num_bits"] == 2
+        assert len(exp["key_bit_ranges"]) == 2
+
+    def test_none_result(self):
+        """None input returns empty experiments with format metadata."""
+        payload = normalize_counts_payload(None)
+        assert payload["experiments"] == []
+        assert payload["format"]["source_sdk"] == "cirq"
