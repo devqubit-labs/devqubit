@@ -12,7 +12,6 @@ from devqubit_cudaq.snapshot import (
 )
 from devqubit_cudaq.utils import (
     _HARDWARE_TARGETS,
-    _SIMULATOR_TARGETS,
     TargetInfo,
     collect_sdk_versions,
     get_adapter_version,
@@ -57,10 +56,9 @@ class TestTargetClassification:
         assert "quantinuum" in _HARDWARE_TARGETS
         assert "qpp-cpu" not in _HARDWARE_TARGETS
 
-    def test_simulator_targets(self):
-        assert "qpp-cpu" in _SIMULATOR_TARGETS
-        assert "nvidia" in _SIMULATOR_TARGETS
-        assert "ionq" not in _SIMULATOR_TARGETS
+    def test_known_hardware_names(self):
+        for name in ("iqm", "oqc", "braket", "infleqtion", "pasqal"):
+            assert name in _HARDWARE_TARGETS, f"{name} missing from _HARDWARE_TARGETS"
 
 
 class TestCreateDeviceSnapshot:
@@ -86,6 +84,18 @@ class TestCreateDeviceSnapshot:
         assert snap.backend_name == "ionq"
         assert snap.backend_type == "hardware"
         assert snap.provider == "ionq"
+
+    def test_emulated_target(self):
+        info = TargetInfo(
+            name="ionq-emulated",
+            is_simulator=True,
+            is_remote=False,
+            is_emulated=True,
+        )
+        snap = create_device_snapshot(info)
+        assert snap.backend_type == "simulator"
+        if snap.frontend and snap.frontend.config:
+            assert snap.frontend.config.get("is_emulated") is True
 
     def test_serializable(self):
         info = TargetInfo(
@@ -121,3 +131,10 @@ class TestUtilities:
         assert info.simulator == ""
         assert info.is_simulator is True
         assert info.is_remote is False
+        assert info.is_emulated is False
+
+    def test_target_info_to_dict(self):
+        info = TargetInfo(name="nvidia", simulator="custatevec", is_emulated=True)
+        d = info.to_dict()
+        assert d["name"] == "nvidia"
+        assert d["is_emulated"] is True

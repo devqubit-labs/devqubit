@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import types
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from devqubit_engine.storage.factory import create_registry, create_store
@@ -28,6 +28,9 @@ class _MockSampleResult:
 
     def items(self):
         return self._counts.items()
+
+    def get_total_shots(self) -> int:
+        return sum(self._counts.values())
 
     def __iter__(self):
         return iter(self._counts)
@@ -67,7 +70,7 @@ class _MockObserveResult:
 
 
 class _MockTarget:
-    """Mock ``cudaq.Target``."""
+    """Mock ``cudaq.Target`` with Target API methods."""
 
     def __init__(
         self,
@@ -76,12 +79,19 @@ class _MockTarget:
         platform: str = "default",
         description: str = "Default CPU simulator",
         num_qpus: int = 1,
+        *,
+        _is_remote: bool = False,
+        _is_remote_simulator: bool = False,
+        _is_emulated: bool = False,
     ):
         self.name = name
         self._simulator = simulator
         self._platform = platform
         self._description = description
         self._num_qpus = num_qpus
+        self.__is_remote = _is_remote
+        self.__is_remote_simulator = _is_remote_simulator
+        self.__is_emulated = _is_emulated
 
     @property
     def simulator(self):
@@ -98,6 +108,15 @@ class _MockTarget:
     @property
     def num_qpus(self):
         return self._num_qpus
+
+    def is_remote(self) -> bool:
+        return self.__is_remote
+
+    def is_remote_simulator(self) -> bool:
+        return self.__is_remote_simulator
+
+    def is_emulated(self) -> bool:
+        return self.__is_emulated
 
 
 class _MockKernel:
@@ -276,7 +295,13 @@ def gpu_target():
 @pytest.fixture
 def hardware_target():
     """Remote hardware target (IonQ)."""
-    return _MockTarget("ionq", simulator="", platform="default", description="IonQ QPU")
+    return _MockTarget(
+        "ionq",
+        simulator="",
+        platform="default",
+        description="IonQ QPU",
+        _is_remote=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -342,9 +367,26 @@ def make_target():
     """Factory: ``make_target(name, simulator, ...)``."""
 
     def _factory(
-        name="qpp-cpu", simulator="qpp", platform="default", description="", num_qpus=1
+        name="qpp-cpu",
+        simulator="qpp",
+        platform="default",
+        description="",
+        num_qpus=1,
+        *,
+        _is_remote=False,
+        _is_remote_simulator=False,
+        _is_emulated=False,
     ):
-        return _MockTarget(name, simulator, platform, description, num_qpus)
+        return _MockTarget(
+            name,
+            simulator,
+            platform,
+            description,
+            num_qpus,
+            _is_remote=_is_remote,
+            _is_remote_simulator=_is_remote_simulator,
+            _is_emulated=_is_emulated,
+        )
 
     return _factory
 
@@ -370,9 +412,7 @@ def make_executor():
             sample_result=sample_result,
             observe_result=observe_result,
         )
-        with patch.dict("sys.modules", {"cudaq": mod}):
-            executor = TrackedCudaqExecutor(tracker=run, **executor_kwargs)
-        executor.cudaq = mod
+        executor = TrackedCudaqExecutor(tracker=run, executor=mod, **executor_kwargs)
         return executor
 
     return _factory

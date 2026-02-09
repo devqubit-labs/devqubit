@@ -184,6 +184,24 @@ class TestDeduplication:
 
 
 # =============================================================================
+# set_target cache invalidation
+# =============================================================================
+
+
+class TestSetTargetInvalidation:
+
+    def test_set_target_resets_snapshot_cache(
+        self, store, registry, make_executor, bell_kernel
+    ):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.sample(bell_kernel, shots_count=100)
+            assert executor._device_snapshot is not None
+            executor.set_target("nvidia")
+            assert executor._device_snapshot is None
+
+
+# =============================================================================
 # UEC compliance
 # =============================================================================
 
@@ -208,7 +226,7 @@ class TestUECCompliance:
             assert run.record["results"]["success"] is True
 
     def test_tags_set(self, store, registry, make_executor, make_target, bell_kernel):
-        target = make_target("ionq")
+        target = make_target("ionq", _is_remote=True)
         with Run(store=store, registry=registry, project="test") as run:
             executor = make_executor(run, target=target)
             executor.sample(bell_kernel, shots_count=100)

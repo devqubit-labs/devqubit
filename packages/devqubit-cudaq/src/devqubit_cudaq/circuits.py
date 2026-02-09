@@ -7,7 +7,7 @@ Kernel hashing for the CUDA-Q adapter.
 Produces two distinct hashes per UEC contract:
 
 - **structural_hash**: Identifies the circuit *template* (gate sequence,
-  wiring) while ignoring parameter values. Two executions of the same
+  wiring) while ignoring parameter values.  Two executions of the same
   kernel with different angles share a structural hash.
 - **parametric_hash**: Includes concrete parameter values.  Two executions
   of the same kernel with *different* angles produce different parametric

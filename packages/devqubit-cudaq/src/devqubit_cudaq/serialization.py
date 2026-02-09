@@ -321,7 +321,7 @@ class CudaqCircuitLoader:
 # ============================================================================
 
 
-def summarize_cudaq_kernel(
+def summarize_cudaq_circuit(
     kernel: Any,
     args: tuple[Any, ...] = (),
 ) -> CircuitSummary:

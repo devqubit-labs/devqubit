@@ -75,11 +75,28 @@ class TestComputeCircuitHashes:
     def test_no_to_json_falls_back_to_name(self, bare_kernel):
         s, p = compute_circuit_hashes(bare_kernel)
         assert s is not None
+        # No args → structural == parametric for name-only fallback
         assert s == p
 
     def test_non_kernel_does_not_crash(self):
         s, p = compute_circuit_hashes(42)
-        assert isinstance(s, (str, type(None)))
+        assert isinstance(s, str)
+
+    def test_different_args_different_parametric_hash(self, parameterized_kernel):
+        _, p1 = compute_circuit_hashes(parameterized_kernel, (0.5,))
+        _, p2 = compute_circuit_hashes(parameterized_kernel, (1.0,))
+        assert p1 != p2
+
+    def test_different_args_same_structural_hash(self, parameterized_kernel):
+        s1, _ = compute_circuit_hashes(parameterized_kernel, (0.5,))
+        s2, _ = compute_circuit_hashes(parameterized_kernel, (1.0,))
+        # Structural hash should be the same (numbers normalized)
+        assert s1 == s2
+
+    def test_no_args_hashes_never_none(self, bell_kernel):
+        s, p = compute_circuit_hashes(bell_kernel)
+        assert s is not None
+        assert p is not None
 
 
 class TestDiagramParsing:

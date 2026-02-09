@@ -63,8 +63,8 @@ class TestSerializeKernel:
 
     def test_produces_circuit_data(self, bell_kernel):
         data = serialize_kernel(bell_kernel)
-        assert data.format == CircuitFormat.TAPE_JSON
-        assert data.sdk == SDK.UNKNOWN
+        assert data.format == CircuitFormat.CUDAQ_JSON
+        assert data.sdk == SDK.CUDAQ
         assert data.name == "bell"
         parsed = json.loads(data.data)
         assert "instructions" in parsed
@@ -84,7 +84,7 @@ class TestCudaqCircuitSerializer:
         assert CudaqCircuitSerializer().name == "cudaq"
 
     def test_sdk(self):
-        assert CudaqCircuitSerializer().sdk == SDK.UNKNOWN
+        assert CudaqCircuitSerializer().sdk == SDK.CUDAQ
 
     def test_can_serialize_mock(self, bell_kernel):
         result = CudaqCircuitSerializer().can_serialize(bell_kernel)
@@ -92,7 +92,10 @@ class TestCudaqCircuitSerializer:
 
     def test_serialize_circuit(self, bell_kernel):
         data = CudaqCircuitSerializer().serialize_circuit(bell_kernel, name="bell")
-        assert data.format == CircuitFormat.TAPE_JSON
+        assert data.format == CircuitFormat.CUDAQ_JSON
+
+    def test_supported_formats(self):
+        assert CircuitFormat.CUDAQ_JSON in CudaqCircuitSerializer().supported_formats
 
 
 class TestCudaqCircuitLoader:
@@ -106,8 +109,20 @@ class TestCudaqCircuitLoader:
 
         data = CircuitData(
             data="{}",
-            format=CircuitFormat.TAPE_JSON,
+            format=CircuitFormat.CUDAQ_JSON,
             sdk=SDK.PENNYLANE,
+            name="x",
+            index=0,
+        )
+        assert CudaqCircuitLoader().can_load(data) is False
+
+    def test_rejects_wrong_format(self):
+        from devqubit_engine.circuit.models import CircuitData
+
+        data = CircuitData(
+            data="{}",
+            format=CircuitFormat.TAPE_JSON,
+            sdk=SDK.CUDAQ,
             name="x",
             index=0,
         )
