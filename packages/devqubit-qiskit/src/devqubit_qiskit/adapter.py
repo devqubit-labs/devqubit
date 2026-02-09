@@ -289,7 +289,13 @@ class TrackedJob:
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped job."""
-        return getattr(self.job, name)
+        try:
+            return getattr(self.job, name)
+        except AttributeError:
+            raise AttributeError(
+                f"Neither {type(self).__name__!r} nor the wrapped job "
+                f"{type(self.job).__name__!r} have attribute {name!r}"
+            ) from None
 
     def __repr__(self) -> str:
         job_id = extract_job_id(self.job) or "unknown"
@@ -650,7 +656,13 @@ class TrackedBackend:
 
     def __getattr__(self, name: str) -> Any:
         """Delegate attribute access to wrapped backend."""
-        return getattr(self.backend, name)
+        try:
+            return getattr(self.backend, name)
+        except AttributeError:
+            raise AttributeError(
+                f"Neither {type(self).__name__!r} nor the wrapped backend "
+                f"{type(self.backend).__name__!r} have attribute {name!r}"
+            ) from None
 
     def __repr__(self) -> str:
         backend_name = get_backend_name(self.backend)
