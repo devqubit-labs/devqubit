@@ -29,45 +29,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Known hardware target name fragments → provider
+_PROVIDER_MAP: dict[str, str] = {
+    "ionq": "ionq",
+    "quantinuum": "quantinuum",
+    "iqm": "iqm",
+    "oqc": "oqc",
+    "braket": "aws_braket",
+    "infleqtion": "infleqtion",
+    "pasqal": "pasqal",
+    "orca": "orca",
+    "quera": "quera",
+    "anyon": "anyon",
+    "qci": "qci",
+}
+
+
 def _detect_provider(target_info: TargetInfo) -> str:
     """
     Detect the physical execution provider from target info.
 
     Per UEC, provider should be the physical execution platform,
     not the SDK name.
-
-    Parameters
-    ----------
-    target_info : TargetInfo
-        Introspected target information.
-
-    Returns
-    -------
-    str
-        Physical provider identifier.
     """
     name = target_info.name.lower()
-
-    # Map hardware target names to providers
-    _PROVIDER_MAP: dict[str, str] = {
-        "ionq": "ionq",
-        "quantinuum": "quantinuum",
-        "iqm": "iqm",
-        "oqc": "oqc",
-        "braket": "aws_braket",
-        "infleqtion": "infleqtion",
-        "pasqal": "pasqal",
-        "orca": "orca",
-        "quera": "quera",
-        "anyon": "anyon",
-        "qci": "qci",
-    }
 
     for key, provider in _PROVIDER_MAP.items():
         if key in name:
             return provider
 
-    # Local simulators
     if target_info.is_simulator:
         return "local"
 
@@ -75,36 +65,12 @@ def _detect_provider(target_info: TargetInfo) -> str:
 
 
 def _detect_backend_type(target_info: TargetInfo) -> str:
-    """
-    Detect the backend type (simulator vs hardware).
-
-    Parameters
-    ----------
-    target_info : TargetInfo
-        Introspected target information.
-
-    Returns
-    -------
-    str
-        ``"simulator"`` or ``"hardware"``.
-    """
+    """Detect the backend type (simulator vs hardware)."""
     return "simulator" if target_info.is_simulator else "hardware"
 
 
 def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
-    """
-    Build frontend configuration for CUDA-Q.
-
-    Parameters
-    ----------
-    target_info : TargetInfo
-        Introspected target information.
-
-    Returns
-    -------
-    FrontendConfig or None
-        Frontend configuration.
-    """
+    """Build frontend configuration for CUDA-Q."""
     try:
         config: dict[str, Any] = {
             "target_name": target_info.name,
@@ -116,10 +82,12 @@ def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
             config["num_qpus"] = target_info.num_qpus
         if target_info.description:
             config["description"] = target_info.description
+        if target_info.is_emulated:
+            config["is_emulated"] = True
 
         return FrontendConfig(
             name="cudaq",
-            version=None,  # Filled from sdk_versions
+            version=None,
             config=config,
         )
     except Exception as exc:
@@ -128,19 +96,7 @@ def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
 
 
 def _build_raw_properties(target_info: TargetInfo) -> dict[str, Any]:
-    """
-    Collect raw target properties for artifact storage.
-
-    Parameters
-    ----------
-    target_info : TargetInfo
-        Introspected target information.
-
-    Returns
-    -------
-    dict
-        Raw target properties.
-    """
+    """Collect raw target properties for artifact storage."""
     props: dict[str, Any] = {
         "target_name": target_info.name,
         "simulator": target_info.simulator,
@@ -149,6 +105,7 @@ def _build_raw_properties(target_info: TargetInfo) -> dict[str, Any]:
         "num_qpus": target_info.num_qpus,
         "is_simulator": target_info.is_simulator,
         "is_remote": target_info.is_remote,
+        "is_emulated": target_info.is_emulated,
     }
     return {k: v for k, v in props.items() if v is not None}
 
@@ -177,11 +134,6 @@ def create_device_snapshot(
     -------
     DeviceSnapshot
         Structured device snapshot.
-
-    Raises
-    ------
-    RuntimeError
-        If CUDA-Q target cannot be introspected.
     """
     if target_info is None:
         target_info = get_target_info()
@@ -207,7 +159,6 @@ def create_device_snapshot(
         logger.debug("Failed to build frontend config: %s", exc)
         frontend = None
 
-    # Log raw properties as artifact if tracker is provided
     raw_properties_ref = None
     if tracker is not None:
         try:
@@ -218,7 +169,6 @@ def create_device_snapshot(
                 role="device_raw",
                 kind="device.cudaq.raw_properties.json",
             )
-            logger.debug("Logged raw CUDA-Q target properties artifact")
         except Exception as exc:
             logger.warning("Failed to log raw_properties artifact: %s", exc)
 
@@ -227,8 +177,8 @@ def create_device_snapshot(
         backend_name=target_info.name,
         backend_type=backend_type,
         provider=provider,
-        backend_id=None,  # CUDA-Q targets don't have stable IDs like ARNs
-        num_qubits=None,  # Not directly available from target
+        backend_id=None,
+        num_qubits=None,
         connectivity=None,
         native_gates=None,
         calibration=None,

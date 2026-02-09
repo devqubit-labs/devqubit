@@ -100,7 +100,7 @@ def _log_kernel(
             ProgramArtifact(
                 ref=ref,
                 role=ProgramRole.LOGICAL,
-                format="kernel_json",
+                format="cudaq_json",
                 name=get_kernel_name(kernel),
                 index=0,
             )
@@ -186,32 +186,7 @@ def _log_results(
     success: bool = True,
     error_info: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
-    """
-    Log execution results and return ``ResultSnapshot``.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-    backend_name : str
-        Target name.
-    result : Any
-        Execution result.
-    shots : int or None
-        Number of shots.
-    result_type : str or None
-        Result type string.
-    success : bool
-        Whether execution succeeded.
-    error_info : dict, optional
-        Error information if execution failed.
-
-    Returns
-    -------
-    ResultSnapshot
-        Result snapshot.
-    """
-    # Log raw results
+    """Log execution results and return ``ResultSnapshot``."""
     raw_result_ref = None
     try:
         raw_result_ref = tracker.log_json(
@@ -250,22 +225,8 @@ def _log_results(
     )
 
 
-def _log_device_snapshot(
-    tracker: Run,
-) -> DeviceSnapshot:
-    """
-    Log device (target) snapshot and return ``DeviceSnapshot``.
-
-    Parameters
-    ----------
-    tracker : Run
-        Tracker instance.
-
-    Returns
-    -------
-    DeviceSnapshot
-        Target snapshot.
-    """
+def _log_device_snapshot(tracker: Run) -> DeviceSnapshot:
+    """Log device (target) snapshot and return ``DeviceSnapshot``."""
     try:
         target_info = get_target_info()
         snapshot = create_device_snapshot(target_info, tracker=tracker)
@@ -300,12 +261,7 @@ def _finalize_envelope_with_result(
     envelope: ExecutionEnvelope,
     result_snapshot: ResultSnapshot,
 ) -> None:
-    """
-    Finalize envelope with result and log it.
-
-    Validation errors are re-raised (adapter bugs).
-    Other errors are logged but don't crash experiments.
-    """
+    """Finalize envelope with result and log it."""
     if envelope is None:
         raise ValueError("Cannot finalize None envelope")
 
@@ -338,29 +294,22 @@ class TrackedCudaqExecutor:
     ----------
     tracker : Run
         devqubit tracker instance.
+    executor : module, optional
+        The ``cudaq`` module to wrap.  If ``None``, imports ``cudaq``
+        directly.
     log_every_n : int
         Logging frequency: 0=first only, N>0=every Nth, -1=all.
     log_new_circuits : bool
         Auto-log new circuit structures (default True).
     stats_update_interval : int
         Update stats every N executions (default 1000).
-
-    Attributes
-    ----------
-    cudaq : module
-        The wrapped ``cudaq`` module (for passthrough access).
-
-    Example
-    -------
-    >>> executor = TrackedCudaqExecutor(tracker=run)
-    >>> result = executor.sample(bell_kernel, shots_count=1000)
-    >>> result = executor.observe(kernel, hamiltonian, shots_count=500)
     """
 
     def __init__(
         self,
         tracker: Run,
         *,
+        executor: Any = None,
         log_every_n: int = 0,
         log_new_circuits: bool = True,
         stats_update_interval: int = 1000,
@@ -375,13 +324,14 @@ class TrackedCudaqExecutor:
         self._seen_circuit_hashes: set[str] = set()
         self._logged_circuit_hashes: set[str] = set()
 
-        # UEC snapshots (cached per run)
         self._device_snapshot: DeviceSnapshot | None = None
 
-        # Import cudaq for passthrough
-        import cudaq as _cudaq
+        if executor is not None:
+            self.cudaq = executor
+        else:
+            import cudaq as _cudaq
 
-        self.cudaq = _cudaq
+            self.cudaq = _cudaq
 
     # ------------------------------------------------------------------
     # Core tracked execution
@@ -397,42 +347,16 @@ class TrackedCudaqExecutor:
         hamiltonian: Any = None,
         call_kwargs: dict[str, Any] | None = None,
     ) -> Any:
-        """
-        Execute a CUDA-Q function with UEC tracking.
-
-        Parameters
-        ----------
-        method_name : str
-            ``"sample"`` or ``"observe"``.
-        kernel : Any
-            CUDA-Q kernel.
-        kernel_args : tuple
-            Kernel arguments.
-        shots : int or None
-            Shots count.
-        hamiltonian : Any
-            Spin operator for observe.
-        call_kwargs : dict, optional
-            Additional kwargs to pass to cudaq function.
-
-        Returns
-        -------
-        Any
-            Execution result.
-        """
+        """Execute a CUDA-Q function with UEC tracking."""
         tracker = self._tracker
         submitted_at = utc_now_iso()
         self._execution_count += 1
         exec_count = self._execution_count
 
-        # Compute circuit hashes
-        structural_hash, parametric_hash = None, None
-        try:
-            structural_hash, parametric_hash = compute_circuit_hashes(
-                kernel, kernel_args
-            )
-        except Exception:
-            pass
+        # Compute circuit hashes — always produce values (never None)
+        structural_hash, parametric_hash = self._safe_compute_hashes(
+            kernel, kernel_args
+        )
 
         is_new_circuit = (
             structural_hash and structural_hash not in self._seen_circuit_hashes
@@ -477,7 +401,7 @@ class TrackedCudaqExecutor:
                 tracker.record["execution_stats"] = self._build_stats()
             return result
 
-        # Capture target snapshot once per run
+        # Capture target snapshot once (invalidated on set_target)
         if self._device_snapshot is None:
             self._device_snapshot = _log_device_snapshot(tracker)
 
@@ -510,7 +434,10 @@ class TrackedCudaqExecutor:
             }
             self._logged_execution_count += 1
 
-        # Build ProgramSnapshot (no transpilation in CUDA-Q)
+        # Determine num_circuits (broadcasting produces list results)
+        num_circuits = 1
+
+        # Build ProgramSnapshot
         program_snapshot = ProgramSnapshot(
             logical=program_artifacts,
             physical=[],
@@ -518,7 +445,7 @@ class TrackedCudaqExecutor:
             parametric_hash=parametric_hash,
             executed_structural_hash=structural_hash,
             executed_parametric_hash=parametric_hash,
-            num_circuits=1,
+            num_circuits=num_circuits,
         )
 
         # Build ExecutionSnapshot
@@ -592,6 +519,11 @@ class TrackedCudaqExecutor:
                 "message": execution_error["message"],
                 "execution_count": exec_count,
             }
+
+        # Update num_circuits for broadcasting
+        if execution_succeeded and isinstance(result, list):
+            num_circuits = len(result)
+            program_snapshot.num_circuits = num_circuits
 
         # Log results and build envelope
         if should_log_results:
@@ -694,6 +626,30 @@ class TrackedCudaqExecutor:
         return result
 
     # ------------------------------------------------------------------
+    # Hash computation (always returns non-None)
+    # ------------------------------------------------------------------
+
+    def _safe_compute_hashes(
+        self,
+        kernel: Any,
+        args: tuple[Any, ...],
+    ) -> tuple[str, str]:
+        """Compute hashes with guaranteed non-None return."""
+        try:
+            return compute_circuit_hashes(kernel, args)
+        except Exception as exc:
+            logger.debug("Hash computation failed, using fallback: %s", exc)
+            # Fallback: hash kernel repr + args
+            import hashlib
+
+            payload = f"{get_kernel_name(kernel)}:{repr(args)}"
+            h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
+            structural = (
+                f"sha256:{hashlib.sha256(get_kernel_name(kernel).encode()).hexdigest()}"
+            )
+            return structural, h
+
+    # ------------------------------------------------------------------
     # Raw execution (no tracking)
     # ------------------------------------------------------------------
 
@@ -748,8 +704,8 @@ class TrackedCudaqExecutor:
 
         Returns
         -------
-        SampleResult
-            CUDA-Q sample result.
+        SampleResult or list[SampleResult]
+            CUDA-Q sample result (list for broadcasting).
         """
         return self._tracked_execute(
             "sample",
@@ -785,8 +741,8 @@ class TrackedCudaqExecutor:
 
         Returns
         -------
-        ObserveResult
-            CUDA-Q observe result.
+        ObserveResult or list[ObserveResult]
+            CUDA-Q observe result (list for broadcasting).
         """
         actual_shots = shots_count if shots_count > 0 else None
         return self._tracked_execute(
@@ -809,8 +765,22 @@ class TrackedCudaqExecutor:
         }
 
     def __getattr__(self, name: str) -> Any:
-        """Passthrough for non-tracked cudaq attributes."""
-        return getattr(self.cudaq, name)
+        """
+        Passthrough for non-tracked cudaq attributes.
+
+        Intercepts ``set_target`` to invalidate the cached device snapshot
+        so the next execution re-captures target information.
+        """
+        attr = getattr(self.cudaq, name)
+        if name == "set_target" and callable(attr):
+
+            def _wrapped_set_target(*a: Any, **k: Any) -> Any:
+                result = attr(*a, **k)
+                self._device_snapshot = None
+                return result
+
+            return _wrapped_set_target
+        return attr
 
 
 # ============================================================================
@@ -822,49 +792,18 @@ class CudaqAdapter:
     """
     Adapter for integrating CUDA-Q with devqubit tracking.
 
-    Unlike the PennyLane adapter which patches device objects in place,
-    the CUDA-Q adapter wraps the ``cudaq`` module into a
-    ``TrackedCudaqExecutor`` that intercepts ``sample()`` and ``observe()``
-    calls.
-
-    Attributes
-    ----------
-    name : str
-        Adapter identifier (``"cudaq"``).
+    Wraps the ``cudaq`` module into a ``TrackedCudaqExecutor`` that
+    intercepts ``sample()`` and ``observe()`` calls.
     """
 
     name: str = "cudaq"
 
     def supports_executor(self, executor: Any) -> bool:
-        """
-        Check if executor is the ``cudaq`` module.
-
-        Parameters
-        ----------
-        executor : Any
-            Potential executor instance.
-
-        Returns
-        -------
-        bool
-            True if executor is the ``cudaq`` module.
-        """
+        """Check if executor is the ``cudaq`` module."""
         return is_cudaq_module(executor)
 
     def describe_executor(self, executor: Any) -> dict[str, Any]:
-        """
-        Describe the CUDA-Q execution environment.
-
-        Parameters
-        ----------
-        executor : Any
-            The ``cudaq`` module.
-
-        Returns
-        -------
-        dict
-            Execution environment description.
-        """
+        """Describe the CUDA-Q execution environment."""
         try:
             target_info = get_target_info()
         except Exception:
@@ -917,6 +856,7 @@ class CudaqAdapter:
         """
         return TrackedCudaqExecutor(
             tracker=tracker,
+            executor=executor,
             log_every_n=log_every_n,
             log_new_circuits=log_new_circuits,
             stats_update_interval=stats_update_interval,

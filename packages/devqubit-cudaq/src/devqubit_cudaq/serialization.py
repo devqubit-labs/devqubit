@@ -214,8 +214,8 @@ def serialize_kernel(
 
     return CircuitData(
         data=native_json,
-        format=CircuitFormat.TAPE_JSON,
-        sdk=SDK.UNKNOWN,
+        format=CircuitFormat.CUDAQ_JSON,
+        sdk=SDK.CUDAQ,
         name=kernel_name,
         index=index,
     )
@@ -230,15 +230,15 @@ class CudaqCircuitSerializer:
     """CUDA-Q circuit serializer.  Native ``to_json()`` as primary format."""
 
     name = "cudaq"
-    default_format = CircuitFormat.TAPE_JSON
+    default_format = CircuitFormat.CUDAQ_JSON
 
     @property
     def sdk(self) -> SDK:
-        return SDK.UNKNOWN
+        return SDK.CUDAQ
 
     @property
     def supported_formats(self) -> list[CircuitFormat]:
-        return [CircuitFormat.TAPE_JSON]
+        return [CircuitFormat.CUDAQ_JSON]
 
     def can_serialize(self, circuit: Any) -> bool:
         return is_cudaq_kernel(circuit)
@@ -276,14 +276,14 @@ class CudaqCircuitLoader:
 
     @property
     def sdk(self) -> SDK:
-        return SDK.UNKNOWN
+        return SDK.CUDAQ
 
     @property
     def supported_formats(self) -> list[CircuitFormat]:
-        return [CircuitFormat.TAPE_JSON]
+        return [CircuitFormat.CUDAQ_JSON]
 
     def can_load(self, data: CircuitData) -> bool:
-        return data.sdk == SDK.UNKNOWN and data.format == CircuitFormat.TAPE_JSON
+        return data.sdk == SDK.CUDAQ and data.format == CircuitFormat.CUDAQ_JSON
 
     def load(self, data: CircuitData) -> LoadedCircuit:
         """
@@ -309,8 +309,8 @@ class CudaqCircuitLoader:
 
         return LoadedCircuit(
             circuit=kernel,
-            sdk=SDK.UNKNOWN,
-            source_format=CircuitFormat.TAPE_JSON,
+            sdk=SDK.CUDAQ,
+            source_format=CircuitFormat.CUDAQ_JSON,
             name=data.name,
             index=data.index,
         )
@@ -363,6 +363,6 @@ def summarize_cudaq_kernel(
         has_parameters=has_params,
         parameter_count=param_count if has_params else 0,
         is_clifford=stats["is_clifford"],
-        source_format=CircuitFormat.TAPE_JSON,
-        sdk=SDK.UNKNOWN,
+        source_format=CircuitFormat.CUDAQ_JSON,
+        sdk=SDK.CUDAQ,
     )
