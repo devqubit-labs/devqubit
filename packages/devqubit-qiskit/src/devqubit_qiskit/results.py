@@ -11,10 +11,14 @@ Contract (UEC).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from devqubit_engine.uec.models.result import ResultType
 from devqubit_engine.utils.serialization import to_jsonable
+
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -42,36 +46,31 @@ def detect_result_type(result: Any) -> ResultType:
     if result is None:
         return ResultType.OTHER
 
-    # Check for statevector (simulator)
-    try:
-        if hasattr(result, "get_statevector") and callable(result.get_statevector):
-            sv = result.get_statevector()
-            if sv is not None:
-                return ResultType.STATEVECTOR
-    except Exception:
-        pass
+    # Check for quasi-distributions (Runtime Sampler) — attribute check only
+    if getattr(result, "quasi_dists", None) is not None:
+        return ResultType.QUASI_DIST
 
-    # Check for quasi-distributions (Runtime Sampler)
-    try:
-        if extract_quasi_distributions(result) is not None:
-            return ResultType.QUASI_DIST
-    except Exception:
-        pass
+    # Check for expectation values (Runtime Estimator) — attribute check only
+    if getattr(result, "values", None) is not None:
+        return ResultType.EXPECTATION
 
-    # Check for expectation values (Runtime Estimator)
-    try:
-        if extract_expectation_values(result) is not None:
-            return ResultType.EXPECTATION
-    except Exception:
-        pass
+    # Check for statevector (simulator) — method presence only, no call
+    if hasattr(result, "get_statevector") and callable(
+        getattr(result, "get_statevector", None)
+    ):
+        # Peek at result data to confirm statevector without triggering computation
+        try:
+            results_list = getattr(result, "results", None)
+            if results_list and hasattr(results_list[0], "data"):
+                data = results_list[0].data
+                if hasattr(data, "statevector"):
+                    return ResultType.STATEVECTOR
+        except Exception:
+            pass
 
-    # Check for measurement counts (standard)
-    try:
-        if hasattr(result, "get_counts") and callable(result.get_counts):
-            result.get_counts()
-            return ResultType.COUNTS
-    except Exception:
-        pass
+    # Check for measurement counts — method presence, fall back to result structure
+    if hasattr(result, "get_counts") and callable(getattr(result, "get_counts", None)):
+        return ResultType.COUNTS
 
     return ResultType.OTHER
 
@@ -149,8 +148,8 @@ def _extract_single_experiment(result: Any) -> dict[str, Any] | None:
             counts_dict = to_jsonable(counts)
             shots = sum(counts_dict.values()) if isinstance(counts_dict, dict) else None
             return {"index": 0, "counts": counts_dict, "shots": shots}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to extract single experiment counts: %s", e)
     return None
 
 
@@ -274,7 +273,9 @@ def extract_quasi_distributions(result: Any) -> list[dict[str, float]] | None:
                     quasi_dists.append(dict(qd.binary_probabilities()))
                 elif isinstance(qd, dict):
                     if qd:
-                        num_bits = max(len(bin(k)) - 2 for k in qd.keys())
+                        max_key = max(qd.keys())
+                        # bit_length() returns 0 for key 0; ensure at least 1 bit
+                        num_bits = max(max_key.bit_length(), 1) if max_key >= 0 else 1
                     else:
                         num_bits = 1
                     quasi_dists.append(
