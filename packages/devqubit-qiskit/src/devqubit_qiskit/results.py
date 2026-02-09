@@ -116,7 +116,7 @@ def normalize_result_counts(result: Any) -> dict[str, Any]:
     num_experiments = _get_num_experiments(result)
 
     # Single experiment fallback
-    if not num_experiments:
+    if num_experiments is None:
         exp = _extract_single_experiment(result)
         if exp:
             output["experiments"].append(exp)
@@ -222,9 +222,9 @@ def extract_result_metadata(result: Any) -> dict[str, Any]:
 def _safe_getattr(obj: Any, attr: str, converter: type | None = None) -> Any | None:
     """Safely get and optionally convert an attribute value."""
     try:
-        if not hasattr(obj, attr):
+        val = getattr(obj, attr, None)
+        if val is None:
             return None
-        val = getattr(obj, attr)
         if converter is not None:
             return converter(val)
         return val

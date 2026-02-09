@@ -205,7 +205,9 @@ class TrackedJob:
             logger.debug("Logged pending envelope for %s", self.backend_name)
 
         except Exception as e:
-            logger.debug("Failed to log pending envelope: %s", e)
+            logger.warning(
+                "Failed to log pending envelope for %s: %s", self.backend_name, e
+            )
 
     def _log_success(self, result: Any) -> None:
         """Log successful result and create envelope."""
