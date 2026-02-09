@@ -297,7 +297,7 @@ def circuits_to_text(circuits: list[Any]) -> str:
 # =============================================================================
 
 
-def summarize_circuit(circuit: Any) -> CircuitSummary:
+def summarize_braket_circuit(circuit: Any) -> CircuitSummary:
     """
     Generate a summary of a Braket circuit.
 

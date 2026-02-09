@@ -571,14 +571,14 @@ class TestMaterializeTaskSpec:
             yield Circuit().h(0)
             yield Circuit().x(0)
 
-        payload, circuits, single, meta = _materialize_task_spec(gen())
+        payload, _, single, _ = _materialize_task_spec(gen())
         assert isinstance(payload, list)
         assert len(payload) == 2
         assert single is False
 
     def test_non_iterable_wrapped(self):
         """Non-iterable, non-circuit treated as single."""
-        payload, circuits, single, meta = _materialize_task_spec(42)
+        payload, circuits, single, _ = _materialize_task_spec(42)
         assert payload == 42
         assert circuits == [42]
         assert single is True
