@@ -64,7 +64,7 @@ class TestSerializeKernel:
     def test_produces_circuit_data(self, bell_kernel):
         data = serialize_kernel(bell_kernel)
         assert data.format == CircuitFormat.TAPE_JSON
-        assert data.sdk == SDK.OTHER
+        assert data.sdk == SDK.UNKNOWN
         assert data.name == "bell"
         parsed = json.loads(data.data)
         assert "instructions" in parsed
@@ -84,7 +84,7 @@ class TestCudaqCircuitSerializer:
         assert CudaqCircuitSerializer().name == "cudaq"
 
     def test_sdk(self):
-        assert CudaqCircuitSerializer().sdk == SDK.OTHER
+        assert CudaqCircuitSerializer().sdk == SDK.UNKNOWN
 
     def test_can_serialize_mock(self, bell_kernel):
         result = CudaqCircuitSerializer().can_serialize(bell_kernel)

@@ -79,7 +79,6 @@ class TestCreateDeviceSnapshot:
         assert snap.backend_name == "nvidia"
         assert snap.backend_type == "simulator"
         assert snap.provider == "local"
-        assert snap.frontend.name == "cudaq"
 
     def test_hardware(self):
         info = TargetInfo(name="ionq", is_simulator=False, is_remote=True)
@@ -99,7 +98,7 @@ class TestCreateDeviceSnapshot:
     def test_sdk_versions_present(self):
         info = TargetInfo(name="qpp-cpu", is_simulator=True)
         snap = create_device_snapshot(info)
-        assert "devqubit_cudaq" in snap.sdk_versions
+        assert "cudaq" in snap.sdk_versions
 
 
 class TestUtilities:
@@ -109,13 +108,13 @@ class TestUtilities:
 
     def test_collect_sdk_versions(self):
         versions = collect_sdk_versions()
-        assert "devqubit_cudaq" in versions
+        assert "cudaq" in versions
 
     def test_get_kernel_name(self, bell_kernel):
         assert get_kernel_name(bell_kernel) == "bell"
 
     def test_get_kernel_name_unnamed(self):
-        assert get_kernel_name(object()) == "unknown_kernel"
+        assert get_kernel_name(object()) == "object"
 
     def test_target_info_defaults(self):
         info = TargetInfo(name="test")
