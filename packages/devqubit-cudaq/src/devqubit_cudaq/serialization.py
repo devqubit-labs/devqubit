@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections import Counter
 from typing import Any
 
 from devqubit_cudaq.utils import (
@@ -25,68 +24,12 @@ from devqubit_engine.circuit.models import (
     SDK,
     CircuitData,
     CircuitFormat,
-    GateCategory,
-    GateClassifier,
-    GateInfo,
     LoadedCircuit,
 )
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
-from devqubit_engine.circuit.summary import CircuitSummary
 
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# Gate classification
-# ============================================================================
-
-_CUDAQ_GATES: dict[str, GateInfo] = {
-    # Single-qubit Clifford
-    "h": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "x": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "y": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "z": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "s": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "sdg": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    "sdag": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
-    # Single-qubit non-Clifford
-    "t": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "tdg": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "tdag": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "rx": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "ry": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "rz": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "r1": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "u3": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    "phaseshift": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
-    # Two-qubit Clifford
-    "cnot": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
-    "cx": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
-    "cz": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
-    "cy": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
-    "swap": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
-    # Two-qubit non-Clifford
-    "crx": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    "cry": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    "crz": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    "cr1": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    "cs": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    "ct": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
-    # Multi-qubit
-    "toffoli": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
-    "ccx": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
-    "ccnot": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
-    "cswap": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
-    "fredkin": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
-    # Measurement
-    "mz": GateInfo(GateCategory.MEASURE),
-    "mx": GateInfo(GateCategory.MEASURE),
-    "my": GateInfo(GateCategory.MEASURE),
-    "measure": GateInfo(GateCategory.MEASURE),
-}
-
-_classifier = GateClassifier(_CUDAQ_GATES)
 
 
 # ============================================================================
@@ -314,55 +257,3 @@ class CudaqCircuitLoader:
             name=data.name,
             index=data.index,
         )
-
-
-# ============================================================================
-# Summarization
-# ============================================================================
-
-
-def summarize_cudaq_circuit(
-    kernel: Any,
-    args: tuple[Any, ...] = (),
-) -> CircuitSummary:
-    """Summarize kernel gate counts from its diagram."""
-    from devqubit_cudaq.circuits import _parse_diagram_to_ops
-
-    gate_counts: Counter[str] = Counter()
-    has_params = False
-    param_count = 0
-    num_qubits = get_kernel_num_qubits(kernel) or 0
-
-    diagram = draw_kernel(kernel, args)
-    if diagram:
-        ops, detected_qubits = _parse_diagram_to_ops(diagram)
-        if detected_qubits > num_qubits:
-            num_qubits = detected_qubits
-
-        for op in ops:
-            gate_name = op.get("gate", "unknown").lower()
-            if gate_name.startswith("__"):
-                continue
-            gate_counts[gate_name] += 1
-            params = op.get("params")
-            if params:
-                has_params = True
-                param_count += len(params)
-
-    stats = _classifier.classify_counts(dict(gate_counts))
-
-    return CircuitSummary(
-        num_qubits=num_qubits,
-        depth=0,
-        gate_count_1q=stats["gate_count_1q"],
-        gate_count_2q=stats["gate_count_2q"],
-        gate_count_multi=stats["gate_count_multi"],
-        gate_count_measure=stats["gate_count_measure"],
-        gate_count_total=sum(gate_counts.values()),
-        gate_types=dict(gate_counts),
-        has_parameters=has_params,
-        parameter_count=param_count if has_params else 0,
-        is_clifford=stats["is_clifford"],
-        source_format=CircuitFormat.CUDAQ_JSON,
-        sdk=SDK.CUDAQ,
-    )

@@ -6,8 +6,8 @@
 import json
 
 import pytest
+from devqubit_cudaq.circuits import _CUDAQ_GATES
 from devqubit_cudaq.serialization import (
-    _CUDAQ_GATES,
     CudaqCircuitLoader,
     CudaqCircuitSerializer,
     capture_mlir,

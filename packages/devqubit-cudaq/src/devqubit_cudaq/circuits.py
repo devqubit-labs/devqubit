@@ -2,22 +2,25 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Kernel hashing for the CUDA-Q adapter.
+Kernel hashing and summarization for the CUDA-Q adapter.
 
+Hashing
+-------
 Produces two distinct hashes per UEC contract:
 
 - **structural_hash**: Identifies the circuit *template* (gate sequence,
-  wiring) while ignoring parameter values.  Two executions of the same
-  kernel with different angles share a structural hash.
-- **parametric_hash**: Includes concrete parameter values.  Two executions
-  of the same kernel with *different* angles produce different parametric
-  hashes.
+  wiring, parameter arity) while ignoring concrete parameter values.
+  Two executions of the same kernel with different angles share a
+  structural hash.
+- **parametric_hash**: Includes concrete parameter values *and* the
+  call-site arguments.  Two executions of the same kernel with
+  *different* angles produce different parametric hashes.
 
-Primary path: ``cudaq.translate(kernel, *args, format="qir:1.0")`` or
-``cudaq.draw(kernel, *args)`` → hash the parametric representation,
-then normalize numbers for the structural hash.
-
-Fallback: ``kernel.to_json()`` → op_stream → ``hash_circuit_pair()``.
+Primary path:  ``kernel.to_json()`` => canonicalise JSON => hash.
+To build the *parametric* hash the canonicalised call arguments are
+appended.  ``cudaq.draw()`` is **not** used for hashing (it is a
+presentational format that omits measurements and may change between
+SDK versions) — it is logged as a human-readable artifact only.
 """
 
 from __future__ import annotations
@@ -25,80 +28,227 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
+import math
+import struct
+from collections import Counter
 from typing import Any
 
-from devqubit_cudaq.utils import get_kernel_name
+from devqubit_cudaq.utils import get_kernel_name, get_kernel_num_qubits
 from devqubit_engine.circuit.hashing import hash_circuit_pair
+from devqubit_engine.circuit.models import (
+    SDK,
+    CircuitFormat,
+    GateCategory,
+    GateClassifier,
+    GateInfo,
+)
+from devqubit_engine.circuit.summary import CircuitSummary
 
 
 logger = logging.getLogger(__name__)
 
-# Regex to replace float/int literals with a placeholder for structural hashing
-_NUM_RE = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
-_NUM_PLACEHOLDER = "<num>"
+
+# ============================================================================
+# Gate classification (shared between hashing & summarization)
+# ============================================================================
+
+_CUDAQ_GATES: dict[str, GateInfo] = {
+    # Single-qubit Clifford
+    "h": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "x": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "y": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "z": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "s": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "sdg": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    "sdag": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=True),
+    # Single-qubit non-Clifford
+    "t": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "tdg": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "tdag": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "rx": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "ry": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "rz": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "r1": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "u3": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    "phaseshift": GateInfo(GateCategory.SINGLE_QUBIT, is_clifford=False),
+    # Two-qubit Clifford
+    "cnot": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
+    "cx": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
+    "cz": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
+    "cy": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
+    "swap": GateInfo(GateCategory.TWO_QUBIT, is_clifford=True),
+    # Two-qubit non-Clifford
+    "crx": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    "cry": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    "crz": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    "cr1": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    "cs": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    "ct": GateInfo(GateCategory.TWO_QUBIT, is_clifford=False),
+    # Multi-qubit
+    "toffoli": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
+    "ccx": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
+    "ccnot": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
+    "cswap": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
+    "fredkin": GateInfo(GateCategory.MULTI_QUBIT, is_clifford=False),
+    # Measurement
+    "mz": GateInfo(GateCategory.MEASURE),
+    "mx": GateInfo(GateCategory.MEASURE),
+    "my": GateInfo(GateCategory.MEASURE),
+    "measure": GateInfo(GateCategory.MEASURE),
+}
+
+_classifier = GateClassifier(_CUDAQ_GATES)
 
 
 # ============================================================================
-# Parametric representation helpers
+# JSON canonicalisation
 # ============================================================================
 
+# Top-level keys that are debug / unstable metadata and must be stripped
+# before hashing so that changes between SDK versions or environments do
+# not break hash stability.
+_STRIP_KEYS: frozenset[str] = frozenset(
+    {
+        "__file__",
+        "__line__",
+        "__source__",
+        "docstring",
+        "doc",
+        "metadata",
+        "debug",
+        "source_location",
+        "location",
+        "id",
+        "uuid",
+    }
+)
 
-def _get_parametric_repr(
-    kernel: Any,
+
+def _float_to_hex(value: float) -> str:
+    """IEEE-754 binary64 big-endian hex — deterministic across platforms."""
+    if math.isnan(value):
+        return "nan"
+    if math.isinf(value):
+        return "inf" if value > 0 else "-inf"
+    if value == 0.0:
+        value = 0.0  # normalise -0.0
+    return struct.pack(">d", value).hex()
+
+
+def _canonicalise_value(value: Any) -> Any:
+    """
+    Make a single JSON value deterministic.
+
+    * Floats => IEEE-754 hex string (avoids repr precision issues).
+    * Ints / bools / None / strings => pass through.
+    * Lists => recurse.
+    * Dicts => recurse (keys sorted later by json.dumps).
+    """
+    if isinstance(value, float):
+        return _float_to_hex(value)
+    if isinstance(value, dict):
+        return {
+            k: _canonicalise_value(v) for k, v in value.items() if k not in _STRIP_KEYS
+        }
+    if isinstance(value, (list, tuple)):
+        return [_canonicalise_value(v) for v in value]
+    return value
+
+
+def canonicalize_kernel_json(native_json: str) -> str:
+    """
+    Canonicalise ``kernel.to_json()`` output for hashing.
+
+    Steps:
+
+    1. Parse JSON.
+    2. Strip unstable / debug keys (file paths, line numbers, UUIDs).
+    3. Normalise floats to IEEE-754 hex (platform-stable).
+    4. Re-serialise with sorted keys and compact separators.
+
+    Parameters
+    ----------
+    native_json : str
+        Raw JSON string from ``kernel.to_json()``.
+
+    Returns
+    -------
+    str
+        Deterministic JSON string suitable for SHA-256 hashing.
+
+    Raises
+    ------
+    json.JSONDecodeError
+        If *native_json* is not valid JSON.
+    """
+    data = json.loads(native_json)
+    canonical = _canonicalise_value(data)
+    return json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+
+
+def canonicalize_call_args(
     args: tuple[Any, ...],
-) -> str | None:
+    kwargs: dict[str, Any] | None = None,
+) -> str:
     """
-    Obtain a textual representation of the kernel with concrete parameter
-    values substituted.  Tries, in order:
+    Deterministically serialise call-site arguments.
 
-    1. ``cudaq.draw(kernel, *args)``
-    2. ``cudaq.translate(kernel, *args, format="qir:1.0")``
-    3. ``kernel.to_json()``  (does *not* embed args — treated as fallback)
+    Produces a stable string that changes whenever the concrete argument
+    values change, so that the *parametric* hash properly reflects the
+    invocation parameters.
 
-    Returns ``None`` only when every attempt fails.
+    Parameters
+    ----------
+    args : tuple
+        Positional arguments passed to the kernel.
+    kwargs : dict, optional
+        Keyword arguments passed to the kernel.
+
+    Returns
+    -------
+    str
+        Deterministic JSON string of the arguments.
     """
-    # 1. cudaq.draw  (most compact, includes args, simulator-only)
-    try:
-        import cudaq
-
-        diagram = cudaq.draw(kernel, *args)
-        if isinstance(diagram, str) and diagram.strip():
-            return diagram
-    except Exception:
-        pass
-
-    # 2. cudaq.translate  (works on more targets)
-    try:
-        import cudaq
-
-        qir = cudaq.translate(kernel, *args, format="qir:1.0")
-        if isinstance(qir, str) and qir.strip():
-            return qir
-    except Exception:
-        pass
-
-    # 3. kernel.to_json()  (no arg substitution)
-    try:
-        fn = getattr(kernel, "to_json", None)
-        if fn is not None and callable(fn):
-            result = fn()
-            if isinstance(result, str) and result:
-                return result
-    except Exception:
-        pass
-
-    return None
+    payload: dict[str, Any] = {}
+    if args:
+        payload["a"] = [_canonicalise_value(_to_jsonable(a)) for a in args]
+    if kwargs:
+        payload["k"] = {
+            str(k): _canonicalise_value(_to_jsonable(v))
+            for k, v in sorted(kwargs.items())
+        }
+    if not payload:
+        return ""
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
-def _normalize_numbers(text: str) -> str:
-    """Replace all numeric literals with a fixed placeholder."""
-    return _NUM_RE.sub(_NUM_PLACEHOLDER, text)
+def _to_jsonable(value: Any) -> Any:
+    """Best-effort conversion to a JSON-safe primitive."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    # numpy scalar or similar
+    type_name = type(value).__name__
+    if "float" in type_name.lower():
+        return float(value)
+    if "int" in type_name.lower():
+        return int(value)
+    # Last resort — use repr so the hash is still deterministic within
+    # a single Python process.  Cross-process stability is not guaranteed
+    # for opaque types, but this is better than crashing.
+    return repr(value)
 
 
 # ============================================================================
-# Native JSON → op_stream  (fallback when parametric repr unavailable)
+# Hashing — public API
 # ============================================================================
+
+
+def _sha256_tag(payload: str) -> str:
+    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
 
 
 def _get_native_json(kernel: Any) -> str | None:
@@ -112,6 +262,103 @@ def _get_native_json(kernel: Any) -> str | None:
     except Exception as exc:
         logger.debug("kernel.to_json() failed: %s", exc)
     return None
+
+
+def compute_circuit_hashes(
+    kernel: Any,
+    args: tuple[Any, ...] = (),
+    kwargs: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    """
+    Compute structural and parametric hashes for a CUDA-Q kernel.
+
+    Strategy
+    --------
+    1. **Primary — canonical JSON**:
+       ``kernel.to_json()`` => canonicalise => structural hash.
+       Append canonicalised call arguments => parametric hash.
+    2. **Secondary — op_stream** (if JSON parses into an instruction list):
+       Feed the engine's ``hash_circuit_pair()`` for cross-SDK–compatible
+       hashing, then mix in call arguments for the parametric hash.
+    3. **Last resort**: hash the kernel name so that we never return
+       ``None``.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel.
+    args : tuple
+        Concrete positional kernel arguments.
+    kwargs : dict, optional
+        Concrete keyword kernel arguments.
+
+    Returns
+    -------
+    (structural_hash, parametric_hash)
+        Both ``sha256:<hex>``.  Never returns ``None``.
+    """
+    native_json = _get_native_json(kernel)
+
+    if native_json is not None:
+        # --- Strategy 1: canonical JSON ---
+        try:
+            canonical = canonicalize_kernel_json(native_json)
+            structural_hash = _sha256_tag(canonical)
+
+            args_canonical = canonicalize_call_args(args, kwargs)
+            if args_canonical:
+                parametric_hash = _sha256_tag(canonical + "|" + args_canonical)
+            else:
+                parametric_hash = structural_hash
+
+            return structural_hash, parametric_hash
+        except json.JSONDecodeError as exc:
+            logger.debug("Canonical JSON failed (bad JSON): %s", exc)
+        except Exception as exc:
+            logger.debug("Canonical JSON hashing failed: %s", exc)
+
+        # --- Strategy 2: op_stream via engine ---
+        try:
+            parsed = _native_json_to_op_stream(native_json)
+            if parsed is not None:
+                ops, nq = parsed
+                header = {
+                    "gate": "__kernel__",
+                    "qubits": [],
+                    "meta": {"nq": nq, "nc": 0},
+                }
+                structural, parametric = hash_circuit_pair([header] + ops, nq, 0)
+                if args or kwargs:
+                    args_canonical = canonicalize_call_args(args, kwargs)
+                    if args_canonical:
+                        parametric = _sha256_tag(f"{parametric}|{args_canonical}")
+                return structural, parametric
+        except Exception as exc:
+            logger.debug("op_stream hashing failed: %s", exc)
+
+        # Fallback: raw JSON hash
+        structural = _sha256_tag(native_json)
+        if args or kwargs:
+            args_canonical = canonicalize_call_args(args, kwargs)
+            parametric = _sha256_tag(f"{native_json}|{args_canonical}")
+        else:
+            parametric = structural
+        return structural, parametric
+
+    # --- Strategy 3: kernel name ---
+    name = get_kernel_name(kernel)
+    structural = _sha256_tag(name)
+    if args or kwargs:
+        args_canonical = canonicalize_call_args(args, kwargs)
+        parametric = _sha256_tag(f"{name}|{args_canonical}")
+    else:
+        parametric = structural
+    return structural, parametric
+
+
+# ============================================================================
+# Native JSON => op_stream
+# ============================================================================
 
 
 def _native_json_to_op_stream(
@@ -175,153 +422,69 @@ def _native_json_to_op_stream(
 
 
 # ============================================================================
-# Hashing — public API
+# Summarization — public entry-point
 # ============================================================================
 
 
-def _sha256_tag(payload: str) -> str:
-    return f"sha256:{hashlib.sha256(payload.encode('utf-8')).hexdigest()}"
-
-
-def compute_circuit_hashes(
-    kernel: Any,
-    args: tuple[Any, ...] = (),
-) -> tuple[str, str]:
+def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     """
-    Compute structural and parametric hashes for a CUDA-Q kernel.
+    Summarize a CUDA-Q kernel.
 
-    Strategy:
+    Extracts gate counts, parameter information, and structural
+    metadata for quick circuit characterisation.  Registered as the
+    ``devqubit.circuit.summarizers`` entry-point for the ``cudaq`` SDK.
 
-    1. Obtain a parametric representation that embeds concrete arg values
-       (via ``cudaq.draw`` / ``cudaq.translate``).  Hash it for the
-       *parametric* hash, and hash the number-normalized form for the
-       *structural* hash.
-    2. If unavailable, fall back to ``to_json()`` → op_stream →
-       ``hash_circuit_pair()``.
-    3. Last resort: hash the kernel name (both hashes equal).
-
-    Unlike a bare ``to_json()`` path, strategy (1) ensures the parametric
-    hash changes when the same kernel is executed with different parameter
-    values.
+    The function works from ``kernel.to_json()`` (the instruction list),
+    **not** from ``cudaq.draw()``, because the diagram format omits
+    measurements and is not guaranteed to be stable.
 
     Parameters
     ----------
     kernel : Any
-        CUDA-Q kernel.
-    args : tuple
-        Concrete kernel arguments.
+        CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
 
     Returns
     -------
-    (structural_hash, parametric_hash)
-        Both ``sha256:<hex>``.  Never returns ``None``; at worst falls
-        back to hashing the kernel name.
+    CircuitSummary
+        Circuit summary with gate counts and statistics.
     """
-    # --- Strategy 1: parametric repr with args ---
-    parametric_repr = _get_parametric_repr(kernel, args)
-    if parametric_repr is not None:
-        parametric_hash = _sha256_tag(parametric_repr)
-        structural_hash = _sha256_tag(_normalize_numbers(parametric_repr))
-        return structural_hash, parametric_hash
+    gate_counts: Counter[str] = Counter()
+    has_params = False
+    param_count = 0
+    num_qubits = get_kernel_num_qubits(kernel) or 0
 
-    # --- Strategy 2: to_json() → op_stream ---
     native_json = _get_native_json(kernel)
     if native_json is not None:
-        try:
-            parsed = _native_json_to_op_stream(native_json)
-            if parsed is not None:
-                ops, nq = parsed
-                all_ops: list[dict[str, Any]] = [
-                    {"gate": "__kernel__", "qubits": [], "meta": {"nq": nq, "nc": 0}},
-                ]
-                all_ops.extend(ops)
-                structural, parametric = hash_circuit_pair(all_ops, nq, 0)
+        parsed = _native_json_to_op_stream(native_json)
+        if parsed is not None:
+            ops, detected_qubits = parsed
+            if detected_qubits > num_qubits:
+                num_qubits = detected_qubits
 
-                # If args are present, incorporate them into the parametric hash
-                # so that different parameter values produce different hashes.
-                if args:
-                    args_tag = _sha256_tag(repr(args))
-                    parametric = _sha256_tag(f"{parametric}:{args_tag}")
+            for op in ops:
+                gate_name = op.get("gate", "unknown").lower()
+                if gate_name.startswith("__"):
+                    continue
+                gate_counts[gate_name] += 1
+                params = op.get("params")
+                if params:
+                    has_params = True
+                    param_count += len(params) if isinstance(params, dict) else 1
 
-                return structural, parametric
-        except Exception as exc:
-            logger.debug("op_stream hashing failed: %s", exc)
+    stats = _classifier.classify_counts(dict(gate_counts))
 
-        # Fallback: hash raw JSON (structural = parametric unless args exist)
-        structural = _sha256_tag(native_json)
-        if args:
-            parametric = _sha256_tag(f"{native_json}:{repr(args)}")
-        else:
-            parametric = structural
-        return structural, parametric
-
-    # --- Strategy 3: kernel name ---
-    name = get_kernel_name(kernel)
-    structural = _sha256_tag(name)
-    if args:
-        parametric = _sha256_tag(f"{name}:{repr(args)}")
-    else:
-        parametric = structural
-    return structural, parametric
-
-
-# ============================================================================
-# Diagram parsing (for summarization ONLY)
-# ============================================================================
-
-_GATE_RE = re.compile(
-    r"[┤|]\s*([a-zA-Z_]\w*)(?:\(([^)]*)\))?\s*[├|]",
-)
-_CTRL_RE = re.compile(r"●")
-_WIRE_LABEL_RE = re.compile(r"^(q\d+)\s*:")
-
-
-def _parse_diagram_to_ops(diagram: str) -> tuple[list[dict[str, Any]], int]:
-    """
-    Parse ``cudaq.draw()`` output into operation dicts.
-
-    Used **only** by ``summarize_cudaq_kernel()`` — not for hashing.
-    """
-    if not diagram:
-        return [], 0
-
-    lines = diagram.strip().splitlines()
-    wire_lines: dict[int, str] = {}
-
-    for line in lines:
-        m = _WIRE_LABEL_RE.match(line.strip())
-        if m:
-            idx = int(m.group(1).replace("q", ""))
-            wire_lines[idx] = line
-
-    num_qubits = max(wire_lines.keys(), default=-1) + 1 if wire_lines else 0
-    ops: list[dict[str, Any]] = []
-
-    for wire_idx, wire_content in sorted(wire_lines.items()):
-        for gate_match in _GATE_RE.finditer(wire_content):
-            gate_name = gate_match.group(1).lower()
-            params_str = gate_match.group(2)
-
-            params: dict[str, Any] = {}
-            if params_str:
-                for i, p in enumerate(params_str.split(",")):
-                    p = p.strip()
-                    try:
-                        params[f"p{i}"] = float(p)
-                    except ValueError:
-                        params[f"p{i}"] = None
-
-            op: dict[str, Any] = {
-                "gate": gate_name,
-                "qubits": [wire_idx],
-                "clbits": [],
-            }
-            if params:
-                op["params"] = params
-            ops.append(op)
-
-    for line in lines:
-        for _ in _CTRL_RE.finditer(line):
-            ops.append({"gate": "__ctrl__", "qubits": [], "clbits": []})
-
-    return ops, num_qubits
+    return CircuitSummary(
+        num_qubits=num_qubits,
+        depth=0,
+        gate_count_1q=stats["gate_count_1q"],
+        gate_count_2q=stats["gate_count_2q"],
+        gate_count_multi=stats["gate_count_multi"],
+        gate_count_measure=stats["gate_count_measure"],
+        gate_count_total=sum(gate_counts.values()),
+        gate_types=dict(gate_counts),
+        has_parameters=has_params,
+        parameter_count=param_count if has_params else 0,
+        is_clifford=stats["is_clifford"],
+        source_format=CircuitFormat.CUDAQ_JSON,
+        sdk=SDK.CUDAQ,
+    )
