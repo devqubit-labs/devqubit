@@ -25,7 +25,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "cudaq>=0.10.0",
+    "cuda-quantum-cu12>=0.13.0,<0.14.0",
+    "cudaq>=0.13.0,<0.14.0",
     "devqubit-engine>=0.1.11,<0.2.0",
 ]
 

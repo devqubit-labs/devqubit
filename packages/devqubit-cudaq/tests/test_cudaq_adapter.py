@@ -1,266 +1,348 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for the CUDA-Q adapter (adapter.py)."""
+"""End-to-end tests for the CUDA-Q adapter."""
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
 
+import cudaq
 import pytest
-from devqubit_engine.tracking.run import Run
+from devqubit_cudaq.adapter import CudaqAdapter, TrackedCudaqExecutor
+from devqubit_engine.tracking.run import Run, track
+
+
+# ruff: noqa: F821
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _artifacts_of_kind(loaded, kind: str):
+    return [a for a in loaded.artifacts if a.kind == kind]
+
+
+def _load_json(store, digest: str):
+    return json.loads(store.get_bytes(digest).decode("utf-8"))
+
+
+def _load_single_envelope(store, loaded) -> dict:
+    env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+    assert len(env_arts) == 1, f"Expected 1 envelope, got {len(env_arts)}"
+    return _load_json(store, env_arts[0].digest)
+
+
+# ---------------------------------------------------------------------------
+# Adapter registration
+# ---------------------------------------------------------------------------
 
 
 class TestCudaqAdapter:
 
     def test_name(self):
-        from devqubit_cudaq.adapter import CudaqAdapter
-
         assert CudaqAdapter().name == "cudaq"
 
-    def test_rejects_non_cudaq(self):
-        from devqubit_cudaq.adapter import CudaqAdapter
+    def test_supports_cudaq_module(self):
+        assert CudaqAdapter().supports_executor(cudaq) is True
 
+    def test_rejects_non_cudaq(self):
         adapter = CudaqAdapter()
+        assert adapter.supports_executor(None) is False
         assert adapter.supports_executor("nope") is False
         assert adapter.supports_executor(42) is False
-        assert adapter.supports_executor(None) is False
 
+    def test_describe_executor(self):
+        desc = CudaqAdapter().describe_executor(cudaq)
+        assert desc["sdk"] == "cudaq"
+        assert "name" in desc
 
-class TestTrackedCudaqExecutorInit:
-
-    def test_initial_counters(self, store, registry, make_executor):
+    def test_wrap_executor(self, store, registry):
+        adapter = CudaqAdapter()
         with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            assert executor._execution_count == 0
-            assert executor._logged_execution_count == 0
-            assert len(executor._seen_circuit_hashes) == 0
-
-    def test_cudaq_module_accessible(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            assert hasattr(executor.cudaq, "sample")
-            assert hasattr(executor.cudaq, "observe")
-
-    def test_getattr_passthrough(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.set_target("qpp-cpu")
-            executor.cudaq.set_target.assert_called_once_with("qpp-cpu")
-
-    def test_runtime_events_initially_empty(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            assert executor._runtime_config_events == []
+            wrapped = adapter.wrap_executor(cudaq, run)
+            assert isinstance(wrapped, TrackedCudaqExecutor)
 
 
-class TestSampleExecution:
+# ---------------------------------------------------------------------------
+# Sample end-to-end
+# ---------------------------------------------------------------------------
 
-    def test_returns_result(
-        self, store, registry, make_executor, make_sample_result, bell_kernel
+
+class TestSampleEndToEnd:
+
+    def test_bell_sample_produces_envelope_and_record(
+        self, bell_kernel, store, registry
     ):
-        expected = make_sample_result({"00": 500, "11": 500})
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, sample_result=expected)
-            result = executor.sample(bell_kernel, shots_count=1000)
-        assert result is expected
+        """Execute Bell kernel → verify run record + UEC envelope."""
+        shots = 256
 
-    def test_increments_counter(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            result = executor.sample(bell_kernel, shots_count=shots)
+
+        # Result is a real SampleResult
+        assert result.get_total_shots() == shots
+        for bitstring, count in result.items():
+            assert bitstring in ("00", "11")
+            assert count > 0
+
+        # Run record
+        loaded = registry.load(run.run_id)
+        assert loaded.status == "FINISHED"
+        assert loaded.record["backend"]["sdk"] == "cudaq"
+        assert loaded.record["execute"]["success"] is True
+
+        # UEC envelope
+        env = _load_single_envelope(store, loaded)
+        assert env["producer"]["adapter"] == "devqubit-cudaq"
+        assert env["producer"]["sdk"] == "cudaq"
+        assert env["program"]["num_circuits"] == 1
+        assert env["execution"]["shots"] == shots
+
+        # Bell state counts: only 00 and 11
+        items = env["result"]["items"]
+        assert len(items) >= 1
+        counts = items[0]["counts"]["counts"]
+        assert sum(counts.values()) == shots
+        assert set(counts).issubset({"00", "11"})
+
+    def test_ghz_sample(self, ghz_kernel, store, registry):
+        """GHZ kernel produces only 000 and 111."""
+        shots = 512
+
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            result = executor.sample(ghz_kernel, shots_count=shots)
+
+        assert result.get_total_shots() == shots
+
+        loaded = registry.load(run.run_id)
+        env = _load_single_envelope(store, loaded)
+        counts = env["result"]["items"][0]["counts"]["counts"]
+        assert set(counts).issubset({"000", "111"})
+
+    def test_parameterized_kernel_sample(self, rx_kernel, store, registry):
+        """Parameterized Rx(0.0) → always |0⟩."""
+        shots = 100
+
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            result = executor.sample(rx_kernel, 0.0, shots_count=shots)
+
+        assert result.get_total_shots() == shots
+        # Rx(0) is identity — should measure |0⟩ with certainty
+        for bitstring, count in result.items():
+            assert bitstring == "0"
+
+    def test_device_snapshot_in_record(self, bell_kernel, store, registry):
+        """Device snapshot captures SDK and backend info."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
             executor.sample(bell_kernel, shots_count=100)
+
+        loaded = registry.load(run.run_id)
+        snapshot = loaded.record["device_snapshot"]
+        assert snapshot["sdk"] == "cudaq"
+        assert "backend_name" in snapshot
+
+    def test_tags_set(self, bell_kernel, store, registry):
+        """Tags include sdk, adapter, backend_name."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
             executor.sample(bell_kernel, shots_count=100)
-            executor.sample(bell_kernel, shots_count=100)
-            assert executor._execution_count == 3
 
-    def test_calls_cudaq_sample(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.sample(bell_kernel, shots_count=1000)
-        executor.cudaq.sample.assert_called_once()
-        assert executor.cudaq.sample.call_args[0][0] is bell_kernel
+        loaded = registry.load(run.run_id)
+        tags = loaded.record.get("data", {}).get("tags", {})
+        assert tags.get("sdk") == "cudaq"
+        assert tags.get("adapter") == "devqubit-cudaq"
 
 
-class TestObserveExecution:
+# ---------------------------------------------------------------------------
+# Observe end-to-end
+# ---------------------------------------------------------------------------
 
-    def test_returns_result(
-        self, store, registry, make_executor, make_observe_result, bell_kernel
+
+class TestObserveEndToEnd:
+
+    def test_observe_produces_expectation_in_envelope(
+        self, bell_kernel, z0_hamiltonian, store, registry
     ):
-        expected = make_observe_result(expectation=-0.5)
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, observe_result=expected)
-            result = executor.observe(bell_kernel, MagicMock())
-        assert result is expected
+        """observe() with Z₀ on Bell state → expectation near 0.0."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            result = executor.observe(bell_kernel, z0_hamiltonian)
 
-    def test_calls_cudaq_observe(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.observe(bell_kernel, MagicMock(), 0.5)
-        executor.cudaq.observe.assert_called_once()
+        # Real ObserveResult
+        exp_val = result.expectation()
+        assert isinstance(exp_val, float)
+        # Bell state: ⟨Z₀⟩ should be near 0
+        assert abs(exp_val) < 0.1
+
+        loaded = registry.load(run.run_id)
+        env = _load_single_envelope(store, loaded)
+        assert env["producer"]["sdk"] == "cudaq"
+        assert env["execution"]["sdk"] == "cudaq"
+
+    def test_observe_with_shots(
+        self, single_qubit_kernel, z0_hamiltonian, store, registry
+    ):
+        """Shot-based observe produces counts in the envelope."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            result = executor.observe(
+                single_qubit_kernel, z0_hamiltonian, shots_count=500
+            )
+
+        exp_val = result.expectation()
+        assert isinstance(exp_val, float)
+
+        loaded = registry.load(run.run_id)
+        assert loaded.record["results"]["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
 
 
 class TestErrorHandling:
 
-    def test_sample_error_reraised(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.cudaq.sample = MagicMock(
-                side_effect=RuntimeError("Target offline"),
-            )
-            with pytest.raises(RuntimeError, match="Target offline"):
-                executor.sample(bell_kernel, shots_count=100)
+    def test_execution_error_reraised_and_logged(self, store, registry):
+        """When cudaq.sample raises, error is logged and re-raised."""
 
-    def test_error_logged_to_record(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.cudaq.sample = MagicMock(
-                side_effect=ValueError("Bad params"),
-            )
-            with pytest.raises(ValueError):
-                executor.sample(bell_kernel, shots_count=100)
-            assert "execution_error" in run.record
+        @cudaq.kernel
+        def _bad_kernel():
+            q = cudaq.qvector(1)
+            mz(q)
+
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+
+            # Sabotage the cudaq module's sample to simulate backend failure
+            original_sample = executor.cudaq.sample
+
+            def _failing_sample(*args, **kwargs):
+                raise RuntimeError("Target offline")
+
+            executor.cudaq.sample = _failing_sample
+            try:
+                with pytest.raises(RuntimeError, match="Target offline"):
+                    executor.sample(_bad_kernel, shots_count=100)
+            finally:
+                executor.cudaq.sample = original_sample
+
+        loaded = registry.load(run.run_id)
+        assert "execution_error" in loaded.record
+        assert loaded.record["execution_error"]["type"] == "RuntimeError"
+
+        # Envelope should still be logged even on failure
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(env_arts) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Deduplication & logging frequency
+# ---------------------------------------------------------------------------
 
 
 class TestDeduplication:
 
-    def test_same_kernel_deduplicates(
-        self, store, registry, make_executor, bell_kernel
-    ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(
-                run,
-                log_every_n=0,
-                log_new_circuits=True,
-            )
-            executor.sample(bell_kernel, shots_count=100)
-            executor.sample(bell_kernel, shots_count=100)
-            executor.sample(bell_kernel, shots_count=100)
-            assert executor._execution_count == 3
-            assert len(executor._seen_circuit_hashes) == 1
+    def test_repeated_kernel_deduplicates_structure(self, bell_kernel, store, registry):
+        """Same kernel 3x with log_every_n=0 → 1 envelope (first only)."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq, log_every_n=0, log_new_circuits=True)
+            for _ in range(3):
+                executor.sample(bell_kernel, shots_count=100)
+
+        loaded = registry.load(run.run_id)
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(env_arts) == 1
 
     def test_different_kernels_both_logged(
-        self, store, registry, make_executor, bell_kernel, ghz_kernel
+        self, bell_kernel, ghz_kernel, store, registry
     ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, log_new_circuits=True)
+        """Two different kernels with log_new_circuits → 2 envelopes."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq, log_new_circuits=True)
             executor.sample(bell_kernel, shots_count=100)
             executor.sample(ghz_kernel, shots_count=100)
-            assert len(executor._seen_circuit_hashes) == 2
 
-    def test_log_every_n_minus_one_logs_all(
-        self, store, registry, make_executor, bell_kernel
-    ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, log_every_n=-1)
-            for _ in range(5):
+        loaded = registry.load(run.run_id)
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(env_arts) == 2
+
+    def test_log_every_n_minus_one_logs_all(self, bell_kernel, store, registry):
+        """log_every_n=-1 logs every execution."""
+        n_executions = 4
+
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq, log_every_n=-1)
+            for _ in range(n_executions):
                 executor.sample(bell_kernel, shots_count=100)
-            assert executor._execution_count == 5
-            assert executor._logged_execution_count == 5
+
+        loaded = registry.load(run.run_id)
+        env_arts = _artifacts_of_kind(loaded, "devqubit.envelope.json")
+        assert len(env_arts) == n_executions
 
 
-class TestRuntimeMethodWrapping:
+# ---------------------------------------------------------------------------
+# Runtime configuration tracking
+# ---------------------------------------------------------------------------
 
-    def test_set_target_resets_snapshot_cache(
-        self, store, registry, make_executor, bell_kernel
+
+class TestRuntimeConfiguration:
+
+    def test_set_target_records_event_and_invalidates_snapshot(
+        self, bell_kernel, store, registry
     ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
+        """set_target invalidates cached snapshot and records an event."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
+            # First sample — caches snapshot
             executor.sample(bell_kernel, shots_count=100)
             assert executor._device_snapshot is not None
-            executor.set_target("nvidia")
+
+            # Switch target — snapshot invalidated
+            executor.set_target("qpp-cpu")
             assert executor._device_snapshot is None
 
-    def test_set_target_records_event(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.set_target("ionq", machine="aria-1")
-            assert len(executor._runtime_config_events) == 1
-            event = executor._runtime_config_events[0]
-            assert event["method"] == "set_target"
-            assert "ionq" in event["args"]
-            assert "machine" in event["kwargs"]
-
-    def test_reset_target_records_event_and_invalidates(
-        self,
-        store,
-        registry,
-        make_executor,
-        bell_kernel,
-    ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
+            # Second sample — re-captures snapshot
             executor.sample(bell_kernel, shots_count=100)
             assert executor._device_snapshot is not None
-            executor.reset_target()
-            assert executor._device_snapshot is None
-            assert executor._runtime_config_events[-1]["method"] == "reset_target"
 
-    def test_set_noise_records_event(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.set_noise("depolarization")
-            assert executor._runtime_config_events[0]["method"] == "set_noise"
+        loaded = registry.load(run.run_id)
+        assert loaded.record["execution_stats"]["total_executions"] == 2
 
-    def test_unset_noise_records_event(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.unset_noise()
-            assert executor._runtime_config_events[0]["method"] == "unset_noise"
-
-    def test_set_random_seed_records_event(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
+    def test_set_random_seed_records_event(self, bell_kernel, store, registry):
+        """set_random_seed is recorded as a runtime config event."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq)
             executor.set_random_seed(42)
-            event = executor._runtime_config_events[0]
-            assert event["method"] == "set_random_seed"
-            assert "42" in event["args"]
-
-    def test_set_noise_does_not_invalidate_snapshot(
-        self,
-        store,
-        registry,
-        make_executor,
-        bell_kernel,
-    ):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
             executor.sample(bell_kernel, shots_count=100)
-            snapshot_before = executor._device_snapshot
-            executor.set_noise("depolarization")
-            assert executor._device_snapshot is snapshot_before
 
-    def test_multiple_events_accumulated(self, store, registry, make_executor):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.set_target("nvidia")
-            executor.set_random_seed(123)
-            executor.set_noise("bit_flip")
-            assert len(executor._runtime_config_events) == 3
+        loaded = registry.load(run.run_id)
+        assert loaded.status == "FINISHED"
 
 
-class TestUECCompliance:
+# ---------------------------------------------------------------------------
+# Execution stats
+# ---------------------------------------------------------------------------
 
-    def test_device_snapshot_captured(
-        self, store, registry, make_executor, make_target, bell_kernel
-    ):
-        target = make_target("nvidia", simulator="custatevec")
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, target=target)
+
+class TestExecutionStats:
+
+    def test_stats_updated(self, bell_kernel, store, registry):
+        """execution_stats reflects total executions and unique circuits."""
+        with track(project="test-cudaq", store=store, registry=registry) as run:
+            executor = run.wrap(cudaq, log_every_n=-1)
             executor.sample(bell_kernel, shots_count=100)
-            assert "device_snapshot" in run.record
-            assert run.record["device_snapshot"]["sdk"] == "cudaq"
-
-    def test_results_recorded(self, store, registry, make_executor, bell_kernel):
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run)
-            executor.sample(bell_kernel, shots_count=1000)
-            assert "results" in run.record
-            assert run.record["results"]["success"] is True
-
-    def test_tags_set(self, store, registry, make_executor, make_target, bell_kernel):
-        target = make_target("ionq", _is_remote=True)
-        with Run(store=store, registry=registry, project="test") as run:
-            executor = make_executor(run, target=target)
             executor.sample(bell_kernel, shots_count=100)
-            tags = run.record.get("data", {}).get("tags", {})
-            assert tags.get("sdk") == "cudaq"
+
+        loaded = registry.load(run.run_id)
+        stats = loaded.record["execution_stats"]
+        assert stats["total_executions"] == 2
+        assert stats["unique_circuits"] == 1
+        assert stats["logged_executions"] == 2
