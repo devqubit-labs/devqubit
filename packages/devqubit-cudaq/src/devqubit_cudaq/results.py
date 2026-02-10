@@ -4,27 +4,35 @@
 """
 Result processing for CUDA-Q adapter.
 
-Extracts and normalizes execution results from CUDA-Q ``SampleResult``
-and ``ObserveResult`` objects following the devqubit Uniform Execution
-Contract (UEC).
+This module owns **all knowledge about CUDA-Q result objects**
+(``SampleResult`` and ``ObserveResult``).  It exposes two consumer APIs:
+
+UEC normalized results
+    ``build_result_snapshot()`` — bitstring normalization, quasi-probability
+    derivation, expectation extraction.
+
+Raw artifact (``result.cudaq.output.json``)
+    ``result_to_raw_artifact()`` — SDK-native extraction through CUDA-Q
+    public API (``expectation()``, ``counts()``, ``items()``,
+    ``register_names``, ``get_register_counts()``).
 
 Bitstring Convention
 --------------------
 CUDA-Q returns bitstrings in allocation order (qubit 0 = leftmost bit),
-which corresponds to ``cbit0_left`` in UEC terms. This module transforms
+which corresponds to ``cbit0_left`` in UEC terms.  This module transforms
 all bitstrings to the UEC canonical ``cbit0_right`` order and marks the
 result format accordingly.
 
 When ``explicit_measurements=True`` is passed to ``sample()``, the global
 register contains bits in **measurement execution order** rather than
-allocation order. In that mode bitstrings are kept as-is and the format
-is marked ``bit_order='measurement_order'`` so downstream consumers know
-the semantics differ.
+allocation order.  In that mode bitstrings are kept as-is and the format
+is marked ``bit_order='measurement_order'``.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from devqubit_engine.uec.models.result import (
@@ -138,23 +146,290 @@ def detect_result_type(result: Any) -> str:
 
 
 # ============================================================================
-# Extraction helpers
+# Raw artifact extraction (for result.cudaq.output.json)
+# ============================================================================
+
+
+def _scrub_memory_addresses(text: str) -> str:
+    """Replace process-specific memory addresses with a stable placeholder."""
+    return re.sub(r"0x[0-9a-fA-F]+", "0x…", text)
+
+
+def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
+    """
+    Extract raw data from a ``SampleResult`` into JSON-safe form.
+
+    Uses the public CUDA-Q API: ``items()``, ``get_total_shots()``,
+    ``most_probable()``, ``register_names``, ``get_register_counts()``.
+
+    Parameters
+    ----------
+    sample_obj : Any
+        CUDA-Q sample result.
+
+    Returns
+    -------
+    dict
+        JSON-safe raw representation.
+    """
+    out: dict[str, Any] = {"type": "sample"}
+
+    shots = None
+    if hasattr(sample_obj, "get_total_shots"):
+        try:
+            shots = int(sample_obj.get_total_shots())
+        except Exception:
+            shots = None
+
+    counts: dict[str, int] | None = None
+    if hasattr(sample_obj, "items"):
+        try:
+            counts = {str(k): int(v) for k, v in sample_obj.items()}
+        except Exception:
+            counts = None
+    if counts is None:
+        try:
+            counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
+        except Exception:
+            counts = None
+
+    if counts is not None:
+        out["counts"] = counts
+        if shots is None:
+            try:
+                shots = int(sum(counts.values()))
+            except Exception:
+                shots = None
+
+    if shots is not None:
+        out["shots"] = shots
+
+    if hasattr(sample_obj, "register_names"):
+        try:
+            names = list(sample_obj.register_names)
+            if names:
+                out["register_names"] = [str(n) for n in names]
+        except Exception:
+            pass
+
+    if hasattr(sample_obj, "most_probable"):
+        try:
+            out["most_probable"] = str(sample_obj.most_probable())
+        except Exception:
+            pass
+
+    if hasattr(sample_obj, "get_register_counts") and out.get("register_names"):
+        reg_counts: dict[str, Any] = {}
+        for reg in out["register_names"]:
+            try:
+                r = sample_obj.get_register_counts(reg)
+                if r is not None and hasattr(r, "items"):
+                    reg_counts[str(reg)] = {str(k): int(v) for k, v in r.items()}
+            except Exception:
+                continue
+        if reg_counts:
+            out["register_counts"] = reg_counts
+
+    return out
+
+
+def _extract_observe_counts_raw(sample_obj: Any) -> dict[str, Any]:
+    """
+    Extract counts from an observe-derived ``SampleResult`` safely.
+
+    The ``SampleResult`` returned by ``ObserveResult.counts()`` has
+    partially-initialized C++ internals.  Methods like
+    ``most_probable()``, ``register_names``, and
+    ``get_register_counts()`` trigger segfaults at the pybind11 layer
+    that Python ``try/except`` cannot catch.  This helper restricts
+    itself to the safe subset: ``items()`` and ``get_total_shots()``.
+
+    Parameters
+    ----------
+    sample_obj : Any
+        ``SampleResult`` obtained from ``ObserveResult.counts()``.
+
+    Returns
+    -------
+    dict
+        JSON-safe counts representation with ``type``, ``counts``,
+        and ``shots`` keys.
+    """
+    out: dict[str, Any] = {"type": "sample"}
+
+    shots = None
+    if hasattr(sample_obj, "get_total_shots"):
+        try:
+            shots = int(sample_obj.get_total_shots())
+        except Exception:
+            shots = None
+
+    counts: dict[str, int] | None = None
+    if hasattr(sample_obj, "items"):
+        try:
+            counts = {str(k): int(v) for k, v in sample_obj.items()}
+        except Exception:
+            counts = None
+    if counts is None:
+        try:
+            counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
+        except Exception:
+            counts = None
+
+    if counts is not None:
+        out["counts"] = counts
+        if shots is None:
+            try:
+                shots = int(sum(counts.values()))
+            except Exception:
+                shots = None
+
+    if shots is not None:
+        out["shots"] = shots
+
+    return out
+
+
+def _extract_observe_raw(
+    observe_obj: Any,
+    *,
+    shots: int | None = None,
+) -> dict[str, Any]:
+    """
+    Extract raw data from an ``ObserveResult`` into JSON-safe form.
+
+    Uses the public CUDA-Q API: ``expectation()`` and ``counts()``.
+
+    Parameters
+    ----------
+    observe_obj : Any
+        CUDA-Q observe result.
+    shots : int or None
+        Shot count from the execution call.  When ``None`` (analytic
+        mode) ``.counts()`` is **not** called — CUDA-Q returns an
+        invalid C++ ``SampleResult`` that segfaults in pybind11 before
+        Python can catch the exception.  Even in shot-based mode the
+        returned ``SampleResult`` has partially-initialized internals,
+        so only safe methods (``items()``, ``get_total_shots()``) are
+        called via ``_extract_observe_counts_raw``.
+
+    Returns
+    -------
+    dict
+        JSON-safe raw representation.
+    """
+    out: dict[str, Any] = {"type": "observe"}
+
+    if hasattr(observe_obj, "expectation"):
+        try:
+            out["expectation"] = float(observe_obj.expectation())
+        except Exception:
+            pass
+
+    # Guard: .counts() on an analytic ObserveResult segfaults (pybind11
+    # returns an invalid SampleResult whose methods crash the process).
+    # Even in shot-based mode, only safe methods may be called — see
+    # _extract_observe_counts_raw docstring.
+    if shots is not None and hasattr(observe_obj, "counts"):
+        try:
+            sr = observe_obj.counts()
+        except Exception:
+            sr = None
+        if sr is not None:
+            try:
+                out["counts_obj"] = _extract_observe_counts_raw(sr)
+            except Exception:
+                pass
+
+    return out
+
+
+def result_to_raw_artifact(
+    result: Any,
+    *,
+    result_type: str | None = None,
+    shots: int | None = None,
+) -> Any:
+    """
+    Convert a CUDA-Q result to a JSON-safe raw artifact payload.
+
+    This is the data logged as ``result.cudaq.output.json``.  It extracts
+    real values through the CUDA-Q public API rather than falling back to
+    ``repr()`` (which embeds non-deterministic memory addresses).
+
+    Parameters
+    ----------
+    result : Any
+        CUDA-Q result object (``SampleResult``, ``ObserveResult``,
+        list of either, or unknown).
+    result_type : str, optional
+        Explicit result type if already known.
+    shots : int or None
+        Shot count from the execution call.  Passed through to
+        ``_extract_observe_raw`` to guard against the analytic-mode
+        segfault in ``ObserveResult.counts()``.
+
+    Returns
+    -------
+    Any
+        JSON-safe representation.
+    """
+    if result is None:
+        return None
+
+    if isinstance(result, list):
+        return [result_to_raw_artifact(r, shots=shots) for r in result]
+
+    rt = result_type or detect_result_type(result)
+
+    if rt == "sample":
+        try:
+            return _extract_sample_raw(result)
+        except Exception:
+            pass
+
+    if rt == "observe":
+        try:
+            return _extract_observe_raw(result, shots=shots)
+        except Exception:
+            pass
+
+    # Unknown result type — scrubbed str/repr fallback
+    try:
+        s = _scrub_memory_addresses(str(result))
+    except Exception:
+        s = "<unavailable>"
+
+    try:
+        r = _scrub_memory_addresses(repr(result))
+    except Exception:
+        r = "<unavailable>"
+
+    return {"type": type(result).__name__, "str": s, "repr": r}
+
+
+# ============================================================================
+# UEC extraction helpers
 # ============================================================================
 
 
 def _extract_counts_and_meta(
     sample_obj: Any,
+    *,
+    skip_registers: bool = False,
 ) -> tuple[dict[str, int] | None, dict[str, Any]]:
     """
     Extract bitstring counts and metadata from a ``SampleResult``.
-
-    Uses the proper ``SampleResult`` API: ``.items()`` for iteration
-    and ``.get_total_shots()`` for shot count.
 
     Parameters
     ----------
     sample_obj : Any
         CUDA-Q ``SampleResult``.
+    skip_registers : bool
+        When ``True``, skip ``register_names`` access.  Must be set
+        for ``SampleResult`` objects obtained from
+        ``ObserveResult.counts()`` whose ``register_names`` property
+        can segfault at the C++ pybind11 layer.
 
     Returns
     -------
@@ -163,15 +438,13 @@ def _extract_counts_and_meta(
     """
     meta: dict[str, Any] = {}
 
-    # Extract total shots via API
     if hasattr(sample_obj, "get_total_shots"):
         try:
             meta["shots"] = int(sample_obj.get_total_shots())
         except Exception:
             pass
 
-    # Extract register names
-    if hasattr(sample_obj, "register_names"):
+    if not skip_registers and hasattr(sample_obj, "register_names"):
         try:
             names = list(sample_obj.register_names)
             if names:
@@ -179,7 +452,6 @@ def _extract_counts_and_meta(
         except Exception:
             pass
 
-    # Extract counts via .items() (primary API)
     try:
         if hasattr(sample_obj, "items"):
             counts = {str(k): int(v) for k, v in sample_obj.items()}
@@ -187,7 +459,6 @@ def _extract_counts_and_meta(
     except Exception as exc:
         logger.debug("SampleResult.items() failed: %s", exc)
 
-    # Fallback: try dict-like iteration
     try:
         counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
         return counts, meta
@@ -209,7 +480,6 @@ def _extract_expectation_from_observe(result: Any) -> float | None:
     Returns
     -------
     float or None
-        Expectation value, or None on failure.
     """
     try:
         return float(result.expectation())
@@ -220,6 +490,8 @@ def _extract_expectation_from_observe(result: Any) -> float | None:
 
 def _extract_counts_from_observe(
     result: Any,
+    *,
+    shots: int | None = None,
 ) -> tuple[dict[str, int] | None, dict[str, Any]]:
     """
     Extract counts from an ``ObserveResult`` (shot-based observe).
@@ -228,23 +500,31 @@ def _extract_counts_from_observe(
     ----------
     result : Any
         CUDA-Q ``ObserveResult``.
+    shots : int or None
+        Shot count from the execution call.  When ``None`` (analytic
+        mode) ``.counts()`` is skipped — it segfaults on CUDA-Q's
+        pybind11 layer.
 
     Returns
     -------
     tuple[dict[str, int] | None, dict]
-        (counts dict, metadata) or (None, {}).
     """
+    if shots is None:
+        return None, {}
     try:
         sample_result = result.counts()
         if sample_result is not None:
-            return _extract_counts_and_meta(sample_result)
+            return _extract_counts_and_meta(
+                sample_result,
+                skip_registers=True,
+            )
     except Exception as exc:
         logger.debug("Failed to extract counts from ObserveResult: %s", exc)
     return None, {}
 
 
 # ============================================================================
-# Single-result item builders
+# UEC single-result item builders
 # ============================================================================
 
 
@@ -264,8 +544,7 @@ def _build_sample_items(
     item_offset : int
         Starting item index.
     call_kwargs : dict, optional
-        Keyword arguments that were passed to ``cudaq.sample()``.
-        Used to detect ``explicit_measurements`` mode.
+        Keyword arguments passed to ``cudaq.sample()``.
     """
     items: list[ResultItem] = []
 
@@ -273,15 +552,12 @@ def _build_sample_items(
     if not counts:
         return items
 
-    # Determine normalization strategy based on explicit_measurements flag
     explicit = bool((call_kwargs or {}).get("explicit_measurements"))
 
     if explicit:
-        # Measurement-order mode: keep bitstrings as-is
         normalized_counts = dict(counts)
         counts_format = dict(_CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER)
     else:
-        # Standard mode: reverse to UEC canonical cbit0_right
         normalized_counts = _normalize_bitstrings_to_cbit0_right(counts)
         counts_format = dict(_CUDAQ_COUNTS_FORMAT)
 
@@ -299,7 +575,6 @@ def _build_sample_items(
         )
     )
 
-    # Derive quasi-probability distribution
     if total_shots > 0:
         distribution = {k: float(v) / total_shots for k, v in normalized_counts.items()}
         probs_values = list(distribution.values())
@@ -323,6 +598,7 @@ def _build_observe_items(
     result: Any,
     *,
     item_offset: int = 0,
+    shots: int | None = None,
     call_kwargs: dict[str, Any] | None = None,
 ) -> list[ResultItem]:
     """
@@ -334,8 +610,11 @@ def _build_observe_items(
         CUDA-Q ``ObserveResult``.
     item_offset : int
         Starting item index.
+    shots : int or None
+        Shot count.  Passed to ``_extract_counts_from_observe`` to
+        guard against the analytic-mode segfault.
     call_kwargs : dict, optional
-        Keyword arguments that were passed to ``cudaq.observe()``.
+        Keyword arguments passed to ``cudaq.observe()``.
     """
     items: list[ResultItem] = []
 
@@ -354,7 +633,7 @@ def _build_observe_items(
             )
         )
 
-    obs_counts, _ = _extract_counts_from_observe(result)
+    obs_counts, _ = _extract_counts_from_observe(result, shots=shots)
     if obs_counts:
         obs_counts = _normalize_bitstrings_to_cbit0_right(obs_counts)
         total_shots = sum(obs_counts.values())
@@ -374,7 +653,7 @@ def _build_observe_items(
 
 
 # ============================================================================
-# Public API
+# Public API — UEC ResultSnapshot
 # ============================================================================
 
 
@@ -392,15 +671,10 @@ def build_result_snapshot(
     """
     Build a ``ResultSnapshot`` from CUDA-Q execution results.
 
-    Handles both single results and broadcasting (list results).
-    Bitstrings are normalized to UEC canonical ``cbit0_right`` order
-    unless ``explicit_measurements=True`` was passed to the execution call.
-
     Parameters
     ----------
     result : Any
-        CUDA-Q execution result (``SampleResult``, ``ObserveResult``,
-        or a list of either for broadcasting).
+        CUDA-Q execution result.
     result_type : str, optional
         Override result type. Auto-detected if not provided.
     backend_name : str, optional
@@ -419,7 +693,6 @@ def build_result_snapshot(
     Returns
     -------
     ResultSnapshot
-        Structured result snapshot.
     """
     status = "completed" if success else "failed"
 
@@ -438,20 +711,23 @@ def build_result_snapshot(
 
         try:
             if result_type == "observe":
-                items = _build_observe_items(result, call_kwargs=call_kwargs)
+                items = _build_observe_items(
+                    result,
+                    shots=shots,
+                    call_kwargs=call_kwargs,
+                )
 
             elif result_type == "sample":
                 items = _build_sample_items(result, call_kwargs=call_kwargs)
 
             elif result_type == "batch_sample" and isinstance(result, list):
                 offset = 0
-                for i, single in enumerate(result):
+                for single in result:
                     sub_items = _build_sample_items(
                         single,
                         item_offset=offset,
                         call_kwargs=call_kwargs,
                     )
-                    # tag each sub-item with the batch index
                     for si in sub_items:
                         si.item_index = offset
                         offset += 1
@@ -459,10 +735,11 @@ def build_result_snapshot(
 
             elif result_type == "batch_observe" and isinstance(result, list):
                 offset = 0
-                for i, single in enumerate(result):
+                for single in result:
                     sub_items = _build_observe_items(
                         single,
                         item_offset=offset,
+                        shots=shots,
                         call_kwargs=call_kwargs,
                     )
                     for si in sub_items:

@@ -33,7 +33,11 @@ import uuid
 from typing import Any
 
 from devqubit_cudaq.circuits import compute_circuit_hashes
-from devqubit_cudaq.results import build_result_snapshot, detect_result_type
+from devqubit_cudaq.results import (
+    build_result_snapshot,
+    detect_result_type,
+    result_to_raw_artifact,
+)
 from devqubit_cudaq.serialization import (
     CudaqCircuitSerializer,
     capture_mlir,
@@ -193,11 +197,16 @@ def _log_results(
         raw_result_ref = tracker.log_json(
             name="results",
             obj={
-                "results": to_jsonable(result) if result is not None else None,
+                "results": (
+                    result_to_raw_artifact(result, result_type=result_type, shots=shots)
+                    if result is not None
+                    else None
+                ),
                 "shots": shots,
                 "result_type": result_type,
                 "success": success,
                 "error": error_info,
+                "call_kwargs": to_jsonable(call_kwargs) if call_kwargs else None,
             },
             role="results",
             kind="result.cudaq.output.json",
