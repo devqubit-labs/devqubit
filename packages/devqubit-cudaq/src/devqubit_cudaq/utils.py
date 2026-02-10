@@ -79,7 +79,7 @@ def collect_sdk_versions() -> dict[str, str]:
     Returns
     -------
     dict
-        Package name → version string.  Always includes ``cudaq``.
+        Package name => version string.  Always includes ``cudaq``.
     """
     global _sdk_versions
     if _sdk_versions is not None:
@@ -363,7 +363,7 @@ def collect_env_snapshot() -> dict[str, str]:
     Returns
     -------
     dict
-        Variable name → value (or redacted placeholder).
+        Variable name => value (or redacted placeholder).
     """
     return collect_sdk_env_vars("cudaq")
 

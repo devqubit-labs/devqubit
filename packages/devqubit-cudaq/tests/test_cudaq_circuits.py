@@ -193,7 +193,7 @@ class TestComputeCircuitHashes:
     def test_no_to_json_falls_back_to_name(self, bare_kernel):
         s, p = compute_circuit_hashes(bare_kernel)
         assert s is not None
-        assert s == p  # No args → structural == parametric
+        assert s == p  # No args => structural == parametric
 
     def test_non_kernel_does_not_crash(self):
         s, p = compute_circuit_hashes(42)

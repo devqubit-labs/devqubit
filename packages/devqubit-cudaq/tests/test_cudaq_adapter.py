@@ -76,7 +76,7 @@ class TestSampleEndToEnd:
     def test_bell_sample_produces_envelope_and_record(
         self, bell_kernel, store, registry
     ):
-        """Execute Bell kernel → verify run record + UEC envelope."""
+        """Execute Bell kernel => verify run record + UEC envelope."""
         shots = 256
 
         with track(project="test-cudaq", store=store, registry=registry) as run:
@@ -125,7 +125,7 @@ class TestSampleEndToEnd:
         assert set(counts).issubset({"000", "111"})
 
     def test_parameterized_kernel_sample(self, rx_kernel, store, registry):
-        """Parameterized Rx(0.0) → always |0⟩."""
+        """Parameterized Rx(0.0) => always |0⟩."""
         shots = 100
 
         with track(project="test-cudaq", store=store, registry=registry) as run:
@@ -170,7 +170,7 @@ class TestObserveEndToEnd:
     def test_observe_produces_expectation_in_envelope(
         self, bell_observe_kernel, z0_hamiltonian, store, registry
     ):
-        """observe() with Z₀ on Bell state → expectation near 0.0."""
+        """observe() with Z₀ on Bell state => expectation near 0.0."""
         with track(project="test-cudaq", store=store, registry=registry) as run:
             executor = run.wrap(cudaq)
             result = executor.observe(bell_observe_kernel, z0_hamiltonian)
@@ -251,7 +251,7 @@ class TestErrorHandling:
 class TestDeduplication:
 
     def test_repeated_kernel_deduplicates_structure(self, bell_kernel, store, registry):
-        """Same kernel 3x with log_every_n=0 → 1 envelope (first only)."""
+        """Same kernel 3x with log_every_n=0 => 1 envelope (first only)."""
         with track(project="test-cudaq", store=store, registry=registry) as run:
             executor = run.wrap(cudaq, log_every_n=0, log_new_circuits=True)
             for _ in range(3):
@@ -264,7 +264,7 @@ class TestDeduplication:
     def test_different_kernels_both_logged(
         self, bell_kernel, ghz_kernel, store, registry
     ):
-        """Two different kernels with log_new_circuits → 2 envelopes."""
+        """Two different kernels with log_new_circuits => 2 envelopes."""
         with track(project="test-cudaq", store=store, registry=registry) as run:
             executor = run.wrap(cudaq, log_new_circuits=True)
             executor.sample(bell_kernel, shots_count=100)

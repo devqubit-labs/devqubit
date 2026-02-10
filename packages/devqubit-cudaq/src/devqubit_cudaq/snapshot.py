@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Known hardware target name fragments → provider
+# Known hardware target name fragments => provider
 _PROVIDER_MAP: dict[str, str] = {
     "ionq": "ionq",
     "quantinuum": "quantinuum",

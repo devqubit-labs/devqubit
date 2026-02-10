@@ -54,9 +54,22 @@ logger = logging.getLogger(__name__)
 
 def serialize_kernel_native(kernel: Any) -> str | None:
     """
-    Primary serialization via ``kernel.to_json()``.
+    Serialize a kernel via ``kernel.to_json()`` (lossless, SDK-native).
 
-    Lossless, round-trippable via ``PyKernelDecorator.from_json()``.
+    CUDA-Q's native JSON format preserves the full kernel definition
+    including source, signature, and metadata.  Round-trippable via
+    ``PyKernelDecorator.from_json()``.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
+
+    Returns
+    -------
+    str or None
+        JSON string on success, ``None`` if ``to_json()`` is
+        unavailable or returns invalid JSON.
     """
     try:
         fn = getattr(kernel, "to_json", None)
@@ -76,7 +89,20 @@ def serialize_kernel_native(kernel: Any) -> str | None:
 
 
 def capture_mlir(kernel: Any) -> str | None:
-    """Capture MLIR (Quake) text via ``str(kernel)``."""
+    """
+    Capture Quake MLIR text via ``str(kernel)``.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel.
+
+    Returns
+    -------
+    str or None
+        MLIR text if the kernel produces valid Quake IR, ``None``
+        otherwise.
+    """
     try:
         mlir = str(kernel)
         if mlir and ("func.func" in mlir or "quake." in mlir or "module" in mlir):
@@ -87,7 +113,21 @@ def capture_mlir(kernel: Any) -> str | None:
 
 
 def capture_qir(kernel: Any, version: str = "1.0") -> str | None:
-    """Capture QIR via ``cudaq.translate(kernel, format="qir:<version>")``."""
+    """
+    Capture QIR via ``cudaq.translate(kernel, format="qir:<version>")``.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel.
+    version : str
+        QIR version string (default ``"1.0"``).
+
+    Returns
+    -------
+    str or None
+        QIR (LLVM IR) text on success, ``None`` on failure.
+    """
     try:
         import cudaq
 
@@ -100,7 +140,24 @@ def capture_qir(kernel: Any, version: str = "1.0") -> str | None:
 
 
 def draw_kernel(kernel: Any, args: tuple[Any, ...] = ()) -> str | None:
-    """Draw circuit diagram via ``cudaq.draw()``.  Visual logging only."""
+    """
+    Draw circuit diagram via ``cudaq.draw()``.
+
+    Used for human-readable logging only — not for hashing or
+    serialization (the diagram format is unstable across SDK versions).
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel.
+    args : tuple, optional
+        Kernel arguments for parameterized circuits.
+
+    Returns
+    -------
+    str or None
+        ASCII circuit diagram on success, ``None`` on failure.
+    """
     try:
         import cudaq
 
@@ -120,7 +177,23 @@ def kernel_to_text(
     args: tuple[Any, ...] = (),
     index: int = 0,
 ) -> str:
-    """Human-readable kernel summary with diagram."""
+    """
+    Produce a human-readable kernel summary with circuit diagram.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel.
+    args : tuple, optional
+        Kernel arguments for parameterized circuits.
+    index : int, optional
+        Kernel index for multi-circuit batches (default 0).
+
+    Returns
+    -------
+    str
+        Multi-line text with kernel name, qubit count, and diagram.
+    """
     lines: list[str] = [f"=== Kernel {index} ==="]
     lines.append(f"Name: {get_kernel_name(kernel)}")
 
@@ -154,12 +227,30 @@ def serialize_kernel(
     """
     Serialize a CUDA-Q kernel to ``CircuitData``.
 
-    Uses ``kernel.to_json()`` as the data payload.
+    Uses ``kernel.to_json()`` as the data payload.  This is the
+    primary serialization path for storing kernels in the devqubit
+    tracking system.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
+    args : tuple, optional
+        Kernel arguments (currently unused, reserved for future use).
+    name : str, optional
+        Override kernel name in metadata.
+    index : int, optional
+        Circuit index for multi-circuit batches (default 0).
+
+    Returns
+    -------
+    CircuitData
+        Serialized circuit data with ``CircuitFormat.CUDAQ_JSON``.
 
     Raises
     ------
     SerializerError
-        If ``to_json()`` is unavailable.
+        If ``to_json()`` is unavailable or returns invalid data.
     """
     kernel_name = name or get_kernel_name(kernel)
     native_json = serialize_kernel_native(kernel)
@@ -185,7 +276,13 @@ def serialize_kernel(
 
 
 class CudaqCircuitSerializer:
-    """CUDA-Q circuit serializer.  Native ``to_json()`` as primary format."""
+    """
+    CUDA-Q circuit serializer.
+
+    Serializes kernels to native JSON via ``kernel.to_json()``.
+    Registered as the ``devqubit.circuit.serializers`` entry-point
+    for the ``cudaq`` SDK.
+    """
 
     name = "cudaq"
     default_format = CircuitFormat.CUDAQ_JSON
@@ -227,7 +324,9 @@ class CudaqCircuitLoader:
     """
     CUDA-Q circuit loader.
 
-    Reconstructs callable kernel via ``PyKernelDecorator.from_json()``.
+    Reconstructs callable kernels from native JSON via
+    ``PyKernelDecorator.from_json()``.  Registered as the
+    ``devqubit.circuit.loaders`` entry-point for the ``cudaq`` SDK.
     """
 
     name = "cudaq"
@@ -305,6 +404,11 @@ def _summarize_from_mlir(
     Best-effort heuristic covering the common output of ``str(kernel)``
     for ``PyKernelDecorator`` kernels.  Does *not* attempt a full MLIR
     parse.
+
+    Parameters
+    ----------
+    mlir_text : str
+        Raw Quake MLIR text from ``str(kernel)``.
 
     Returns
     -------

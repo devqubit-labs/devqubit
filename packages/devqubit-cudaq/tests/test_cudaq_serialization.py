@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for kernel serialization and summarization."""
+"""Tests for kernel serialization and summarization (serialization.py)."""
 
 import json
 
@@ -82,7 +82,8 @@ class TestSerializeKernel:
         assert data.sdk == SDK.CUDAQ
         assert data.name == "bell"
         parsed = json.loads(data.data)
-        assert "instructions" in parsed
+        # Real CUDAQ to_json() uses funcSrc schema (not instruction-list)
+        assert parsed["name"] == "bell"
 
     def test_no_to_json_raises(self, bare_kernel):
         with pytest.raises(SerializerError):
