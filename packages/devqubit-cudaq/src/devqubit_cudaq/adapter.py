@@ -112,7 +112,7 @@ def _log_kernel(
     try:
         text = kernel_to_text(kernel, args)
         ref = tracker.log_bytes(
-            kind="cudaq.kernel.txt",
+            kind="cudaq.kernel.diagram",
             data=text.encode("utf-8"),
             media_type="text/plain; charset=utf-8",
             role="program",
