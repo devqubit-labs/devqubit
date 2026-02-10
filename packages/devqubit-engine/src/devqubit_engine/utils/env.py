@@ -5,8 +5,8 @@
 Environment capture utilities.
 
 This module provides functions for capturing the current execution environment,
-including Python version, platform information, installed packages, and git
-repository state.
+including Python version, platform information, installed packages, git
+repository state, SDK-specific environment variables, and GPU information.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import os
 import platform
 import subprocess
 import sys
+from collections.abc import Sequence
 from typing import Any
 
 
@@ -265,3 +266,154 @@ def capture_git_provenance(cwd: str | None = None) -> dict[str, Any] | None:
     )
 
     return result
+
+
+# ============================================================================
+# SDK environment & GPU utilities (used by adapters)
+# ============================================================================
+
+
+# ---------------------------------------------------------------------------
+# SDK environment variable registry
+# ---------------------------------------------------------------------------
+#
+# Centralised mapping of SDK name => environment variables relevant to that
+# SDK.  Adapters never own variable lists — they call
+# ``collect_sdk_env_vars("cudaq")`` and the engine resolves + redacts.
+#
+# Variables shared across multiple SDKs (e.g. CUDA_VISIBLE_DEVICES,
+# OMP_NUM_THREADS, provider credentials) appear in every SDK that needs
+# them.  New SDKs are added here, not in adapter code.
+
+_COMMON_GPU_VARS: tuple[str, ...] = (
+    "CUDA_VISIBLE_DEVICES",
+    "OMP_NUM_THREADS",
+)
+
+_PROVIDER_CREDENTIAL_VARS: tuple[str, ...] = (
+    "IONQ_API_KEY",
+    "IQM_SERVER_URL",
+    "IQM_TOKENS_FILE",
+    "OQC_URL",
+    "OQC_EMAIL",
+    "OQC_PASSWORD",
+)
+
+SDK_ENV_VARS: dict[str, tuple[str, ...]] = {
+    "cudaq": (
+        *_COMMON_GPU_VARS,
+        *_PROVIDER_CREDENTIAL_VARS,
+        "CUDAQ_DEFAULT_SIMULATOR",
+        "CUDAQ_LOG_LEVEL",
+        "CUDAQ_MQPU_NGPUS",
+        "CUDAQ_SER_CODE_EXEC",
+        "CUQUANTUM_ROOT",
+        "CUDAQ_QUANTINUUM_CREDENTIALS",
+        "NVQC_API_KEY",
+    ),
+    "qiskit": (
+        *_COMMON_GPU_VARS,
+        *_PROVIDER_CREDENTIAL_VARS,
+        "QISKIT_IBM_TOKEN",
+        "QISKIT_IBM_URL",
+        "QISKIT_IBM_INSTANCE",
+        "QISKIT_SETTINGS_FILE",
+    ),
+    "cirq": (
+        *_COMMON_GPU_VARS,
+        *_PROVIDER_CREDENTIAL_VARS,
+        "GOOGLE_CLOUD_PROJECT",
+        "CIRQ_TESTING",
+    ),
+    "pennylane": (
+        *_COMMON_GPU_VARS,
+        *_PROVIDER_CREDENTIAL_VARS,
+        "PENNYLANE_CONFIG_DIR",
+    ),
+    "braket": (
+        *_COMMON_GPU_VARS,
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_DEFAULT_REGION",
+    ),
+}
+
+
+def collect_sdk_env_vars(sdk: str, extra_vars: Sequence[str] = ()) -> dict[str, str]:
+    """
+    Collect environment variables for an SDK with automatic redaction.
+
+    Looks up the variable list from the engine's ``SDK_ENV_VARS`` registry,
+    merges any *extra_vars* the caller supplies, reads present values from
+    ``os.environ``, and applies ``RedactionConfig`` to mask secrets.
+
+    Parameters
+    ----------
+    sdk : str
+        SDK identifier (e.g. ``"cudaq"``, ``"qiskit"``).
+    extra_vars : sequence of str, optional
+        Additional variable names beyond the registry entry.
+
+    Returns
+    -------
+    dict[str, str]
+        Variable name => value (or redacted placeholder).
+        Only variables that are actually set are included.
+    """
+    var_names = SDK_ENV_VARS.get(sdk, ())
+    if extra_vars:
+        seen = set(var_names)
+        var_names = (*var_names, *(v for v in extra_vars if v not in seen))
+
+    raw: dict[str, str] = {}
+    for var in var_names:
+        val = os.environ.get(var)
+        if val is not None:
+            raw[var] = val
+
+    if not raw:
+        return {}
+
+    try:
+        from devqubit_engine.config import get_config
+
+        return get_config().redaction.redact_env(raw)
+    except Exception:
+        from devqubit_engine.config import RedactionConfig
+
+        return RedactionConfig().redact_env(raw)
+
+
+def collect_gpu_info() -> dict[str, Any]:
+    """
+    Collect GPU information for device snapshots.
+
+    Reads ``CUDA_VISIBLE_DEVICES`` and runs ``nvidia-smi -L`` to
+    enumerate GPU devices.  Adapters can extend the returned dict
+    with SDK-specific GPU data (e.g. ``cudaq.num_available_gpus()``).
+
+    Returns
+    -------
+    dict[str, Any]
+        GPU information.  Empty dict when no GPU data is available.
+    """
+    gpu_info: dict[str, Any] = {}
+
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible is not None:
+        gpu_info["CUDA_VISIBLE_DEVICES"] = cuda_visible
+
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            gpu_info["nvidia_smi_devices"] = result.stdout.strip().splitlines()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    return gpu_info

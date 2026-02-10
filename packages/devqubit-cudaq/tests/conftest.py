@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import cudaq
 import pytest
 from devqubit_engine.storage.factory import create_registry, create_store
 

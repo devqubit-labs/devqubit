@@ -1,22 +1,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""
-Utility functions for the CUDA-Q adapter.
-
-Provides version utilities, target introspection, environment snapshot
-collection, and common helpers used across the adapter components following
-the devqubit Uniform Execution Contract (UEC).
-"""
+"""Utility functions for the CUDA-Q adapter."""
 
 from __future__ import annotations
 
 import inspect
 import logging
-import os
-import subprocess
 from dataclasses import dataclass
 from typing import Any
+
+from devqubit_engine.config import get_config
+from devqubit_engine.utils.env import collect_gpu_info, collect_sdk_env_vars
 
 
 logger = logging.getLogger(__name__)
@@ -36,8 +31,7 @@ def cudaq_version() -> str:
     Returns
     -------
     str
-        CUDA-Q version string (e.g., ``"0.13.0"``), or ``"unknown"`` if
-        cudaq is not installed or version cannot be determined.
+        Version string, or ``"unknown"`` if cudaq is not installed.
     """
     global _cudaq_version
     if _cudaq_version is not None:
@@ -61,7 +55,7 @@ def get_adapter_version() -> str:
     Returns
     -------
     str
-        Adapter version string, or ``"unknown"`` if metadata lookup fails.
+        Adapter version string, or ``"unknown"`` if lookup fails.
     """
     global _adapter_version
     if _adapter_version is not None:
@@ -82,21 +76,16 @@ def collect_sdk_versions() -> dict[str, str]:
     """
     Collect version strings for all relevant SDK packages (cached).
 
-    Follows the UEC requirement for tracking all SDK versions in the
-    execution environment.
-
     Returns
     -------
     dict
-        Mapping of package name to version string.  Always includes
-        ``cudaq``; optional entries for ``cuquantum``, ``numpy``, etc.
+        Package name → version string.  Always includes ``cudaq``.
     """
     global _sdk_versions
     if _sdk_versions is not None:
         return dict(_sdk_versions)
 
-    versions: dict[str, str] = {}
-    versions["cudaq"] = cudaq_version()
+    versions: dict[str, str] = {"cudaq": cudaq_version()}
 
     for pkg, import_name in (
         ("cuquantum", "cuquantum"),
@@ -165,7 +154,6 @@ class TargetInfo:
         }
 
 
-# Known hardware-backed targets (fallback for targets without API methods)
 _HARDWARE_TARGETS: frozenset[str] = frozenset(
     {
         "ionq",
@@ -183,18 +171,29 @@ _HARDWARE_TARGETS: frozenset[str] = frozenset(
 )
 
 
+def _safe_call(obj: Any, method_name: str, *, default: Any = None) -> Any:
+    """Call a method on *obj* if it exists, returning *default* on failure."""
+    fn = getattr(obj, method_name, None)
+    if fn is None:
+        return default
+    try:
+        return fn() if callable(fn) else fn
+    except Exception:
+        return default
+
+
 def get_target_info() -> TargetInfo:
     """
     Get structured information about the active CUDA-Q target.
 
     Uses ``Target.is_remote()``, ``Target.is_remote_simulator()``, and
     ``Target.is_emulated()`` when available, falling back to heuristics
-    only for older CUDA-Q versions that lack these methods.
+    for older CUDA-Q versions.
 
     Returns
     -------
     TargetInfo
-        Current target information with simulator/hardware classification.
+        Current target information.
     """
     try:
         import cudaq
@@ -212,22 +211,18 @@ def get_target_info() -> TargetInfo:
         except Exception:
             pass
 
-        # Prefer Target API methods for classification
         is_remote = _safe_call(target, "is_remote", default=None)
         is_remote_sim = _safe_call(target, "is_remote_simulator", default=None)
         is_emulated = _safe_call(target, "is_emulated", default=None)
 
         if is_remote is not None:
-            # API methods available — use them directly
             if is_remote_sim:
                 is_simulator = True
             elif is_remote:
                 is_simulator = False
             else:
-                # Local target — simulator if it has a simulator backend name
                 is_simulator = bool(simulator)
         else:
-            # Fallback heuristics for older CUDA-Q
             name_lower = name.lower()
             is_remote = any(hw in name_lower for hw in _HARDWARE_TARGETS)
             is_simulator = bool(simulator) or not is_remote
@@ -249,26 +244,8 @@ def get_target_info() -> TargetInfo:
         return TargetInfo(name="unknown")
 
 
-def _safe_call(obj: Any, method_name: str, *, default: Any = None) -> Any:
-    """Call a method on *obj* if it exists, returning *default* on failure."""
-    fn = getattr(obj, method_name, None)
-    if fn is None:
-        return default
-    try:
-        return fn() if callable(fn) else fn
-    except Exception:
-        return default
-
-
 def get_target_name() -> str:
-    """
-    Get the name of the current CUDA-Q target.
-
-    Returns
-    -------
-    str
-        Target name string.
-    """
+    """Get the name of the current CUDA-Q target."""
     return get_target_info().name
 
 
@@ -280,9 +257,6 @@ def get_target_name() -> str:
 def is_cudaq_kernel(obj: Any) -> bool:
     """
     Check if an object is a CUDA-Q kernel.
-
-    Recognises both decorator-style (``@cudaq.kernel``) and builder-style
-    (``cudaq.make_kernel()``) kernels.
 
     Parameters
     ----------
@@ -363,8 +337,7 @@ def get_kernel_num_qubits(kernel: Any) -> int | None:
     Returns
     -------
     int or None
-        Number of qubits, or ``None`` if it cannot be determined
-        statically.
+        Number of qubits, or ``None`` if it cannot be determined statically.
     """
     nq = getattr(kernel, "num_qubits", None)
     if nq is not None:
@@ -376,89 +349,39 @@ def get_kernel_num_qubits(kernel: Any) -> int | None:
 
 
 # ============================================================================
-# Environment & GPU snapshot helpers
+# Environment & GPU snapshots (delegates to engine)
 # ============================================================================
-
-# CUDA-Q–relevant environment variables to capture in device snapshots.
-# Sensitive values (credentials, tokens, etc.) are automatically redacted
-# by the engine's ``RedactionConfig`` — the adapter does not need its own
-# allowlist / blocklist logic.
-_CUDAQ_ENV_VARS: tuple[str, ...] = (
-    # Runtime configuration
-    "CUDA_VISIBLE_DEVICES",
-    "CUDAQ_DEFAULT_SIMULATOR",
-    "CUDAQ_LOG_LEVEL",
-    "CUDAQ_MQPU_NGPUS",
-    "CUDAQ_SER_CODE_EXEC",
-    "CUQUANTUM_ROOT",
-    "OMP_NUM_THREADS",
-    # Provider credentials (redacted by engine patterns)
-    "IONQ_API_KEY",
-    "CUDAQ_QUANTINUUM_CREDENTIALS",
-    "IQM_SERVER_URL",
-    "IQM_TOKENS_FILE",
-    "OQC_URL",
-    "OQC_EMAIL",
-    "OQC_PASSWORD",
-    "NVQC_API_KEY",
-)
-
-
-def _get_redaction_config() -> Any:
-    """Get the engine's ``RedactionConfig``, with safe fallback."""
-    try:
-        from devqubit_engine.config import get_config
-
-        return get_config().redaction
-    except Exception:
-        # Fallback: import class directly and use defaults
-        from devqubit_engine.config import RedactionConfig
-
-        return RedactionConfig()
 
 
 def collect_env_snapshot() -> dict[str, str]:
     """
     Collect CUDA-Q–relevant environment variables for the device snapshot.
 
-    Variables that match the engine's redaction patterns (tokens, passwords,
-    API keys, cloud-provider prefixes, etc.) are replaced with the engine's
-    ``RedactionConfig.replacement`` value (default ``"[REDACTED]"``).
+    Delegates to the engine's ``collect_sdk_env_vars`` which owns the
+    variable registry and handles redaction via ``RedactionConfig``.
 
     Returns
     -------
     dict
-        Flat mapping of variable name → value (or redacted placeholder).
-        Empty dict when no relevant variables are set.
+        Variable name → value (or redacted placeholder).
     """
-    raw: dict[str, str] = {}
-    for var in _CUDAQ_ENV_VARS:
-        val = os.environ.get(var)
-        if val is not None:
-            raw[var] = val
-
-    if not raw:
-        return {}
-
-    redaction = _get_redaction_config()
-    return redaction.redact_env(raw)
+    return collect_sdk_env_vars("cudaq")
 
 
 def collect_gpu_snapshot() -> dict[str, Any]:
     """
     Collect GPU information for the device snapshot.
 
-    Uses ``cudaq.num_available_gpus()`` when available, and falls back
-    to reading ``CUDA_VISIBLE_DEVICES`` and best-effort ``nvidia-smi``.
+    Extends the engine's ``collect_gpu_info`` with the CUDA-Q–native
+    ``cudaq.num_available_gpus()`` count when available.
 
     Returns
     -------
     dict
         GPU snapshot with count and device list (if available).
     """
-    gpu_info: dict[str, Any] = {}
+    gpu_info = collect_gpu_info()
 
-    # CUDA-Q native GPU count
     try:
         import cudaq
 
@@ -466,24 +389,6 @@ def collect_gpu_snapshot() -> dict[str, Any]:
         if num_gpus_fn is not None:
             gpu_info["num_available_gpus"] = int(num_gpus_fn())
     except Exception:
-        pass
-
-    # CUDA_VISIBLE_DEVICES
-    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if cuda_visible is not None:
-        gpu_info["CUDA_VISIBLE_DEVICES"] = cuda_visible
-
-    # Best-effort nvidia-smi
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "-L"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            gpu_info["nvidia_smi_devices"] = result.stdout.strip().splitlines()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
     return gpu_info
@@ -496,8 +401,7 @@ def safe_list_targets() -> list[dict[str, Any]]:
     Returns
     -------
     list of dict
-        Each entry contains ``name``, ``description``, and ``platform``
-        for an available target.
+        Each entry contains ``name``, ``description``, and ``platform``.
     """
     targets: list[dict[str, Any]] = []
     try:
@@ -526,9 +430,6 @@ def sanitize_runtime_events(
     """
     Redact secrets from runtime configuration event kwargs.
 
-    Uses the engine's ``RedactionConfig`` to decide which kwarg keys
-    contain sensitive values (tokens, passwords, API keys, etc.).
-
     Parameters
     ----------
     events : list of dict
@@ -537,18 +438,14 @@ def sanitize_runtime_events(
     Returns
     -------
     list of dict
-        Events with sensitive kwarg values replaced by the engine's
-        redaction placeholder.
+        Events with sensitive kwarg values redacted.
     """
-    redaction = _get_redaction_config()
+    redaction = get_config().redaction
     sanitized: list[dict[str, Any]] = []
     for event in events:
         clean = dict(event)
         kwargs = clean.get("kwargs")
         if isinstance(kwargs, dict):
-            clean["kwargs"] = {
-                k: (redaction.replacement if redaction.should_redact(k) else v)
-                for k, v in kwargs.items()
-            }
+            clean["kwargs"] = redaction.redact_env(kwargs)
         sanitized.append(clean)
     return sanitized
