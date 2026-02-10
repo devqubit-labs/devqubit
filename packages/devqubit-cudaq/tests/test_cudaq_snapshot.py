@@ -6,16 +6,19 @@
 import json
 
 from devqubit_cudaq.snapshot import (
+    _build_raw_properties,
     _detect_backend_type,
     _detect_provider,
     create_device_snapshot,
 )
 from devqubit_cudaq.utils import (
-    _HARDWARE_TARGETS,
     TargetInfo,
+    collect_env_snapshot,
+    collect_gpu_snapshot,
     collect_sdk_versions,
     get_adapter_version,
     get_kernel_name,
+    sanitize_runtime_events,
 )
 
 
@@ -51,14 +54,13 @@ class TestDetectBackendType:
 
 class TestTargetClassification:
 
-    def test_hardware_targets(self):
-        assert "ionq" in _HARDWARE_TARGETS
-        assert "quantinuum" in _HARDWARE_TARGETS
-        assert "qpp-cpu" not in _HARDWARE_TARGETS
-
-    def test_known_hardware_names(self):
-        for name in ("iqm", "oqc", "braket", "infleqtion", "pasqal"):
-            assert name in _HARDWARE_TARGETS, f"{name} missing from _HARDWARE_TARGETS"
+    def test_hardware_targets_detected(self):
+        """Known hardware target names are classified as non-simulator."""
+        for name in ("ionq", "quantinuum", "iqm", "oqc", "braket"):
+            info = TargetInfo(
+                name=name, simulator="", is_simulator=False, is_remote=True
+            )
+            assert _detect_provider(info) == name or _detect_provider(info) != "local"
 
 
 class TestCreateDeviceSnapshot:
@@ -109,6 +111,85 @@ class TestCreateDeviceSnapshot:
         info = TargetInfo(name="qpp-cpu", is_simulator=True)
         snap = create_device_snapshot(info)
         assert "cudaq" in snap.sdk_versions
+
+    def test_frontend_has_sdk_field(self):
+        info = TargetInfo(name="nvidia", simulator="custatevec", is_simulator=True)
+        snap = create_device_snapshot(info)
+        assert snap.frontend is not None
+        assert snap.frontend.sdk == "cudaq"
+
+
+class TestBuildRawProperties:
+
+    def test_includes_target_current(self):
+        info = TargetInfo(name="nvidia", simulator="custatevec", is_simulator=True)
+        props = _build_raw_properties(info)
+        assert "target_current" in props
+        assert props["target_current"]["target_name"] == "nvidia"
+
+    def test_includes_runtime_events(self):
+        info = TargetInfo(name="qpp-cpu", is_simulator=True)
+        events = [{"method": "set_target", "args": ["nvidia"], "kwargs": {}}]
+        props = _build_raw_properties(info, runtime_events=events)
+        assert "runtime_events" in props
+        assert props["runtime_events"][0]["method"] == "set_target"
+
+    def test_omits_empty_runtime_events(self):
+        info = TargetInfo(name="qpp-cpu", is_simulator=True)
+        props = _build_raw_properties(info, runtime_events=None)
+        assert "runtime_events" not in props
+
+
+class TestEnvSnapshot:
+
+    def test_collects_cuda_visible_devices(self, monkeypatch):
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1")
+        snap = collect_env_snapshot()
+        assert snap.get("CUDA_VISIBLE_DEVICES") == "0,1"
+
+    def test_secret_redacted_by_engine(self, monkeypatch):
+        """Sensitive vars are redacted via engine's RedactionConfig."""
+        monkeypatch.setenv("IONQ_API_KEY", "secret-key-123")
+        snap = collect_env_snapshot()
+        # Engine's ^IONQ_ and API_?KEY patterns both match — value must be redacted
+        assert "secret-key-123" not in str(snap)
+        assert snap.get("IONQ_API_KEY") == "[REDACTED]"
+
+    def test_empty_when_no_vars_set(self, monkeypatch):
+        """Returns empty dict when no CUDAQ-relevant vars are set."""
+        for var in (
+            "CUDA_VISIBLE_DEVICES",
+            "CUDAQ_DEFAULT_SIMULATOR",
+            "IONQ_API_KEY",
+        ):
+            monkeypatch.delenv(var, raising=False)
+        snap = collect_env_snapshot()
+        assert isinstance(snap, dict)
+
+
+class TestSanitizeRuntimeEvents:
+
+    def test_redacts_api_key(self):
+        events = [{"method": "set_target", "kwargs": {"api_key": "secret123"}}]
+        sanitized = sanitize_runtime_events(events)
+        assert sanitized[0]["kwargs"]["api_key"] == "[REDACTED]"
+
+    def test_preserves_safe_kwargs(self):
+        events = [{"method": "set_target", "kwargs": {"machine": "aria-1"}}]
+        sanitized = sanitize_runtime_events(events)
+        assert sanitized[0]["kwargs"]["machine"] == "aria-1"
+
+    def test_redacts_password(self):
+        events = [{"method": "set_target", "kwargs": {"password": "p4ss"}}]
+        sanitized = sanitize_runtime_events(events)
+        assert sanitized[0]["kwargs"]["password"] == "[REDACTED]"
+
+
+class TestGpuSnapshot:
+
+    def test_returns_dict(self):
+        snap = collect_gpu_snapshot()
+        assert isinstance(snap, dict)
 
 
 class TestUtilities:

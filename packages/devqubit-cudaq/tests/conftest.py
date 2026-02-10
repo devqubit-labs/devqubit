@@ -174,7 +174,12 @@ def _make_cudaq_module(
     mod = types.ModuleType("cudaq")
     mod.__version__ = "0.9.0"
     mod.get_target = MagicMock(return_value=target or _MockTarget())
+    mod.get_targets = MagicMock(return_value=[target or _MockTarget()])
     mod.set_target = MagicMock()
+    mod.reset_target = MagicMock()
+    mod.set_noise = MagicMock()
+    mod.unset_noise = MagicMock()
+    mod.set_random_seed = MagicMock()
     mod.sample = MagicMock(
         return_value=sample_result or _MockSampleResult({"00": 500, "11": 500})
     )

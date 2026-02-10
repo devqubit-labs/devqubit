@@ -5,6 +5,7 @@
 
 from devqubit_cudaq.results import (
     _CUDAQ_COUNTS_FORMAT,
+    _CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER,
     _normalize_bitstrings_to_cbit0_right,
     build_result_snapshot,
     detect_result_type,
@@ -51,9 +52,9 @@ class TestNormalizeBitstrings:
         assert result == {"10": 100, "01": 200}
 
     def test_three_qubit(self):
-        counts = {"100": 500}  # qubit0=1, qubit1=0, qubit2=0 (allocation order)
+        counts = {"100": 500}
         result = _normalize_bitstrings_to_cbit0_right(counts)
-        assert result == {"001": 500}  # qubit0 now rightmost
+        assert result == {"001": 500}
 
 
 class TestBuildResultSnapshotSample:
@@ -77,7 +78,6 @@ class TestBuildResultSnapshotSample:
             shots=1000,
         )
         counts_item = snap.items[0]
-        # "00" and "11" are palindromes — unchanged after reversal
         assert counts_item.counts["counts"]["00"] == 480
         assert counts_item.counts["counts"]["11"] == 520
         assert counts_item.counts["shots"] == 1000
@@ -106,15 +106,71 @@ class TestBuildResultSnapshotSample:
         assert sum(counts.values()) == 1000
 
     def test_non_palindrome_bitstrings_normalized(self, make_sample_result):
-        # "01" in allocation order (qubit0=left=0, qubit1=right=1)
-        # After normalization: "10" (qubit0=right=0, qubit1=left=1)
         raw = make_sample_result({"01": 300, "10": 700})
         snap = build_result_snapshot(
             raw, result_type="sample", backend_name="qpp-cpu", shots=1000
         )
         counts = snap.items[0].counts["counts"]
-        assert counts["10"] == 300  # "01" reversed
-        assert counts["01"] == 700  # "10" reversed
+        assert counts["10"] == 300
+        assert counts["01"] == 700
+
+
+class TestExplicitMeasurements:
+
+    def test_explicit_measurements_no_reversal(self, make_sample_result):
+        """With explicit_measurements=True, bitstrings stay as-is."""
+        raw = make_sample_result({"01": 300, "10": 700})
+        snap = build_result_snapshot(
+            raw,
+            result_type="sample",
+            backend_name="qpp-cpu",
+            shots=1000,
+            call_kwargs={"explicit_measurements": True},
+        )
+        counts = snap.items[0].counts["counts"]
+        # NOT reversed — kept in measurement order
+        assert counts["01"] == 300
+        assert counts["10"] == 700
+
+    def test_explicit_measurements_format_marked(self, make_sample_result):
+        raw = make_sample_result({"01": 500, "10": 500})
+        snap = build_result_snapshot(
+            raw,
+            result_type="sample",
+            backend_name="qpp-cpu",
+            shots=1000,
+            call_kwargs={"explicit_measurements": True},
+        )
+        fmt = snap.items[0].counts["format"]
+        assert fmt["bit_order"] == "measurement_order"
+        assert fmt["transformed"] is False
+
+    def test_explicit_measurements_metadata_flag(self, make_sample_result):
+        raw = make_sample_result({"00": 1000})
+        snap = build_result_snapshot(
+            raw,
+            result_type="sample",
+            backend_name="qpp-cpu",
+            shots=1000,
+            call_kwargs={"explicit_measurements": True},
+        )
+        assert snap.metadata.get("cudaq.explicit_measurements") is True
+
+    def test_standard_mode_still_reverses(self, make_sample_result):
+        """Without explicit_measurements, standard reversal applies."""
+        raw = make_sample_result({"01": 300, "10": 700})
+        snap = build_result_snapshot(
+            raw,
+            result_type="sample",
+            backend_name="qpp-cpu",
+            shots=1000,
+            call_kwargs={},
+        )
+        counts = snap.items[0].counts["counts"]
+        assert counts["10"] == 300
+        assert counts["01"] == 700
+        fmt = snap.items[0].counts["format"]
+        assert fmt["bit_order"] == "cbit0_right"
 
 
 class TestBuildResultSnapshotObserve:
@@ -154,7 +210,7 @@ class TestBuildResultSnapshotBroadcast:
             results, result_type="batch_sample", backend_name="qpp-cpu", shots=1000
         )
         assert snap.success is True
-        assert len(snap.items) >= 2  # at least one per batch element
+        assert len(snap.items) >= 2
 
     def test_batch_observe(self, make_observe_result):
         results = [
@@ -204,3 +260,9 @@ class TestCountsFormat:
 
     def test_transformed(self):
         assert _CUDAQ_COUNTS_FORMAT["transformed"] is True
+
+    def test_measurement_order_format(self):
+        assert (
+            _CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER["bit_order"] == "measurement_order"
+        )
+        assert _CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER["transformed"] is False

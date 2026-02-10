@@ -11,11 +11,6 @@ import pytest
 from devqubit_engine.tracking.run import Run
 
 
-# =============================================================================
-# CudaqAdapter registration
-# =============================================================================
-
-
 class TestCudaqAdapter:
 
     def test_name(self):
@@ -30,11 +25,6 @@ class TestCudaqAdapter:
         assert adapter.supports_executor("nope") is False
         assert adapter.supports_executor(42) is False
         assert adapter.supports_executor(None) is False
-
-
-# =============================================================================
-# TrackedCudaqExecutor construction
-# =============================================================================
 
 
 class TestTrackedCudaqExecutorInit:
@@ -58,10 +48,10 @@ class TestTrackedCudaqExecutorInit:
             executor.set_target("qpp-cpu")
             executor.cudaq.set_target.assert_called_once_with("qpp-cpu")
 
-
-# =============================================================================
-# Tracked sample() execution
-# =============================================================================
+    def test_runtime_events_initially_empty(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            assert executor._runtime_config_events == []
 
 
 class TestSampleExecution:
@@ -91,11 +81,6 @@ class TestSampleExecution:
         assert executor.cudaq.sample.call_args[0][0] is bell_kernel
 
 
-# =============================================================================
-# Tracked observe() execution
-# =============================================================================
-
-
 class TestObserveExecution:
 
     def test_returns_result(
@@ -112,11 +97,6 @@ class TestObserveExecution:
             executor = make_executor(run)
             executor.observe(bell_kernel, MagicMock(), 0.5)
         executor.cudaq.observe.assert_called_once()
-
-
-# =============================================================================
-# Error handling
-# =============================================================================
 
 
 class TestErrorHandling:
@@ -139,11 +119,6 @@ class TestErrorHandling:
             with pytest.raises(ValueError):
                 executor.sample(bell_kernel, shots_count=100)
             assert "execution_error" in run.record
-
-
-# =============================================================================
-# Deduplication
-# =============================================================================
 
 
 class TestDeduplication:
@@ -183,12 +158,7 @@ class TestDeduplication:
             assert executor._logged_execution_count == 5
 
 
-# =============================================================================
-# set_target cache invalidation
-# =============================================================================
-
-
-class TestSetTargetInvalidation:
+class TestRuntimeMethodWrapping:
 
     def test_set_target_resets_snapshot_cache(
         self, store, registry, make_executor, bell_kernel
@@ -200,10 +170,72 @@ class TestSetTargetInvalidation:
             executor.set_target("nvidia")
             assert executor._device_snapshot is None
 
+    def test_set_target_records_event(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.set_target("ionq", machine="aria-1")
+            assert len(executor._runtime_config_events) == 1
+            event = executor._runtime_config_events[0]
+            assert event["method"] == "set_target"
+            assert "ionq" in event["args"]
+            assert "machine" in event["kwargs"]
 
-# =============================================================================
-# UEC compliance
-# =============================================================================
+    def test_reset_target_records_event_and_invalidates(
+        self,
+        store,
+        registry,
+        make_executor,
+        bell_kernel,
+    ):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.sample(bell_kernel, shots_count=100)
+            assert executor._device_snapshot is not None
+            executor.reset_target()
+            assert executor._device_snapshot is None
+            assert executor._runtime_config_events[-1]["method"] == "reset_target"
+
+    def test_set_noise_records_event(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.set_noise("depolarization")
+            assert executor._runtime_config_events[0]["method"] == "set_noise"
+
+    def test_unset_noise_records_event(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.unset_noise()
+            assert executor._runtime_config_events[0]["method"] == "unset_noise"
+
+    def test_set_random_seed_records_event(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.set_random_seed(42)
+            event = executor._runtime_config_events[0]
+            assert event["method"] == "set_random_seed"
+            assert "42" in event["args"]
+
+    def test_set_noise_does_not_invalidate_snapshot(
+        self,
+        store,
+        registry,
+        make_executor,
+        bell_kernel,
+    ):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.sample(bell_kernel, shots_count=100)
+            snapshot_before = executor._device_snapshot
+            executor.set_noise("depolarization")
+            assert executor._device_snapshot is snapshot_before
+
+    def test_multiple_events_accumulated(self, store, registry, make_executor):
+        with Run(store=store, registry=registry, project="test") as run:
+            executor = make_executor(run)
+            executor.set_target("nvidia")
+            executor.set_random_seed(123)
+            executor.set_noise("bit_flip")
+            assert len(executor._runtime_config_events) == 3
 
 
 class TestUECCompliance:
