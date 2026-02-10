@@ -5,11 +5,12 @@
 Kernel serialization and summarization for the CUDA-Q adapter.
 
 Serialization
-    ``kernel.to_json()`` / ``PyKernelDecorator.from_json()``
-Artifacts
-    ``str(kernel)`` => MLIR, ``cudaq.translate()`` => QIR
-Visual
-    ``cudaq.draw()`` => diagram (logging only)
+    Enriched JSON envelope with structured ``operations`` parsed from
+    kernel source, plus the native ``to_json()`` blob for round-trip
+    via ``PyKernelDecorator.from_json()``.
+Capture helpers
+    ``capture_mlir()``, ``capture_qir()``, ``draw_kernel()`` — used
+    by the adapter to log separate MLIR, QIR, and diagram artifacts.
 Summarization
     ``summarize_cudaq_circuit()`` — registered as the
     ``devqubit.circuit.summarizers`` entry-point for the ``cudaq`` SDK.
@@ -26,7 +27,6 @@ from typing import Any
 from devqubit_cudaq.circuits import (
     _CUDAQ_GATES,
     _get_native_json,
-    _native_json_to_op_stream,
 )
 from devqubit_cudaq.utils import (
     get_kernel_name,
@@ -207,6 +207,159 @@ def kernel_to_text(
 
 
 # ============================================================================
+# funcSrc → structured operations
+# ============================================================================
+
+# Gate call: ``h(q[0])`` or ``rx(0.5, q[0])``
+_GATE_CALL_RE = re.compile(r"\b([a-z]\w*)\s*\(([^)]*)\)")
+# Controlled: ``x.ctrl(q[0], q[1])``
+_CTRL_CALL_RE = re.compile(r"\b([a-z]\w*)\.ctrl\s*\(([^)]*)\)")
+# Qubit reference: ``q[0]`` or ``q[i + 1]``
+_QREF_RE = re.compile(r"\w+\[([^\]]+)\]")
+
+# Gates recognized by the parser.
+_KNOWN_GATES: frozenset[str] = frozenset(
+    {
+        "h",
+        "x",
+        "y",
+        "z",
+        "s",
+        "t",
+        "rx",
+        "ry",
+        "rz",
+        "r1",
+        "sdg",
+        "tdg",
+        "swap",
+        "u3",
+        "phaseshift",
+        "mz",
+        "mx",
+        "my",
+    }
+)
+
+# Qubit allocation: ``cudaq.qvector(N)`` or ``cudaq.qubit()``
+_QVECTOR_RE = re.compile(r"cudaq\.qvector\s*\(\s*(\d+)\s*\)")
+_QUBIT_RE = re.compile(r"cudaq\.qubit\s*\(\s*\)")
+
+
+def _parse_num_qubits_from_funcSrc(func_src: str) -> int:
+    """
+    Extract qubit count from ``cudaq.qvector(N)`` / ``cudaq.qubit()`` calls.
+
+    Parameters
+    ----------
+    func_src : str
+        Python source from ``funcSrc``.
+
+    Returns
+    -------
+    int
+        Total qubits allocated (0 if none found).
+    """
+    total = 0
+    for m in _QVECTOR_RE.finditer(func_src):
+        total += int(m.group(1))
+    total += len(_QUBIT_RE.findall(func_src))
+    return total
+
+
+def _parse_operations_from_funcSrc(func_src: str) -> list[dict[str, Any]]:
+    """
+    Extract gate operations from kernel Python source code.
+
+    Parses common CUDA-Q gate-call patterns into structured dicts.
+    Loops and variables are **not** unrolled — this captures the
+    *template* structure, not the execution trace.
+
+    Parameters
+    ----------
+    func_src : str
+        Python source from the ``funcSrc`` field of ``kernel.to_json()``.
+
+    Returns
+    -------
+    list of dict
+        Ordered gate operations.  Each dict has at minimum a ``"gate"``
+        key.  Qubit targets that resolve to integers get ``"targets"``
+        / ``"controls"`` lists; unresolved expressions (loop variables)
+        appear under ``"targets_expr"`` / ``"controls_expr"``.
+
+    Examples
+    --------
+    >>> ops = _parse_operations_from_funcSrc("h(q[0])\\ncx.ctrl(q[0], q[1])")
+    >>> ops[0]
+    {'gate': 'h', 'targets': [0]}
+    """
+    ops: list[dict[str, Any]] = []
+
+    for line in func_src.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "@", "def ", "q =", "q=")):
+            continue
+
+        # --- Controlled gates: x.ctrl(q[c], q[t]) ---
+        m = _CTRL_CALL_RE.search(stripped)
+        if m:
+            gate = m.group(1).lower()
+            qrefs = _QREF_RE.findall(m.group(2))
+            op: dict[str, Any] = {"gate": f"c{gate}"}
+            if len(qrefs) >= 2:
+                ctrls, tgt = qrefs[:-1], qrefs[-1]
+                try:
+                    op["controls"] = [int(c) for c in ctrls]
+                except ValueError:
+                    op["controls_expr"] = ctrls
+                try:
+                    op["targets"] = [int(tgt)]
+                except ValueError:
+                    op["targets_expr"] = [tgt]
+            ops.append(op)
+            continue
+
+        # --- Regular gate calls ---
+        m = _GATE_CALL_RE.search(stripped)
+        if m:
+            gate = m.group(1).lower()
+            if gate not in _KNOWN_GATES:
+                continue
+            arg_str = m.group(2)
+            qrefs = _QREF_RE.findall(arg_str)
+
+            op = {"gate": gate}
+
+            # Measurement on whole register: mz(q)
+            if gate in {"mz", "mx", "my"} and not qrefs:
+                op["targets"] = "all"
+                ops.append(op)
+                continue
+
+            # Parameters: float literals or variable names before qubit refs
+            params: list[Any] = []
+            for part in (p.strip() for p in arg_str.split(",")):
+                if not _QREF_RE.search(part) and part:
+                    try:
+                        params.append(float(part))
+                    except ValueError:
+                        params.append(part)
+            if params:
+                op["params"] = params
+
+            if qrefs:
+                try:
+                    op["targets"] = [int(q) for q in qrefs]
+                except ValueError:
+                    op["targets_expr"] = qrefs
+
+            ops.append(op)
+
+    return ops
+
+
+# ============================================================================
 # CircuitData serialization
 # ============================================================================
 
@@ -218,9 +371,14 @@ def serialize_kernel(
     index: int = 0,
 ) -> CircuitData:
     """
-    Serialize a CUDA-Q kernel to ``CircuitData``.
+    Serialize a CUDA-Q kernel to enriched ``CircuitData``.
 
-    Uses ``kernel.to_json()`` as the data payload.
+    Produces a JSON envelope with structured ``operations`` parsed from
+    ``funcSrc``, plus the original ``to_json()`` blob preserved in a
+    ``native`` field for lossless ``from_json()`` round-trip.
+
+    MLIR, QIR, and diagram representations are **not** included here;
+    the adapter logs those as separate artifacts.
 
     Parameters
     ----------
@@ -249,8 +407,40 @@ def serialize_kernel(
             f"to_json() unavailable on {type(kernel).__name__}"
         )
 
+    # Build enriched envelope
+    try:
+        native_parsed = json.loads(native_json)
+    except json.JSONDecodeError:
+        native_parsed = None
+
+    envelope: dict[str, Any] = {
+        "sdk": "cudaq",
+        "format_version": 1,
+        "name": kernel_name,
+    }
+
+    nq = get_kernel_num_qubits(kernel)
+
+    # Parse operations from funcSrc
+    if native_parsed is not None:
+        func_src = native_parsed.get("funcSrc", "")
+        if func_src:
+            if nq is None:
+                nq = _parse_num_qubits_from_funcSrc(func_src) or None
+            ops = _parse_operations_from_funcSrc(func_src)
+            if ops:
+                envelope["operations"] = ops
+
+    if nq is not None:
+        envelope["num_qubits"] = nq
+
+    # Preserve original for from_json() round-trip
+    envelope["native"] = native_parsed if native_parsed is not None else native_json
+
+    enriched = json.dumps(envelope, indent=2, default=str)
+
     return CircuitData(
-        data=native_json,
+        data=enriched,
         format=CircuitFormat.CUDAQ_JSON,
         sdk=SDK.CUDAQ,
         name=kernel_name,
@@ -267,7 +457,8 @@ class CudaqCircuitSerializer:
     """
     CUDA-Q circuit serializer.
 
-    Serializes kernels to native JSON via ``kernel.to_json()``.
+    Produces enriched JSON with structured ``operations`` parsed from
+    kernel source, plus the native ``to_json()`` blob for round-trip.
     Registered as the ``devqubit.circuit.serializers`` entry-point.
     """
 
@@ -354,16 +545,44 @@ class CudaqCircuitLoader:
 
     def load(self, data: CircuitData) -> LoadedCircuit:
         """
-        Load kernel from native JSON via ``PyKernelDecorator.from_json()``.
+        Reconstruct a callable kernel from serialized JSON.
 
-        Returns a **callable** ``PyKernelDecorator``.
+        Handles both the enriched envelope (extracts ``native`` field)
+        and legacy raw ``funcSrc`` format from ``kernel.to_json()``.
+
+        Parameters
+        ----------
+        data : CircuitData
+            Serialized circuit data.
+
+        Returns
+        -------
+        LoadedCircuit
+            Container with a callable ``PyKernelDecorator``.
+
+        Raises
+        ------
+        LoaderError
+            If JSON is invalid or reconstruction fails.
         """
-        native_json = data.as_text()
+        raw_json = data.as_text()
 
         try:
-            json.loads(native_json)
+            parsed = json.loads(raw_json)
         except json.JSONDecodeError as exc:
             raise LoaderError(f"Invalid kernel JSON: {exc}") from exc
+
+        # Enriched format: extract native blob for from_json()
+        if isinstance(parsed, dict) and "native" in parsed:
+            native_json = json.dumps(parsed["native"])
+        elif isinstance(parsed, dict) and "funcSrc" in parsed:
+            # Legacy: raw to_json() output
+            native_json = raw_json
+        else:
+            raise LoaderError(
+                "Kernel JSON missing 'native' or 'funcSrc' — "
+                "cannot reconstruct kernel"
+            )
 
         try:
             import cudaq  # local import
@@ -481,9 +700,13 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     Summarize a CUDA-Q kernel.
 
     Strategy (in order):
-    1) ``kernel.to_json()`` => ``_native_json_to_op_stream()``
-    2) ``str(kernel)`` => ``_summarize_from_mlir()``
-    3) Minimal summary — never crashes.
+
+    1. Parse ``funcSrc`` from ``kernel.to_json()`` via
+       ``_parse_operations_from_funcSrc()`` — works for all
+       ``PyKernelDecorator`` kernels.
+    2. ``str(kernel)`` → ``_summarize_from_mlir()`` — fallback for
+       builder-style kernels without ``funcSrc``.
+    3. Minimal summary — never crashes.
 
     Parameters
     ----------
@@ -499,36 +722,41 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     param_count = 0
     num_qubits = get_kernel_num_qubits(kernel) or 0
 
-    # --- Strategy 1: instruction-list JSON ---
+    # --- Strategy 1: parse operations from funcSrc ---
     native_json = _get_native_json(kernel)
     if native_json is not None:
-        parsed = _native_json_to_op_stream(native_json)
-        if parsed is not None:
-            ops, detected_qubits = parsed
-            num_qubits = max(num_qubits, detected_qubits)
+        try:
+            parsed = json.loads(native_json)
+            func_src = parsed.get("funcSrc", "") if isinstance(parsed, dict) else ""
+        except json.JSONDecodeError:
+            func_src = ""
 
+        if func_src:
+            num_qubits = max(num_qubits, _parse_num_qubits_from_funcSrc(func_src))
+            ops = _parse_operations_from_funcSrc(func_src)
             for op in ops:
                 g = str(op.get("gate", "unknown")).lower()
                 gate_counts[g] += 1
                 params = op.get("params")
                 if params:
                     has_params = True
-                    if isinstance(params, (dict, list, tuple)):
+                    if isinstance(params, (list, tuple)):
                         param_count += len(params)
                     else:
                         param_count += 1
 
-    # --- Strategy 2: MLIR fallback ---
-    if not gate_counts:
+    # --- Strategy 2: MLIR fallback (gates) or supplement (qubit count) ---
+    if not gate_counts or num_qubits == 0:
         mlir_text = capture_mlir(kernel)
         if mlir_text:
             mlir_result = _summarize_from_mlir(mlir_text)
             if mlir_result is not None:
                 mlir_nq, mlir_gates, mlir_has_params, mlir_param_count = mlir_result
                 num_qubits = max(num_qubits, mlir_nq)
-                gate_counts = mlir_gates
-                has_params = mlir_has_params
-                param_count = mlir_param_count
+                if not gate_counts:
+                    gate_counts = mlir_gates
+                    has_params = mlir_has_params
+                    param_count = mlir_param_count
 
     stats = _classifier.classify_counts(dict(gate_counts))
 

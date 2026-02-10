@@ -490,33 +490,91 @@ def _native_json_to_op_stream(
     native_json: str,
 ) -> tuple[list[dict[str, Any]], int] | None:
     """
-    Parse CUDA-Q native JSON into devqubit-engine op_stream.
+    Parse CUDA-Q kernel JSON into devqubit-engine op_stream.
 
-    Intentionally conservative: succeeds only for schemas that resemble
-    an instruction list.  Returns ``None`` if unrecognized.
+    Recognises two schemas:
+
+    1. **Enriched envelope** (``format_version >= 1``, ``sdk == "cudaq"``):
+       reads the ``operations`` array produced by ``_parse_operations_from_funcSrc``.
+    2. **Instruction-list** (legacy / hypothetical): looks for
+       ``instructions`` / ``operations`` / ``gates`` with ``{gate, qubits}``
+       entries.
+
+    Returns ``None`` for the raw ``funcSrc``-only schema (no structured
+    operations available).
 
     Parameters
     ----------
     native_json : str
-        String returned by ``kernel.to_json()``.
+        JSON string — either enriched envelope or raw ``to_json()`` output.
 
     Returns
     -------
     tuple[list[dict[str, Any]], int] or None
-        ``(ops, num_qubits)`` or ``None``.
+        ``(ops, num_qubits)`` or ``None`` if no operations found.
     """
     try:
         data = json.loads(native_json)
     except json.JSONDecodeError:
         return None
 
+    if not isinstance(data, dict):
+        return None
+
+    # --- Enriched envelope ---
+    if data.get("format_version") and data.get("sdk") == "cudaq":
+        enriched_ops = data.get("operations")
+        if not isinstance(enriched_ops, list) or not enriched_ops:
+            return None
+
+        ops: list[dict[str, Any]] = []
+        max_q = -1
+
+        for entry in enriched_ops:
+            if not isinstance(entry, dict):
+                continue
+            gate = entry.get("gate")
+            if gate is None:
+                continue
+
+            op: dict[str, Any] = {"gate": str(gate).lower()}
+
+            # Collect integer qubit indices (skip expressions)
+            qubits: list[int] = []
+            for key in ("controls", "targets"):
+                val = entry.get(key, [])
+                if isinstance(val, list):
+                    for q in val:
+                        if isinstance(q, int):
+                            qubits.append(q)
+
+            if qubits:
+                op["qubits"] = qubits
+                max_q = max(max_q, max(qubits))
+
+            params = entry.get("params")
+            if params is not None:
+                if isinstance(params, (list, tuple)):
+                    op["params"] = [_to_jsonable(v) for v in params]
+                else:
+                    op["params"] = {"p0": _to_jsonable(params)}
+
+            ops.append(op)
+
+        if not ops:
+            return None
+
+        num_qubits = data.get("num_qubits", max_q + 1 if max_q >= 0 else 0)
+        return ops, num_qubits
+
+    # --- Legacy instruction-list schema ---
     instructions = (
         data.get("instructions") or data.get("operations") or data.get("gates")
     )
     if not isinstance(instructions, list) or not instructions:
         return None
 
-    ops: list[dict[str, Any]] = []
+    ops = []
     max_q = -1
 
     for instr in instructions:
@@ -538,7 +596,7 @@ def _native_json_to_op_stream(
         if qubits:
             max_q = max(max_q, max(qubits))
 
-        op: dict[str, Any] = {"gate": str(gate).lower(), "qubits": qubits}
+        op = {"gate": str(gate).lower(), "qubits": qubits}
 
         clbits = instr.get("clbits") or instr.get("classical_bits") or []
         if isinstance(clbits, int):
