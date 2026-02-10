@@ -39,9 +39,13 @@ class TestSerializeKernelNative:
 
 class TestCaptureMlir:
 
-    def test_non_mlir_str_returns_none(self, bell_kernel):
-        # MockKernel str() doesn't look like MLIR
-        assert capture_mlir(bell_kernel) is None
+    def test_real_kernel_returns_mlir(self, bell_kernel):
+        mlir = capture_mlir(bell_kernel)
+        assert mlir is not None
+        assert "quake." in mlir or "func.func" in mlir
+
+    def test_non_kernel_returns_none(self, bare_kernel):
+        assert capture_mlir(bare_kernel) is None
 
     def test_none_input(self):
         assert capture_mlir(None) is None
@@ -49,14 +53,24 @@ class TestCaptureMlir:
 
 class TestCaptureQir:
 
-    def test_no_cudaq_returns_none(self, bell_kernel):
-        assert capture_qir(bell_kernel) is None
+    def test_real_kernel_returns_qir(self, bell_kernel):
+        qir = capture_qir(bell_kernel)
+        assert qir is not None
+        assert "ModuleID" in qir or "llvm" in qir.lower()
+
+    def test_non_kernel_returns_none(self, bare_kernel):
+        assert capture_qir(bare_kernel) is None
 
 
 class TestDrawKernel:
 
-    def test_no_cudaq_returns_none(self, bell_kernel):
-        assert draw_kernel(bell_kernel) is None
+    def test_real_kernel_returns_diagram(self, bell_kernel):
+        diagram = draw_kernel(bell_kernel)
+        assert diagram is not None
+        assert "q0" in diagram or "q1" in diagram
+
+    def test_non_kernel_returns_none(self, bare_kernel):
+        assert draw_kernel(bare_kernel) is None
 
 
 class TestSerializeKernel:
@@ -67,7 +81,8 @@ class TestSerializeKernel:
         assert data.sdk == SDK.CUDAQ
         assert data.name == "bell"
         parsed = json.loads(data.data)
-        assert "instructions" in parsed
+        # Real CUDAQ to_json() uses funcSrc schema; check name is present
+        assert parsed["name"] == "bell"
 
     def test_no_to_json_raises(self, bare_kernel):
         with pytest.raises(SerializerError):
@@ -128,10 +143,28 @@ class TestCudaqCircuitLoader:
         )
         assert CudaqCircuitLoader().can_load(data) is False
 
-    def test_load_without_cudaq_raises(self, bell_kernel):
+    def test_load_without_cudaq_raises(self, bell_kernel, monkeypatch):
+        """When cudaq is not importable, loader raises LoaderError."""
         data = CudaqCircuitSerializer().serialize_circuit(bell_kernel)
-        with pytest.raises(LoaderError):
+        import builtins
+
+        _real_import = builtins.__import__
+
+        def _block_cudaq(name, *args, **kwargs):
+            if name == "cudaq":
+                raise ImportError("mocked: cudaq not installed")
+            return _real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _block_cudaq)
+        with pytest.raises(LoaderError, match="cudaq not installed"):
             CudaqCircuitLoader().load(data)
+
+    def test_load_with_cudaq_roundtrips(self, bell_kernel):
+        """When cudaq IS available, load reconstructs a kernel."""
+        data = CudaqCircuitSerializer().serialize_circuit(bell_kernel)
+        loaded = CudaqCircuitLoader().load(data)
+        assert loaded.name == "bell"
+        assert loaded.sdk == SDK.CUDAQ
 
 
 class TestKernelToText:

@@ -394,6 +394,15 @@ class TrackedCudaqExecutor:
         elif self._log_every_n > 0 and exec_count % self._log_every_n == 0:
             should_log_results = True
 
+        # Capture target snapshot once (invalidated on set_target).
+        # Must happen before the fast-path return so that the snapshot
+        # is available even when logging is skipped.
+        if self._device_snapshot is None:
+            self._device_snapshot = _log_device_snapshot(
+                tracker,
+                runtime_events=self._runtime_config_events,
+            )
+
         # Fast path: no logging needed
         if not should_log_structure and not should_log_results:
             result = self._raw_execute(
@@ -410,13 +419,6 @@ class TrackedCudaqExecutor:
             ):
                 tracker.record["execution_stats"] = self._build_stats()
             return result
-
-        # Capture target snapshot once (invalidated on set_target)
-        if self._device_snapshot is None:
-            self._device_snapshot = _log_device_snapshot(
-                tracker,
-                runtime_events=self._runtime_config_events,
-            )
 
         backend_name = (
             self._device_snapshot.backend_name if self._device_snapshot else "unknown"

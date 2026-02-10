@@ -469,6 +469,79 @@ def _native_json_to_op_stream(
 
 
 # ============================================================================
+# MLIR-based gate extraction (fallback)
+# ============================================================================
+
+# Quake gate operations that correspond to known quantum gates.
+# The regex matches e.g.  ``quake.h``, ``quake.x``, ``quake.rx``,
+# ``quake.mz``, etc.  We also recognise controlled variants such as
+# ``quake.x`` preceded by ``[…]`` (the control syntax in Quake IR).
+_QUAKE_GATE_RE = re.compile(
+    r"quake\.(" + "|".join(sorted(_CUDAQ_GATES.keys())) + r")\b",
+    re.IGNORECASE,
+)
+
+# Matches ``quake.alloca !quake.veq<N>``  (vector of qubits).
+_QUAKE_ALLOC_VEQ_RE = re.compile(r"quake\.alloca\s+!quake\.veq<(\d+)>")
+
+# Matches ``quake.alloca !quake.ref``  (single qubit).
+_QUAKE_ALLOC_REF_RE = re.compile(r"quake\.alloca\s+!quake\.ref\b")
+
+# Matches parameterised gate invocations with a float literal argument,
+# e.g. ``quake.rx (%angle, …)`` where ``%angle`` is bound to a block arg.
+# This is a rough heuristic — MLIR doesn't inline literals, but the
+# presence of Quake rotation ops is sufficient to detect parameters.
+_QUAKE_PARAM_GATES: frozenset[str] = frozenset(
+    {"rx", "ry", "rz", "r1", "u3", "phaseshift", "crx", "cry", "crz", "cr1"}
+)
+
+
+def _summarize_from_mlir(
+    mlir_text: str,
+) -> tuple[int, Counter[str], bool, int] | None:
+    """
+    Extract gate counts and qubit count from Quake MLIR text.
+
+    This is a best-effort heuristic that covers the common output of
+    ``str(kernel)`` for ``PyKernelDecorator`` kernels.  It does *not*
+    attempt a full MLIR parse.
+
+    Returns
+    -------
+    tuple or None
+        ``(num_qubits, gate_counts, has_params, param_count)`` on
+        success, or ``None`` if the text does not look like Quake IR.
+    """
+    if "quake." not in mlir_text:
+        return None
+
+    num_qubits = 0
+
+    # Count veq<N> allocations
+    for m in _QUAKE_ALLOC_VEQ_RE.finditer(mlir_text):
+        num_qubits += int(m.group(1))
+
+    # Count individual ref allocations
+    num_qubits += len(_QUAKE_ALLOC_REF_RE.findall(mlir_text))
+
+    gate_counts: Counter[str] = Counter()
+    has_params = False
+    param_count = 0
+
+    for m in _QUAKE_GATE_RE.finditer(mlir_text):
+        gate_name = m.group(1).lower()
+        gate_counts[gate_name] += 1
+        if gate_name in _QUAKE_PARAM_GATES:
+            has_params = True
+            param_count += 1
+
+    if not gate_counts and num_qubits == 0:
+        return None
+
+    return num_qubits, gate_counts, has_params, param_count
+
+
+# ============================================================================
 # Summarization — public entry-point
 # ============================================================================
 
@@ -481,9 +554,14 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     metadata for quick circuit characterisation.  Registered as the
     ``devqubit.circuit.summarizers`` entry-point for the ``cudaq`` SDK.
 
-    The function works from ``kernel.to_json()`` (the instruction list),
-    **not** from ``cudaq.draw()``, because the diagram format omits
-    measurements and is not guaranteed to be stable.
+    Strategy (in order of preference):
+
+    1. ``kernel.to_json()`` → ``_native_json_to_op_stream()`` — works
+       when the SDK emits a simple instruction-list JSON schema.
+    2. ``str(kernel)`` → ``_summarize_from_mlir()`` — works when the
+       kernel prints Quake MLIR (the common case for
+       ``PyKernelDecorator`` kernels in CUDA-Q ≥ 0.7).
+    3. Minimal summary with zero counts — never crashes.
 
     Parameters
     ----------
@@ -500,6 +578,7 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     param_count = 0
     num_qubits = get_kernel_num_qubits(kernel) or 0
 
+    # --- Strategy 1: instruction-list JSON ---
     native_json = _get_native_json(kernel)
     if native_json is not None:
         parsed = _native_json_to_op_stream(native_json)
@@ -517,6 +596,21 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
                 if params:
                     has_params = True
                     param_count += len(params) if isinstance(params, dict) else 1
+
+    # --- Strategy 2: Quake MLIR fallback ---
+    if not gate_counts:
+        try:
+            mlir_text = str(kernel)
+            mlir_result = _summarize_from_mlir(mlir_text)
+            if mlir_result is not None:
+                mlir_nq, mlir_gates, mlir_has_params, mlir_param_count = mlir_result
+                if mlir_nq > num_qubits:
+                    num_qubits = mlir_nq
+                gate_counts = mlir_gates
+                has_params = mlir_has_params
+                param_count = mlir_param_count
+        except Exception as exc:
+            logger.debug("MLIR summarization failed: %s", exc)
 
     stats = _classifier.classify_counts(dict(gate_counts))
 
