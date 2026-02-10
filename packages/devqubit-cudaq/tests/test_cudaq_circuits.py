@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for circuit hashing and summarization (circuits.py)."""
+"""Tests for circuit hashing and canonicalization."""
 
 import json
 
@@ -10,9 +10,7 @@ from devqubit_cudaq.circuits import (
     canonicalize_call_args,
     canonicalize_kernel_json,
     compute_circuit_hashes,
-    summarize_cudaq_circuit,
 )
-from devqubit_engine.circuit.models import SDK, CircuitFormat
 
 
 # ============================================================================
@@ -225,47 +223,3 @@ class TestComputeCircuitHashes:
         _, p1 = compute_circuit_hashes(parameterized_kernel, (), {"theta": 0.5})
         _, p2 = compute_circuit_hashes(parameterized_kernel, (), {"theta": 1.0})
         assert p1 != p2
-
-
-# ============================================================================
-# summarize_cudaq_circuit
-# ============================================================================
-
-
-class TestSummarizeCudaqCircuit:
-
-    def test_bell_kernel_summary(self, bell_kernel):
-        summary = summarize_cudaq_circuit(bell_kernel)
-        assert summary.num_qubits == 2
-        assert summary.sdk == SDK.CUDAQ
-        assert summary.source_format == CircuitFormat.CUDAQ_JSON
-        assert summary.gate_count_total > 0
-        # Gate names may come from JSON ("h") or MLIR ("h")
-        assert "h" in summary.gate_types
-
-    def test_ghz_kernel_summary(self, ghz_kernel):
-        summary = summarize_cudaq_circuit(ghz_kernel)
-        assert summary.num_qubits == 3
-        assert summary.gate_count_total > 0
-
-    def test_parameterized_kernel_detects_params(self, parameterized_kernel):
-        summary = summarize_cudaq_circuit(parameterized_kernel)
-        assert summary.has_parameters is True
-        assert summary.parameter_count >= 2  # rx + ry
-
-    def test_bell_kernel_clifford_detection(self, bell_kernel):
-        summary = summarize_cudaq_circuit(bell_kernel)
-        # h, cx/x, mz are all Clifford — regardless of extraction method
-        if summary.gate_count_total > 0:
-            assert summary.is_clifford is True
-
-    def test_parameterized_kernel_not_clifford(self, parameterized_kernel):
-        summary = summarize_cudaq_circuit(parameterized_kernel)
-        # rx, ry are non-Clifford
-        if summary.gate_count_total > 0:
-            assert summary.is_clifford is False
-
-    def test_bare_kernel_returns_summary(self, bare_kernel):
-        summary = summarize_cudaq_circuit(bare_kernel)
-        assert summary.sdk == SDK.CUDAQ
-        assert summary.gate_count_total == 0

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for kernel serialization (serialization.py)."""
+"""Tests for kernel serialization and summarization."""
 
 import json
 
@@ -16,6 +16,7 @@ from devqubit_cudaq.serialization import (
     kernel_to_text,
     serialize_kernel,
     serialize_kernel_native,
+    summarize_cudaq_circuit,
 )
 from devqubit_engine.circuit.models import SDK, CircuitFormat
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
@@ -81,8 +82,7 @@ class TestSerializeKernel:
         assert data.sdk == SDK.CUDAQ
         assert data.name == "bell"
         parsed = json.loads(data.data)
-        # Real CUDAQ to_json() uses funcSrc schema; check name is present
-        assert parsed["name"] == "bell"
+        assert "instructions" in parsed
 
     def test_no_to_json_raises(self, bare_kernel):
         with pytest.raises(SerializerError):
@@ -189,3 +189,44 @@ class TestGateClassification:
     def test_measurement_gates(self):
         for gate in ["mz", "mx", "my", "measure"]:
             assert gate in _CUDAQ_GATES
+
+
+# ============================================================================
+# summarize_cudaq_circuit
+# ============================================================================
+
+
+class TestSummarizeCudaqCircuit:
+
+    def test_bell_kernel_summary(self, bell_kernel):
+        summary = summarize_cudaq_circuit(bell_kernel)
+        assert summary.num_qubits == 2
+        assert summary.sdk == SDK.CUDAQ
+        assert summary.source_format == CircuitFormat.CUDAQ_JSON
+        assert summary.gate_count_total > 0
+        assert "h" in summary.gate_types
+
+    def test_ghz_kernel_summary(self, ghz_kernel):
+        summary = summarize_cudaq_circuit(ghz_kernel)
+        assert summary.num_qubits == 3
+        assert summary.gate_count_total > 0
+
+    def test_parameterized_kernel_detects_params(self, parameterized_kernel):
+        summary = summarize_cudaq_circuit(parameterized_kernel)
+        assert summary.has_parameters is True
+        assert summary.parameter_count >= 2  # rx + ry
+
+    def test_bell_kernel_clifford_detection(self, bell_kernel):
+        summary = summarize_cudaq_circuit(bell_kernel)
+        if summary.gate_count_total > 0:
+            assert summary.is_clifford is True
+
+    def test_parameterized_kernel_not_clifford(self, parameterized_kernel):
+        summary = summarize_cudaq_circuit(parameterized_kernel)
+        if summary.gate_count_total > 0:
+            assert summary.is_clifford is False
+
+    def test_bare_kernel_returns_summary(self, bare_kernel):
+        summary = summarize_cudaq_circuit(bare_kernel)
+        assert summary.sdk == SDK.CUDAQ
+        assert summary.gate_count_total == 0

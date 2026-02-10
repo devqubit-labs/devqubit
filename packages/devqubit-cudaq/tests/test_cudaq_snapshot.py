@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for device snapshots (snapshot.py) and utilities (utils.py)."""
+"""Tests for device snapshots and utilities."""
 
 import json
 

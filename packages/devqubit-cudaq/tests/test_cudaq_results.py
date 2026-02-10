@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""Tests for result processing (results.py)."""
+"""Tests for result processing."""
 
 from devqubit_cudaq.results import (
     _CUDAQ_COUNTS_FORMAT,

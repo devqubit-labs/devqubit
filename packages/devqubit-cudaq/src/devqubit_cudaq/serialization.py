@@ -2,19 +2,33 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Kernel serialization for the CUDA-Q adapter.
+Kernel serialization and summarization for the CUDA-Q adapter.
 
-Primary:    ``kernel.to_json()`` / ``PyKernelDecorator.from_json()``
-Artifacts:  ``str(kernel)`` → MLIR, ``cudaq.translate()`` → QIR
-Visual:     ``cudaq.draw()`` → diagram (logging only)
+Serialization
+    ``kernel.to_json()`` / ``PyKernelDecorator.from_json()``
+Artifacts
+    ``str(kernel)`` => MLIR, ``cudaq.translate()`` => QIR
+Visual
+    ``cudaq.draw()`` => diagram (logging only)
+Summarization
+    ``summarize_cudaq_circuit()`` — registered as the
+    ``devqubit.circuit.summarizers`` entry-point for the ``cudaq`` SDK.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
+from collections import Counter
 from typing import Any
 
+from devqubit_cudaq.circuits import (
+    _CUDAQ_GATES,
+    _classifier,
+    _get_native_json,
+    _native_json_to_op_stream,
+)
 from devqubit_cudaq.utils import (
     get_kernel_name,
     get_kernel_num_qubits,
@@ -27,6 +41,7 @@ from devqubit_engine.circuit.models import (
     LoadedCircuit,
 )
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
+from devqubit_engine.circuit.summary import CircuitSummary
 
 
 logger = logging.getLogger(__name__)
@@ -257,3 +272,154 @@ class CudaqCircuitLoader:
             name=data.name,
             index=data.index,
         )
+
+
+# ============================================================================
+# MLIR-based gate extraction (fallback for summarization)
+# ============================================================================
+
+# Quake gate operations that correspond to known quantum gates.
+_QUAKE_GATE_RE = re.compile(
+    r"quake\.(" + "|".join(sorted(_CUDAQ_GATES.keys())) + r")\b",
+    re.IGNORECASE,
+)
+
+# Matches ``quake.alloca !quake.veq<N>``  (vector of qubits).
+_QUAKE_ALLOC_VEQ_RE = re.compile(r"quake\.alloca\s+!quake\.veq<(\d+)>")
+
+# Matches ``quake.alloca !quake.ref``  (single qubit).
+_QUAKE_ALLOC_REF_RE = re.compile(r"quake\.alloca\s+!quake\.ref\b")
+
+# Parameterised Quake rotation ops — presence implies parameters.
+_QUAKE_PARAM_GATES: frozenset[str] = frozenset(
+    {"rx", "ry", "rz", "r1", "u3", "phaseshift", "crx", "cry", "crz", "cr1"}
+)
+
+
+def _summarize_from_mlir(
+    mlir_text: str,
+) -> tuple[int, Counter[str], bool, int] | None:
+    """
+    Extract gate counts and qubit count from Quake MLIR text.
+
+    Best-effort heuristic covering the common output of ``str(kernel)``
+    for ``PyKernelDecorator`` kernels.  Does *not* attempt a full MLIR
+    parse.
+
+    Returns
+    -------
+    tuple or None
+        ``(num_qubits, gate_counts, has_params, param_count)`` on
+        success, or ``None`` if the text does not look like Quake IR.
+    """
+    if "quake." not in mlir_text:
+        return None
+
+    num_qubits = 0
+
+    for m in _QUAKE_ALLOC_VEQ_RE.finditer(mlir_text):
+        num_qubits += int(m.group(1))
+
+    num_qubits += len(_QUAKE_ALLOC_REF_RE.findall(mlir_text))
+
+    gate_counts: Counter[str] = Counter()
+    has_params = False
+    param_count = 0
+
+    for m in _QUAKE_GATE_RE.finditer(mlir_text):
+        gate_name = m.group(1).lower()
+        gate_counts[gate_name] += 1
+        if gate_name in _QUAKE_PARAM_GATES:
+            has_params = True
+            param_count += 1
+
+    if not gate_counts and num_qubits == 0:
+        return None
+
+    return num_qubits, gate_counts, has_params, param_count
+
+
+# ============================================================================
+# Summarization — entry-point for devqubit.circuit.summarizers
+# ============================================================================
+
+
+def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
+    """
+    Summarize a CUDA-Q kernel.
+
+    Strategy (in order of preference):
+
+    1. ``kernel.to_json()`` => ``_native_json_to_op_stream()`` — works
+       when the SDK emits a simple instruction-list JSON schema.
+    2. ``str(kernel)`` => ``_summarize_from_mlir()`` — works when the
+       kernel prints Quake MLIR (the common case for
+       ``PyKernelDecorator`` kernels in CUDA-Q ≥ 0.7).
+    3. Minimal summary with zero counts — never crashes.
+
+    Parameters
+    ----------
+    kernel : Any
+        CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
+
+    Returns
+    -------
+    CircuitSummary
+        Circuit summary with gate counts and statistics.
+    """
+    gate_counts: Counter[str] = Counter()
+    has_params = False
+    param_count = 0
+    num_qubits = get_kernel_num_qubits(kernel) or 0
+
+    # --- Strategy 1: instruction-list JSON ---
+    native_json = _get_native_json(kernel)
+    if native_json is not None:
+        parsed = _native_json_to_op_stream(native_json)
+        if parsed is not None:
+            ops, detected_qubits = parsed
+            if detected_qubits > num_qubits:
+                num_qubits = detected_qubits
+
+            for op in ops:
+                gate_name = op.get("gate", "unknown").lower()
+                if gate_name.startswith("__"):
+                    continue
+                gate_counts[gate_name] += 1
+                params = op.get("params")
+                if params:
+                    has_params = True
+                    param_count += len(params) if isinstance(params, dict) else 1
+
+    # --- Strategy 2: Quake MLIR fallback ---
+    if not gate_counts:
+        try:
+            mlir_text = str(kernel)
+            mlir_result = _summarize_from_mlir(mlir_text)
+            if mlir_result is not None:
+                mlir_nq, mlir_gates, mlir_has_params, mlir_param_count = mlir_result
+                if mlir_nq > num_qubits:
+                    num_qubits = mlir_nq
+                gate_counts = mlir_gates
+                has_params = mlir_has_params
+                param_count = mlir_param_count
+        except Exception as exc:
+            logger.debug("MLIR summarization failed: %s", exc)
+
+    stats = _classifier.classify_counts(dict(gate_counts))
+
+    return CircuitSummary(
+        num_qubits=num_qubits,
+        depth=0,
+        gate_count_1q=stats["gate_count_1q"],
+        gate_count_2q=stats["gate_count_2q"],
+        gate_count_multi=stats["gate_count_multi"],
+        gate_count_measure=stats["gate_count_measure"],
+        gate_count_total=sum(gate_counts.values()),
+        gate_types=dict(gate_counts),
+        has_parameters=has_params,
+        parameter_count=param_count if has_params else 0,
+        is_clifford=stats["is_clifford"],
+        source_format=CircuitFormat.CUDAQ_JSON,
+        sdk=SDK.CUDAQ,
+    )
