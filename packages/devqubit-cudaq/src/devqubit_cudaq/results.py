@@ -14,6 +14,12 @@ CUDA-Q returns bitstrings in allocation order (qubit 0 = leftmost bit),
 which corresponds to ``cbit0_left`` in UEC terms. This module transforms
 all bitstrings to the UEC canonical ``cbit0_right`` order and marks the
 result format accordingly.
+
+When ``explicit_measurements=True`` is passed to ``sample()``, the global
+register contains bits in **measurement execution order** rather than
+allocation order. In that mode bitstrings are kept as-is and the format
+is marked ``bit_order='measurement_order'`` so downstream consumers know
+the semantics differ.
 """
 
 from __future__ import annotations
@@ -61,12 +67,20 @@ def _normalize_bitstrings_to_cbit0_right(
     return {k[::-1]: v for k, v in counts.items()}
 
 
-# Pre-built counts format for normalized CUDA-Q results
+# Pre-built counts format for standard (non-explicit) CUDA-Q results
 _CUDAQ_COUNTS_FORMAT: dict[str, Any] = CountsFormat(
     source_sdk="cudaq",
     source_key_format="cudaq.__global__",
     bit_order="cbit0_right",
     transformed=True,
+).to_dict()
+
+# Counts format for explicit_measurements mode (measurement order, no reversal)
+_CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER: dict[str, Any] = CountsFormat(
+    source_sdk="cudaq",
+    source_key_format="cudaq.__global__.explicit_measurements",
+    bit_order="measurement_order",
+    transformed=False,
 ).to_dict()
 
 
@@ -238,33 +252,56 @@ def _build_sample_items(
     result: Any,
     *,
     item_offset: int = 0,
+    call_kwargs: dict[str, Any] | None = None,
 ) -> list[ResultItem]:
-    """Build ResultItems for a single SampleResult."""
+    """
+    Build ResultItems for a single SampleResult.
+
+    Parameters
+    ----------
+    result : Any
+        CUDA-Q ``SampleResult``.
+    item_offset : int
+        Starting item index.
+    call_kwargs : dict, optional
+        Keyword arguments that were passed to ``cudaq.sample()``.
+        Used to detect ``explicit_measurements`` mode.
+    """
     items: list[ResultItem] = []
 
     counts, meta = _extract_counts_and_meta(result)
     if not counts:
         return items
 
-    # Normalize bitstrings to UEC canonical cbit0_right
-    counts = _normalize_bitstrings_to_cbit0_right(counts)
-    total_shots = meta.get("shots") or sum(counts.values())
+    # Determine normalization strategy based on explicit_measurements flag
+    explicit = bool((call_kwargs or {}).get("explicit_measurements"))
+
+    if explicit:
+        # Measurement-order mode: keep bitstrings as-is
+        normalized_counts = dict(counts)
+        counts_format = dict(_CUDAQ_COUNTS_FORMAT_MEASUREMENT_ORDER)
+    else:
+        # Standard mode: reverse to UEC canonical cbit0_right
+        normalized_counts = _normalize_bitstrings_to_cbit0_right(counts)
+        counts_format = dict(_CUDAQ_COUNTS_FORMAT)
+
+    total_shots = meta.get("shots") or sum(normalized_counts.values())
 
     items.append(
         ResultItem(
             item_index=item_offset,
             success=True,
             counts={
-                "counts": counts,
+                "counts": normalized_counts,
                 "shots": total_shots,
-                "format": dict(_CUDAQ_COUNTS_FORMAT),
+                "format": counts_format,
             },
         )
     )
 
     # Derive quasi-probability distribution
     if total_shots > 0:
-        distribution = {k: float(v) / total_shots for k, v in counts.items()}
+        distribution = {k: float(v) / total_shots for k, v in normalized_counts.items()}
         probs_values = list(distribution.values())
         items.append(
             ResultItem(
@@ -286,8 +323,20 @@ def _build_observe_items(
     result: Any,
     *,
     item_offset: int = 0,
+    call_kwargs: dict[str, Any] | None = None,
 ) -> list[ResultItem]:
-    """Build ResultItems for a single ObserveResult."""
+    """
+    Build ResultItems for a single ObserveResult.
+
+    Parameters
+    ----------
+    result : Any
+        CUDA-Q ``ObserveResult``.
+    item_offset : int
+        Starting item index.
+    call_kwargs : dict, optional
+        Keyword arguments that were passed to ``cudaq.observe()``.
+    """
     items: list[ResultItem] = []
 
     exp_val = _extract_expectation_from_observe(result)
@@ -338,12 +387,14 @@ def build_result_snapshot(
     raw_result_ref: Any = None,
     success: bool = True,
     error_info: dict[str, Any] | None = None,
+    call_kwargs: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """
     Build a ``ResultSnapshot`` from CUDA-Q execution results.
 
     Handles both single results and broadcasting (list results).
-    Bitstrings are normalized to UEC canonical ``cbit0_right`` order.
+    Bitstrings are normalized to UEC canonical ``cbit0_right`` order
+    unless ``explicit_measurements=True`` was passed to the execution call.
 
     Parameters
     ----------
@@ -362,6 +413,8 @@ def build_result_snapshot(
         Whether execution succeeded.
     error_info : dict, optional
         Error information if execution failed.
+    call_kwargs : dict, optional
+        Keyword arguments passed to the CUDA-Q execution call.
 
     Returns
     -------
@@ -385,15 +438,19 @@ def build_result_snapshot(
 
         try:
             if result_type == "observe":
-                items = _build_observe_items(result)
+                items = _build_observe_items(result, call_kwargs=call_kwargs)
 
             elif result_type == "sample":
-                items = _build_sample_items(result)
+                items = _build_sample_items(result, call_kwargs=call_kwargs)
 
             elif result_type == "batch_sample" and isinstance(result, list):
                 offset = 0
                 for i, single in enumerate(result):
-                    sub_items = _build_sample_items(single, item_offset=offset)
+                    sub_items = _build_sample_items(
+                        single,
+                        item_offset=offset,
+                        call_kwargs=call_kwargs,
+                    )
                     # tag each sub-item with the batch index
                     for si in sub_items:
                         si.item_index = offset
@@ -403,7 +460,11 @@ def build_result_snapshot(
             elif result_type == "batch_observe" and isinstance(result, list):
                 offset = 0
                 for i, single in enumerate(result):
-                    sub_items = _build_observe_items(single, item_offset=offset)
+                    sub_items = _build_observe_items(
+                        single,
+                        item_offset=offset,
+                        call_kwargs=call_kwargs,
+                    )
                     for si in sub_items:
                         si.item_index = offset
                         offset += 1
@@ -417,6 +478,8 @@ def build_result_snapshot(
         "cudaq_result_type": result_type,
         "shots": shots,
     }
+    if call_kwargs and call_kwargs.get("explicit_measurements"):
+        metadata["cudaq.explicit_measurements"] = True
 
     return ResultSnapshot(
         success=success,

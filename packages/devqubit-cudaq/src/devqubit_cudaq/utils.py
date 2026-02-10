@@ -4,15 +4,17 @@
 """
 Utility functions for the CUDA-Q adapter.
 
-Provides version utilities, target introspection, and common helpers used
-across the adapter components following the devqubit Uniform Execution
-Contract (UEC).
+Provides version utilities, target introspection, environment snapshot
+collection, and common helpers used across the adapter components following
+the devqubit Uniform Execution Contract (UEC).
 """
 
 from __future__ import annotations
 
 import inspect
 import logging
+import os
+import subprocess
 from dataclasses import dataclass
 from typing import Any
 
@@ -371,3 +373,182 @@ def get_kernel_num_qubits(kernel: Any) -> int | None:
         except Exception:
             pass
     return None
+
+
+# ============================================================================
+# Environment & GPU snapshot helpers
+# ============================================================================
+
+# CUDA-Q–relevant environment variables to capture in device snapshots.
+# Sensitive values (credentials, tokens, etc.) are automatically redacted
+# by the engine's ``RedactionConfig`` — the adapter does not need its own
+# allowlist / blocklist logic.
+_CUDAQ_ENV_VARS: tuple[str, ...] = (
+    # Runtime configuration
+    "CUDA_VISIBLE_DEVICES",
+    "CUDAQ_DEFAULT_SIMULATOR",
+    "CUDAQ_LOG_LEVEL",
+    "CUDAQ_MQPU_NGPUS",
+    "CUDAQ_SER_CODE_EXEC",
+    "CUQUANTUM_ROOT",
+    "OMP_NUM_THREADS",
+    # Provider credentials (redacted by engine patterns)
+    "IONQ_API_KEY",
+    "CUDAQ_QUANTINUUM_CREDENTIALS",
+    "IQM_SERVER_URL",
+    "IQM_TOKENS_FILE",
+    "OQC_URL",
+    "OQC_EMAIL",
+    "OQC_PASSWORD",
+    "NVQC_API_KEY",
+)
+
+
+def _get_redaction_config() -> Any:
+    """Get the engine's ``RedactionConfig``, with safe fallback."""
+    try:
+        from devqubit_engine.config import get_config
+
+        return get_config().redaction
+    except Exception:
+        # Fallback: import class directly and use defaults
+        from devqubit_engine.config import RedactionConfig
+
+        return RedactionConfig()
+
+
+def collect_env_snapshot() -> dict[str, str]:
+    """
+    Collect CUDA-Q–relevant environment variables for the device snapshot.
+
+    Variables that match the engine's redaction patterns (tokens, passwords,
+    API keys, cloud-provider prefixes, etc.) are replaced with the engine's
+    ``RedactionConfig.replacement`` value (default ``"[REDACTED]"``).
+
+    Returns
+    -------
+    dict
+        Flat mapping of variable name → value (or redacted placeholder).
+        Empty dict when no relevant variables are set.
+    """
+    raw: dict[str, str] = {}
+    for var in _CUDAQ_ENV_VARS:
+        val = os.environ.get(var)
+        if val is not None:
+            raw[var] = val
+
+    if not raw:
+        return {}
+
+    redaction = _get_redaction_config()
+    return redaction.redact_env(raw)
+
+
+def collect_gpu_snapshot() -> dict[str, Any]:
+    """
+    Collect GPU information for the device snapshot.
+
+    Uses ``cudaq.num_available_gpus()`` when available, and falls back
+    to reading ``CUDA_VISIBLE_DEVICES`` and best-effort ``nvidia-smi``.
+
+    Returns
+    -------
+    dict
+        GPU snapshot with count and device list (if available).
+    """
+    gpu_info: dict[str, Any] = {}
+
+    # CUDA-Q native GPU count
+    try:
+        import cudaq
+
+        num_gpus_fn = getattr(cudaq, "num_available_gpus", None)
+        if num_gpus_fn is not None:
+            gpu_info["num_available_gpus"] = int(num_gpus_fn())
+    except Exception:
+        pass
+
+    # CUDA_VISIBLE_DEVICES
+    cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if cuda_visible is not None:
+        gpu_info["CUDA_VISIBLE_DEVICES"] = cuda_visible
+
+    # Best-effort nvidia-smi
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "-L"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            gpu_info["nvidia_smi_devices"] = result.stdout.strip().splitlines()
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        pass
+
+    return gpu_info
+
+
+def safe_list_targets() -> list[dict[str, Any]]:
+    """
+    List all available CUDA-Q targets with basic metadata.
+
+    Returns
+    -------
+    list of dict
+        Each entry contains ``name``, ``description``, and ``platform``
+        for an available target.
+    """
+    targets: list[dict[str, Any]] = []
+    try:
+        import cudaq
+
+        for target in cudaq.get_targets():
+            entry: dict[str, Any] = {"name": getattr(target, "name", "unknown")}
+            desc = getattr(target, "description", "")
+            if desc:
+                entry["description"] = desc
+            platform = getattr(target, "platform", "")
+            if platform:
+                entry["platform"] = platform
+            simulator = getattr(target, "simulator", "")
+            if simulator:
+                entry["simulator"] = simulator
+            targets.append(entry)
+    except Exception as exc:
+        logger.debug("Failed to list CUDA-Q targets: %s", exc)
+    return targets
+
+
+def sanitize_runtime_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Redact secrets from runtime configuration event kwargs.
+
+    Uses the engine's ``RedactionConfig`` to decide which kwarg keys
+    contain sensitive values (tokens, passwords, API keys, etc.).
+
+    Parameters
+    ----------
+    events : list of dict
+        Raw runtime configuration events.
+
+    Returns
+    -------
+    list of dict
+        Events with sensitive kwarg values replaced by the engine's
+        redaction placeholder.
+    """
+    redaction = _get_redaction_config()
+    sanitized: list[dict[str, Any]] = []
+    for event in events:
+        clean = dict(event)
+        kwargs = clean.get("kwargs")
+        if isinstance(kwargs, dict):
+            clean["kwargs"] = {
+                k: (redaction.replacement if redaction.should_redact(k) else v)
+                for k, v in kwargs.items()
+            }
+        sanitized.append(clean)
+    return sanitized

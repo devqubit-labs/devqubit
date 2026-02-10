@@ -185,6 +185,7 @@ def _log_results(
     *,
     success: bool = True,
     error_info: dict[str, Any] | None = None,
+    call_kwargs: dict[str, Any] | None = None,
 ) -> ResultSnapshot:
     """Log execution results and return ``ResultSnapshot``."""
     raw_result_ref = None
@@ -222,14 +223,22 @@ def _log_results(
         raw_result_ref=raw_result_ref,
         success=success,
         error_info=error_info,
+        call_kwargs=call_kwargs,
     )
 
 
-def _log_device_snapshot(tracker: Run) -> DeviceSnapshot:
+def _log_device_snapshot(
+    tracker: Run,
+    runtime_events: list[dict[str, Any]] | None = None,
+) -> DeviceSnapshot:
     """Log device (target) snapshot and return ``DeviceSnapshot``."""
     try:
         target_info = get_target_info()
-        snapshot = create_device_snapshot(target_info, tracker=tracker)
+        snapshot = create_device_snapshot(
+            target_info,
+            tracker=tracker,
+            runtime_events=runtime_events,
+        )
     except Exception as exc:
         logger.warning(
             "Failed to create target snapshot: %s. Using minimal snapshot.", exc
@@ -325,6 +334,7 @@ class TrackedCudaqExecutor:
         self._logged_circuit_hashes: set[str] = set()
 
         self._device_snapshot: DeviceSnapshot | None = None
+        self._runtime_config_events: list[dict[str, Any]] = []
 
         if executor is not None:
             self.cudaq = executor
@@ -403,7 +413,10 @@ class TrackedCudaqExecutor:
 
         # Capture target snapshot once (invalidated on set_target)
         if self._device_snapshot is None:
-            self._device_snapshot = _log_device_snapshot(tracker)
+            self._device_snapshot = _log_device_snapshot(
+                tracker,
+                runtime_events=self._runtime_config_events,
+            )
 
         backend_name = (
             self._device_snapshot.backend_name if self._device_snapshot else "unknown"
@@ -545,6 +558,7 @@ class TrackedCudaqExecutor:
                 result_type,
                 success=execution_succeeded,
                 error_info=execution_error,
+                call_kwargs=call_kwargs,
             )
             if not should_log_structure:
                 self._logged_execution_count += 1
@@ -639,8 +653,20 @@ class TrackedCudaqExecutor:
             return compute_circuit_hashes(kernel, args)
         except Exception as exc:
             logger.debug("Hash computation failed, using fallback: %s", exc)
-            # Fallback: hash kernel repr + args
             import hashlib
+
+            # Try str(kernel) for structural content before falling back to name
+            try:
+                content = str(kernel)
+                if content and len(content) > 20:
+                    structural = (
+                        f"sha256:{hashlib.sha256(content.encode()).hexdigest()}"
+                    )
+                    payload = f"{content}:{repr(args)}"
+                    h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
+                    return structural, h
+            except Exception:
+                pass
 
             payload = f"{get_kernel_name(kernel)}:{repr(args)}"
             h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
@@ -768,19 +794,54 @@ class TrackedCudaqExecutor:
         """
         Passthrough for non-tracked cudaq attributes.
 
-        Intercepts ``set_target`` to invalidate the cached device snapshot
-        so the next execution re-captures target information.
+        Intercepts runtime configuration methods to invalidate caches
+        and record configuration events for the device snapshot.
         """
         attr = getattr(self.cudaq, name)
+
         if name == "set_target" and callable(attr):
+            return self._wrap_config_method(
+                attr, "set_target", invalidate_snapshot=True
+            )
 
-            def _wrapped_set_target(*a: Any, **k: Any) -> Any:
-                result = attr(*a, **k)
-                self._device_snapshot = None
-                return result
+        if name == "reset_target" and callable(attr):
+            return self._wrap_config_method(
+                attr,
+                "reset_target",
+                invalidate_snapshot=True,
+            )
 
-            return _wrapped_set_target
+        if name in ("set_noise", "unset_noise", "set_random_seed") and callable(attr):
+            return self._wrap_config_method(attr, name)
+
         return attr
+
+    def _wrap_config_method(
+        self,
+        method: Any,
+        method_name: str,
+        *,
+        invalidate_snapshot: bool = False,
+    ) -> Any:
+        """Return a wrapper that records the call and optionally invalidates the snapshot."""
+
+        def _wrapped(*a: Any, **k: Any) -> Any:
+            result = method(*a, **k)
+            self._runtime_config_events.append(
+                {
+                    "method": method_name,
+                    "args": [str(x) for x in a] if a else [],
+                    "kwargs": (
+                        {str(key): str(val) for key, val in k.items()} if k else {}
+                    ),
+                    "timestamp": utc_now_iso(),
+                }
+            )
+            if invalidate_snapshot:
+                self._device_snapshot = None
+            return result
+
+        return _wrapped
 
 
 # ============================================================================

@@ -29,6 +29,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 import struct
 from collections import Counter
 from typing import Any
@@ -236,10 +237,18 @@ def _to_jsonable(value: Any) -> Any:
         return float(value)
     if "int" in type_name.lower():
         return int(value)
-    # Last resort — use repr so the hash is still deterministic within
-    # a single Python process.  Cross-process stability is not guaranteed
-    # for opaque types, but this is better than crashing.
-    return repr(value)
+    # For known CUDA-Q types prefer str() (more stable than repr)
+    module = getattr(type(value), "__module__", "") or ""
+    if "cudaq" in module:
+        try:
+            return str(value)
+        except Exception:
+            pass
+    # Last resort — use repr, but strip memory addresses (0x...) for
+    # cross-process hash stability.
+    s = repr(value)
+    s = re.sub(r"0x[0-9a-fA-F]+", "0x…", s)
+    return s
 
 
 # ============================================================================
@@ -345,7 +354,18 @@ def compute_circuit_hashes(
             parametric = structural
         return structural, parametric
 
-    # --- Strategy 3: kernel name ---
+    # --- Strategy 3: MLIR / str(kernel) / diagram ---
+    fallback_content = _get_fallback_content(kernel)
+    if fallback_content is not None:
+        structural = _sha256_tag(fallback_content)
+        if args or kwargs:
+            args_canonical = canonicalize_call_args(args, kwargs)
+            parametric = _sha256_tag(f"{fallback_content}|{args_canonical}")
+        else:
+            parametric = structural
+        return structural, parametric
+
+    # --- Strategy 4: kernel name (last resort) ---
     name = get_kernel_name(kernel)
     structural = _sha256_tag(name)
     if args or kwargs:
@@ -354,6 +374,33 @@ def compute_circuit_hashes(
     else:
         parametric = structural
     return structural, parametric
+
+
+def _get_fallback_content(kernel: Any) -> str | None:
+    """
+    Get best-effort content for hashing when ``to_json()`` is unavailable.
+
+    Tries, in order: ``str(kernel)`` (MLIR), ``cudaq.draw()``.
+    """
+    # Try MLIR via str(kernel)
+    try:
+        mlir = str(kernel)
+        if mlir and ("func.func" in mlir or "quake." in mlir or "module" in mlir):
+            return mlir
+    except Exception:
+        pass
+
+    # Try diagram
+    try:
+        import cudaq
+
+        diagram = cudaq.draw(kernel)
+        if isinstance(diagram, str) and diagram.strip():
+            return diagram
+    except Exception:
+        pass
+
+    return None
 
 
 # ============================================================================

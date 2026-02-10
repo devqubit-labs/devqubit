@@ -5,8 +5,8 @@
 Target snapshot creation for CUDA-Q adapter.
 
 Creates structured ``DeviceSnapshot`` objects from CUDA-Q targets,
-capturing target configuration and execution settings following the
-devqubit Uniform Execution Contract (UEC).
+capturing target configuration, execution environment, GPU state, and
+runtime settings following the devqubit Uniform Execution Contract (UEC).
 """
 
 from __future__ import annotations
@@ -16,8 +16,12 @@ from typing import TYPE_CHECKING, Any
 
 from devqubit_cudaq.utils import (
     TargetInfo,
+    collect_env_snapshot,
+    collect_gpu_snapshot,
     collect_sdk_versions,
     get_target_info,
+    safe_list_targets,
+    sanitize_runtime_events,
 )
 from devqubit_engine.uec.models.device import DeviceSnapshot, FrontendConfig
 from devqubit_engine.utils.common import utc_now_iso
@@ -87,7 +91,8 @@ def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
 
         return FrontendConfig(
             name="cudaq",
-            version=None,
+            sdk="cudaq",
+            sdk_version=collect_sdk_versions().get("cudaq"),
             config=config,
         )
     except Exception as exc:
@@ -95,9 +100,20 @@ def _build_frontend_config(target_info: TargetInfo) -> FrontendConfig | None:
         return None
 
 
-def _build_raw_properties(target_info: TargetInfo) -> dict[str, Any]:
-    """Collect raw target properties for artifact storage."""
-    props: dict[str, Any] = {
+def _build_raw_properties(
+    target_info: TargetInfo,
+    runtime_events: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """
+    Collect comprehensive raw target properties for artifact storage.
+
+    Includes current target state, runtime configuration events,
+    available targets, environment variables, and GPU information.
+    """
+    props: dict[str, Any] = {}
+
+    # Current target
+    target_current: dict[str, Any] = {
         "target_name": target_info.name,
         "simulator": target_info.simulator,
         "platform": target_info.platform,
@@ -107,7 +123,37 @@ def _build_raw_properties(target_info: TargetInfo) -> dict[str, Any]:
         "is_remote": target_info.is_remote,
         "is_emulated": target_info.is_emulated,
     }
-    return {k: v for k, v in props.items() if v is not None}
+    props["target_current"] = {k: v for k, v in target_current.items() if v is not None}
+
+    # Runtime configuration events (set_target, set_noise, set_random_seed, etc.)
+    if runtime_events:
+        props["runtime_events"] = sanitize_runtime_events(runtime_events)
+
+    # Available targets
+    try:
+        targets = safe_list_targets()
+        if targets:
+            props["available_targets"] = targets
+    except Exception as exc:
+        logger.debug("Failed to collect available targets: %s", exc)
+
+    # Environment variables
+    try:
+        env = collect_env_snapshot()
+        if env:
+            props["env"] = env
+    except Exception as exc:
+        logger.debug("Failed to collect env snapshot: %s", exc)
+
+    # GPU information
+    try:
+        gpu = collect_gpu_snapshot()
+        if gpu:
+            props["gpu"] = gpu
+    except Exception as exc:
+        logger.debug("Failed to collect GPU snapshot: %s", exc)
+
+    return props
 
 
 # ============================================================================
@@ -119,6 +165,7 @@ def create_device_snapshot(
     target_info: TargetInfo | None = None,
     *,
     tracker: "Run | None" = None,
+    runtime_events: list[dict[str, Any]] | None = None,
 ) -> DeviceSnapshot:
     """
     Create a ``DeviceSnapshot`` from the CUDA-Q target.
@@ -129,6 +176,9 @@ def create_device_snapshot(
         Pre-introspected target info. If None, introspects ``cudaq.get_target()``.
     tracker : Run, optional
         Tracker instance for logging raw_properties as artifact.
+    runtime_events : list of dict, optional
+        Runtime configuration events (set_target calls, set_noise, etc.)
+        captured by the executor.
 
     Returns
     -------
@@ -162,7 +212,7 @@ def create_device_snapshot(
     raw_properties_ref = None
     if tracker is not None:
         try:
-            raw_properties = _build_raw_properties(target_info)
+            raw_properties = _build_raw_properties(target_info, runtime_events)
             raw_properties_ref = tracker.log_json(
                 name="device_raw_properties",
                 obj=raw_properties,
