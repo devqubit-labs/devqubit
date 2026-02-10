@@ -18,7 +18,7 @@ from devqubit_cudaq.serialization import (
     serialize_kernel_native,
     summarize_cudaq_circuit,
 )
-from devqubit_engine.circuit.models import SDK, CircuitFormat
+from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
 
 
@@ -82,7 +82,6 @@ class TestSerializeKernel:
         assert data.sdk == SDK.CUDAQ
         assert data.name == "bell"
         parsed = json.loads(data.data)
-        # Real CUDAQ to_json() uses funcSrc schema (not instruction-list)
         assert parsed["name"] == "bell"
 
     def test_no_to_json_raises(self, bare_kernel):
@@ -121,20 +120,16 @@ class TestCudaqCircuitLoader:
         assert CudaqCircuitLoader().can_load(data) is True
 
     def test_rejects_wrong_sdk(self):
-        from devqubit_engine.circuit.models import CircuitData
-
         data = CircuitData(
             data="{}",
             format=CircuitFormat.CUDAQ_JSON,
-            sdk=SDK.PENNYLANE,
+            sdk=SDK.QISKIT,
             name="x",
             index=0,
         )
         assert CudaqCircuitLoader().can_load(data) is False
 
     def test_rejects_wrong_format(self):
-        from devqubit_engine.circuit.models import CircuitData
-
         data = CircuitData(
             data="{}",
             format=CircuitFormat.TAPE_JSON,
@@ -145,7 +140,6 @@ class TestCudaqCircuitLoader:
         assert CudaqCircuitLoader().can_load(data) is False
 
     def test_load_without_cudaq_raises(self, bell_kernel, monkeypatch):
-        """When cudaq is not importable, loader raises LoaderError."""
         data = CudaqCircuitSerializer().serialize_circuit(bell_kernel)
         import builtins
 
@@ -161,7 +155,6 @@ class TestCudaqCircuitLoader:
             CudaqCircuitLoader().load(data)
 
     def test_load_with_cudaq_roundtrips(self, bell_kernel):
-        """When cudaq IS available, load reconstructs a kernel."""
         data = CudaqCircuitSerializer().serialize_circuit(bell_kernel)
         loaded = CudaqCircuitLoader().load(data)
         assert loaded.name == "bell"
@@ -192,11 +185,6 @@ class TestGateClassification:
             assert gate in _CUDAQ_GATES
 
 
-# ============================================================================
-# summarize_cudaq_circuit
-# ============================================================================
-
-
 class TestSummarizeCudaqCircuit:
 
     def test_bell_kernel_summary(self, bell_kernel):
@@ -215,7 +203,7 @@ class TestSummarizeCudaqCircuit:
     def test_parameterized_kernel_detects_params(self, parameterized_kernel):
         summary = summarize_cudaq_circuit(parameterized_kernel)
         assert summary.has_parameters is True
-        assert summary.parameter_count >= 2  # rx + ry
+        assert summary.parameter_count >= 2
 
     def test_bell_kernel_clifford_detection(self, bell_kernel):
         summary = summarize_cudaq_circuit(bell_kernel)

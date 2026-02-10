@@ -25,7 +25,6 @@ from typing import Any
 
 from devqubit_cudaq.circuits import (
     _CUDAQ_GATES,
-    _classifier,
     _get_native_json,
     _native_json_to_op_stream,
 )
@@ -38,6 +37,7 @@ from devqubit_engine.circuit.models import (
     SDK,
     CircuitData,
     CircuitFormat,
+    GateClassifier,
     LoadedCircuit,
 )
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
@@ -45,6 +45,8 @@ from devqubit_engine.circuit.summary import CircuitSummary
 
 
 logger = logging.getLogger(__name__)
+
+_classifier = GateClassifier(_CUDAQ_GATES)
 
 
 # ============================================================================
@@ -56,10 +58,6 @@ def serialize_kernel_native(kernel: Any) -> str | None:
     """
     Serialize a kernel via ``kernel.to_json()`` (lossless, SDK-native).
 
-    CUDA-Q's native JSON format preserves the full kernel definition
-    including source, signature, and metadata.  Round-trippable via
-    ``PyKernelDecorator.from_json()``.
-
     Parameters
     ----------
     kernel : Any
@@ -68,18 +66,17 @@ def serialize_kernel_native(kernel: Any) -> str | None:
     Returns
     -------
     str or None
-        JSON string on success, ``None`` if ``to_json()`` is
-        unavailable or returns invalid JSON.
+        JSON string on success, ``None`` if unavailable or invalid.
     """
     try:
         fn = getattr(kernel, "to_json", None)
         if fn is None or not callable(fn):
             return None
-        result = fn()
-        if not isinstance(result, str) or not result:
+        out = fn()
+        if not isinstance(out, str) or not out:
             return None
-        json.loads(result)  # validate
-        return result
+        json.loads(out)  # validate
+        return out
     except json.JSONDecodeError as exc:
         logger.warning("kernel.to_json() returned invalid JSON: %s", exc)
         return None
@@ -100,8 +97,7 @@ def capture_mlir(kernel: Any) -> str | None:
     Returns
     -------
     str or None
-        MLIR text if the kernel produces valid Quake IR, ``None``
-        otherwise.
+        Quake MLIR text, or ``None`` if unavailable.
     """
     try:
         mlir = str(kernel)
@@ -121,19 +117,19 @@ def capture_qir(kernel: Any, version: str = "1.0") -> str | None:
     kernel : Any
         CUDA-Q kernel.
     version : str
-        QIR version string (default ``"1.0"``).
+        QIR version string.  CUDA-Q documents ``0.1`` and ``1.0``.
 
     Returns
     -------
     str or None
-        QIR (LLVM IR) text on success, ``None`` on failure.
+        QIR (LLVM IR) text on success, else ``None``.
     """
     try:
-        import cudaq
+        import cudaq  # local import
 
-        result = cudaq.translate(kernel, format=f"qir:{version}")
-        if isinstance(result, str) and result:
-            return result
+        out = cudaq.translate(kernel, format=f"qir:{version}")
+        if isinstance(out, str) and out:
+            return out
     except Exception as exc:
         logger.debug("QIR capture failed: %s", exc)
     return None
@@ -141,10 +137,9 @@ def capture_qir(kernel: Any, version: str = "1.0") -> str | None:
 
 def draw_kernel(kernel: Any, args: tuple[Any, ...] = ()) -> str | None:
     """
-    Draw circuit diagram via ``cudaq.draw()``.
+    Draw circuit diagram via ``cudaq.draw(kernel, *args)``.
 
-    Used for human-readable logging only — not for hashing or
-    serialization (the diagram format is unstable across SDK versions).
+    Used for human-readable logging only — not for hashing.
 
     Parameters
     ----------
@@ -156,15 +151,17 @@ def draw_kernel(kernel: Any, args: tuple[Any, ...] = ()) -> str | None:
     Returns
     -------
     str or None
-        ASCII circuit diagram on success, ``None`` on failure.
+        ASCII diagram on success, else ``None``.
     """
     try:
-        import cudaq
+        import cudaq  # local import
 
-        return cudaq.draw(kernel, *args)
+        out = cudaq.draw(kernel, *args)
+        if isinstance(out, str) and out:
+            return out
     except Exception as exc:
         logger.debug("cudaq.draw() failed: %s", exc)
-        return None
+    return None
 
 
 # ============================================================================
@@ -187,12 +184,12 @@ def kernel_to_text(
     args : tuple, optional
         Kernel arguments for parameterized circuits.
     index : int, optional
-        Kernel index for multi-circuit batches (default 0).
+        Kernel index for multi-circuit batches.
 
     Returns
     -------
     str
-        Multi-line text with kernel name, qubit count, and diagram.
+        Multi-line summary.
     """
     lines: list[str] = [f"=== Kernel {index} ==="]
     lines.append(f"Name: {get_kernel_name(kernel)}")
@@ -202,12 +199,9 @@ def kernel_to_text(
         lines.append(f"Qubits: {num_qubits}")
 
     diagram = draw_kernel(kernel, args)
-    if diagram:
-        lines.append("")
-        lines.append("Circuit:")
-        lines.append(diagram)
-    else:
-        lines.append("Circuit: <unavailable>")
+    lines.append("")
+    lines.append("Circuit:")
+    lines.append(diagram if diagram else "<unavailable>")
 
     return "\n".join(lines)
 
@@ -219,7 +213,6 @@ def kernel_to_text(
 
 def serialize_kernel(
     kernel: Any,
-    args: tuple[Any, ...] = (),
     *,
     name: str = "",
     index: int = 0,
@@ -227,25 +220,20 @@ def serialize_kernel(
     """
     Serialize a CUDA-Q kernel to ``CircuitData``.
 
-    Uses ``kernel.to_json()`` as the data payload.  This is the
-    primary serialization path for storing kernels in the devqubit
-    tracking system.
+    Uses ``kernel.to_json()`` as the data payload.
 
     Parameters
     ----------
     kernel : Any
         CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
-    args : tuple, optional
-        Kernel arguments (currently unused, reserved for future use).
     name : str, optional
-        Override kernel name in metadata.
+        Override kernel name.
     index : int, optional
-        Circuit index for multi-circuit batches (default 0).
+        Circuit index for multi-circuit batches.
 
     Returns
     -------
     CircuitData
-        Serialized circuit data with ``CircuitFormat.CUDAQ_JSON``.
 
     Raises
     ------
@@ -280,8 +268,7 @@ class CudaqCircuitSerializer:
     CUDA-Q circuit serializer.
 
     Serializes kernels to native JSON via ``kernel.to_json()``.
-    Registered as the ``devqubit.circuit.serializers`` entry-point
-    for the ``cudaq`` SDK.
+    Registered as the ``devqubit.circuit.serializers`` entry-point.
     """
 
     name = "cudaq"
@@ -307,7 +294,30 @@ class CudaqCircuitSerializer:
         index: int = 0,
         args: tuple[Any, ...] = (),
     ) -> CircuitData:
-        return serialize_kernel(circuit, args, name=name, index=index)
+        """
+        Serialize a CUDA-Q kernel.
+
+        Parameters
+        ----------
+        circuit : Any
+            CUDA-Q kernel.
+        fmt : CircuitFormat, optional
+            Requested format (only ``CUDAQ_JSON`` supported).
+        name : str, optional
+            Override kernel name.
+        index : int, optional
+            Circuit index.
+        args : tuple, optional
+            Kernel arguments (accepted for interface compatibility;
+            not currently used in serialization).
+
+        Returns
+        -------
+        CircuitData
+        """
+        if fmt is not None and fmt not in self.supported_formats:
+            raise SerializerError(f"Unsupported CUDA-Q format: {fmt}")
+        return serialize_kernel(circuit, name=name, index=index)
 
     def serialize_circuit(
         self,
@@ -317,6 +327,7 @@ class CudaqCircuitSerializer:
         index: int = 0,
         args: tuple[Any, ...] = (),
     ) -> CircuitData:
+        """Convenience alias for ``serialize``."""
         return self.serialize(circuit, name=name, index=index, args=args)
 
 
@@ -325,8 +336,7 @@ class CudaqCircuitLoader:
     CUDA-Q circuit loader.
 
     Reconstructs callable kernels from native JSON via
-    ``PyKernelDecorator.from_json()``.  Registered as the
-    ``devqubit.circuit.loaders`` entry-point for the ``cudaq`` SDK.
+    ``cudaq.PyKernelDecorator.from_json()``.
     """
 
     name = "cudaq"
@@ -356,11 +366,13 @@ class CudaqCircuitLoader:
             raise LoaderError(f"Invalid kernel JSON: {exc}") from exc
 
         try:
-            import cudaq
+            import cudaq  # local import
 
             kernel = cudaq.PyKernelDecorator.from_json(native_json)
-        except ImportError:
-            raise LoaderError("cudaq not installed — cannot reconstruct kernel")
+        except ImportError as exc:
+            raise LoaderError(
+                "cudaq not installed — cannot reconstruct kernel"
+            ) from exc
         except Exception as exc:
             raise LoaderError(f"from_json() failed: {exc}") from exc
 
@@ -377,19 +389,19 @@ class CudaqCircuitLoader:
 # MLIR-based gate extraction (fallback for summarization)
 # ============================================================================
 
-# Quake gate operations that correspond to known quantum gates.
-_QUAKE_GATE_RE = re.compile(
-    r"quake\.(" + "|".join(sorted(_CUDAQ_GATES.keys())) + r")\b",
-    re.IGNORECASE,
-)
+# Matches any Quake op name.
+_QUAKE_GATE_RE = re.compile(r"quake\.([a-zA-Z_][\w]*)\b")
 
-# Matches ``quake.alloca !quake.veq<N>``  (vector of qubits).
+# Matches ``quake.alloca !quake.veq<N>``
 _QUAKE_ALLOC_VEQ_RE = re.compile(r"quake\.alloca\s+!quake\.veq<(\d+)>")
 
-# Matches ``quake.alloca !quake.ref``  (single qubit).
+# Matches ``quake.alloca !quake.ref``
 _QUAKE_ALLOC_REF_RE = re.compile(r"quake\.alloca\s+!quake\.ref\b")
 
-# Parameterised Quake rotation ops — presence implies parameters.
+# Controlled gate pattern: ``quake.x [%c0] %t0``
+_QUAKE_CTRL_RE = re.compile(r"quake\.(x|y|z)\s*\[([^\]]+)\]")
+
+# Parameterised rotation ops.
 _QUAKE_PARAM_GATES: frozenset[str] = frozenset(
     {"rx", "ry", "rz", "r1", "u3", "phaseshift", "crx", "cry", "crz", "cr1"}
 )
@@ -401,9 +413,8 @@ def _summarize_from_mlir(
     """
     Extract gate counts and qubit count from Quake MLIR text.
 
-    Best-effort heuristic covering the common output of ``str(kernel)``
-    for ``PyKernelDecorator`` kernels.  Does *not* attempt a full MLIR
-    parse.
+    Handles controlled gates explicitly to avoid double-counting:
+    ``quake.x [%c0] %t`` => ``cx`` (not ``x``).
 
     Parameters
     ----------
@@ -413,29 +424,46 @@ def _summarize_from_mlir(
     Returns
     -------
     tuple or None
-        ``(num_qubits, gate_counts, has_params, param_count)`` on
-        success, or ``None`` if the text does not look like Quake IR.
+        ``(num_qubits, gate_counts, has_params, param_count)``, or
+        ``None`` if the text does not look like Quake IR.
     """
     if "quake." not in mlir_text:
         return None
 
     num_qubits = 0
-
     for m in _QUAKE_ALLOC_VEQ_RE.finditer(mlir_text):
         num_qubits += int(m.group(1))
-
     num_qubits += len(_QUAKE_ALLOC_REF_RE.findall(mlir_text))
 
     gate_counts: Counter[str] = Counter()
     has_params = False
     param_count = 0
 
+    # Pass 1: count controlled X/Y/Z => cx/cy/cz/ccx
+    for m in _QUAKE_CTRL_RE.finditer(mlir_text):
+        base = m.group(1).lower()
+        ctrl_list = m.group(2)
+        ctrl_count = len([c for c in ctrl_list.split(",") if c.strip()])
+        if ctrl_count == 1:
+            gate_counts[f"c{base}"] += 1
+        elif ctrl_count == 2 and base == "x":
+            gate_counts["ccx"] += 1
+        else:
+            gate_counts[f"mc{base}"] += 1
+
+    # Pass 2: count remaining gates (skip bare x/y/z to avoid double-count)
     for m in _QUAKE_GATE_RE.finditer(mlir_text):
-        gate_name = m.group(1).lower()
-        gate_counts[gate_name] += 1
-        if gate_name in _QUAKE_PARAM_GATES:
+        gate = m.group(1).lower()
+        if gate in {"x", "y", "z"}:
+            continue
+        if gate in _CUDAQ_GATES:
+            gate_counts[gate] += 1
+
+    # Detect parameters
+    for g in gate_counts:
+        if g in _QUAKE_PARAM_GATES:
             has_params = True
-            param_count += 1
+            param_count += gate_counts[g]
 
     if not gate_counts and num_qubits == 0:
         return None
@@ -452,24 +480,19 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
     """
     Summarize a CUDA-Q kernel.
 
-    Strategy (in order of preference):
-
-    1. ``kernel.to_json()`` => ``_native_json_to_op_stream()`` — works
-       when the SDK emits a simple instruction-list JSON schema.
-    2. ``str(kernel)`` => ``_summarize_from_mlir()`` — works when the
-       kernel prints Quake MLIR (the common case for
-       ``PyKernelDecorator`` kernels in CUDA-Q ≥ 0.7).
-    3. Minimal summary with zero counts — never crashes.
+    Strategy (in order):
+    1) ``kernel.to_json()`` => ``_native_json_to_op_stream()``
+    2) ``str(kernel)`` => ``_summarize_from_mlir()``
+    3) Minimal summary — never crashes.
 
     Parameters
     ----------
     kernel : Any
-        CUDA-Q kernel (``PyKernelDecorator`` or builder-style).
+        CUDA-Q kernel.
 
     Returns
     -------
     CircuitSummary
-        Circuit summary with gate counts and statistics.
     """
     gate_counts: Counter[str] = Counter()
     has_params = False
@@ -482,39 +505,36 @@ def summarize_cudaq_circuit(kernel: Any) -> CircuitSummary:
         parsed = _native_json_to_op_stream(native_json)
         if parsed is not None:
             ops, detected_qubits = parsed
-            if detected_qubits > num_qubits:
-                num_qubits = detected_qubits
+            num_qubits = max(num_qubits, detected_qubits)
 
             for op in ops:
-                gate_name = op.get("gate", "unknown").lower()
-                if gate_name.startswith("__"):
-                    continue
-                gate_counts[gate_name] += 1
+                g = str(op.get("gate", "unknown")).lower()
+                gate_counts[g] += 1
                 params = op.get("params")
                 if params:
                     has_params = True
-                    param_count += len(params) if isinstance(params, dict) else 1
+                    if isinstance(params, (dict, list, tuple)):
+                        param_count += len(params)
+                    else:
+                        param_count += 1
 
-    # --- Strategy 2: Quake MLIR fallback ---
+    # --- Strategy 2: MLIR fallback ---
     if not gate_counts:
-        try:
-            mlir_text = str(kernel)
+        mlir_text = capture_mlir(kernel)
+        if mlir_text:
             mlir_result = _summarize_from_mlir(mlir_text)
             if mlir_result is not None:
                 mlir_nq, mlir_gates, mlir_has_params, mlir_param_count = mlir_result
-                if mlir_nq > num_qubits:
-                    num_qubits = mlir_nq
+                num_qubits = max(num_qubits, mlir_nq)
                 gate_counts = mlir_gates
                 has_params = mlir_has_params
                 param_count = mlir_param_count
-        except Exception as exc:
-            logger.debug("MLIR summarization failed: %s", exc)
 
     stats = _classifier.classify_counts(dict(gate_counts))
 
     return CircuitSummary(
         num_qubits=num_qubits,
-        depth=0,
+        depth=0,  # CUDA-Q does not expose depth cheaply
         gate_count_1q=stats["gate_count_1q"],
         gate_count_2q=stats["gate_count_2q"],
         gate_count_multi=stats["gate_count_multi"],
