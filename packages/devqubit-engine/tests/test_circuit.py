@@ -57,7 +57,7 @@ class TestCircuitPipeline:
 
     @requires_qiskit
     def test_qiskit_qpy_full_pipeline(self, run_factory, store, artifact_factory):
-        """Full pipeline: QPY artifact → extract → load → summarize."""
+        """Full pipeline: QPY artifact => extract => load => summarize."""
         from qiskit import QuantumCircuit, qpy
 
         # Create a realistic circuit
@@ -104,7 +104,7 @@ class TestCircuitPipeline:
         artifact_factory,
         bell_qasm2,
     ):
-        """Full pipeline: OpenQASM2 artifact → extract → load → summarize."""
+        """Full pipeline: OpenQASM2 artifact => extract => load => summarize."""
         artifact = artifact_factory(
             data=bell_qasm2.encode("utf-8"),
             kind="source.openqasm2",
@@ -125,7 +125,7 @@ class TestCircuitPipeline:
 
     @requires_braket
     def test_braket_jaqcd_full_pipeline(self, run_factory, store, artifact_factory):
-        """Full pipeline: JAQCD artifact → extract → load → summarize."""
+        """Full pipeline: JAQCD artifact => extract => load => summarize."""
         from braket.circuits import Circuit
 
         circuit = Circuit().h(0).cnot(0, 1).h(1)
@@ -158,7 +158,7 @@ class TestCircuitPipeline:
 
     @requires_cirq
     def test_cirq_json_full_pipeline(self, run_factory, store, artifact_factory):
-        """Full pipeline: Cirq JSON artifact → extract → load → summarize."""
+        """Full pipeline: Cirq JSON artifact => extract => load => summarize."""
         import cirq
 
         # Create a Bell state circuit
@@ -197,7 +197,7 @@ class TestCircuitPipeline:
 
     @requires_pennylane
     def test_pennylane_json_full_pipeline(self, run_factory, store, artifact_factory):
-        """Full pipeline: PennyLane JSON artifact → extract → load → summarize."""
+        """Full pipeline: PennyLane JSON artifact => extract => load => summarize."""
         import json
 
         import pennylane as qml

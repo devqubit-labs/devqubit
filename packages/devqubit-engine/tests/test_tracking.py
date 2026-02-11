@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import pytest
 from devqubit_engine.tracking.run import track
 
 
@@ -42,7 +43,7 @@ class TestRunLifecycle:
 
     def test_failed_run_captures_error(self, store, registry, config):
         """Failed run captures error and has FAILED status."""
-        try:
+        with pytest.raises(ValueError, match="Test error message"):
             with track(
                 project="failing",
                 store=store,
@@ -52,8 +53,6 @@ class TestRunLifecycle:
                 run.log_param("before_error", True)
                 run_id = run.run_id
                 raise ValueError("Test error message")
-        except ValueError:
-            pass
 
         loaded = registry.load(run_id)
 
