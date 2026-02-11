@@ -31,7 +31,7 @@ import threading
 import weakref
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List
+from typing import Any, Iterator
 
 from devqubit_engine.storage.errors import ObjectNotFoundError, RunNotFoundError
 from devqubit_engine.storage.types import (
@@ -87,7 +87,7 @@ class S3Store:
         self.bucket = bucket
         self.prefix = prefix.strip("/")
 
-        client_kwargs: Dict[str, Any] = {}
+        client_kwargs: dict[str, Any] = {}
         if region:
             client_kwargs["region_name"] = region
         if endpoint_url:
@@ -435,7 +435,7 @@ class S3Registry:
         self.bucket = bucket
         self.prefix = prefix.strip("/")
 
-        client_kwargs: Dict[str, Any] = {}
+        client_kwargs: dict[str, Any] = {}
         if region:
             client_kwargs["region_name"] = region
         if endpoint_url:
@@ -559,7 +559,7 @@ class S3Registry:
             len(deleted_run_ids),
         )
 
-    def _index_record(self, record: Dict[str, Any]) -> None:
+    def _index_record(self, record: dict[str, Any]) -> None:
         """
         Add or update a record in the local index.
 
@@ -681,7 +681,7 @@ class S3Registry:
         """
         return f"{self.prefix}/runs/" if self.prefix else "runs/"
 
-    def save(self, record: Dict[str, Any]) -> None:
+    def save(self, record: dict[str, Any]) -> None:
         """
         Save or update a run record.
 
@@ -708,7 +708,7 @@ class S3Registry:
 
         logger.debug("Saved run to S3: %s", run_id)
 
-    def _load_dict_from_s3(self, run_id: str) -> Dict[str, Any]:
+    def _load_dict_from_s3(self, run_id: str) -> dict[str, Any]:
         """
         Load a run record as a raw dictionary directly from S3.
 
@@ -890,7 +890,7 @@ class S3Registry:
         group_id: str | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
-    ) -> List[RunSummary]:
+    ) -> list[RunSummary]:
         """
         List runs with optional filtering.
 
@@ -928,8 +928,8 @@ class S3Registry:
         list of RunSummary
             Matching runs ordered by created_at descending.
         """
-        conditions: List[str] = []
-        params: List[Any] = []
+        conditions: list[str] = []
+        params: list[Any] = []
 
         if project:
             conditions.append("project = ?")
@@ -993,7 +993,7 @@ class S3Registry:
             for row in rows
         ]
 
-    def list_projects(self) -> List[str]:
+    def list_projects(self) -> list[str]:
         """
         List all unique project names.
 
@@ -1031,8 +1031,8 @@ class S3Registry:
         int
             Count of matching runs.
         """
-        conditions: List[str] = []
-        params: List[Any] = []
+        conditions: list[str] = []
+        params: list[Any] = []
 
         if project:
             conditions.append("project = ?")
@@ -1057,7 +1057,7 @@ class S3Registry:
         offset: int = 0,
         sort_by: str | None = None,
         descending: bool = True,
-    ) -> List[RunRecord]:
+    ) -> list[RunRecord]:
         """
         Search runs using a query expression.
 
@@ -1101,7 +1101,7 @@ class S3Registry:
 
         # If no sort_by: stream and stop early
         if sort_by is None:
-            results: List[RunRecord] = []
+            results: list[RunRecord] = []
             matched = 0
             for run_id in candidate_ids:
                 try:
@@ -1124,7 +1124,7 @@ class S3Registry:
             return results
 
         # If sort_by requested: collect all matches, then sort
-        all_matches: List[RunRecord] = []
+        all_matches: list[RunRecord] = []
         for run_id in candidate_ids:
             try:
                 record_dict = self._load_dict_from_s3(run_id)
@@ -1158,7 +1158,7 @@ class S3Registry:
         project: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         List all run groups.
 
@@ -1176,8 +1176,8 @@ class S3Registry:
         list of dict
             Group summaries with group_id, group_name, run_count, first_run, last_run.
         """
-        conditions: List[str] = ["group_id IS NOT NULL"]
-        params: List[Any] = []
+        conditions: list[str] = ["group_id IS NOT NULL"]
+        params: list[Any] = []
 
         if project:
             conditions.append("project = ?")
@@ -1222,7 +1222,7 @@ class S3Registry:
         *,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[RunSummary]:
+    ) -> list[RunSummary]:
         """
         List all runs in a group.
 
