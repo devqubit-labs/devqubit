@@ -51,6 +51,11 @@ requires_pennylane = pytest.mark.skipif(
     reason="Pennylane not installed",
 )
 
+requires_cudaq = pytest.mark.skipif(
+    not sdk_available("cudaq"),
+    reason="CUDA-Q not installed",
+)
+
 
 class TestCircuitPipeline:
     """End-to-end tests for circuit extraction and summarization."""
@@ -246,6 +251,67 @@ class TestCircuitPipeline:
         assert summary.num_qubits == 2
         assert summary.gate_count_1q >= 1  # H
         assert summary.gate_count_2q >= 1  # CNOT
+
+    @requires_cudaq
+    def test_cudaq_json_full_pipeline(self, run_factory, store, artifact_factory):
+        """Full pipeline: CUDA-Q enriched JSON artifact => extract => load => summarize."""
+        import json
+
+        # Build enriched envelope matching serialize_kernel() output format.
+        func_src = (
+            "@cudaq.kernel\n"
+            "def ghz():\n"
+            "    q = cudaq.qvector(3)\n"
+            "    h(q[0])\n"
+            "    cx(q[0], q[1])\n"
+            "    cx(q[1], q[2])\n"
+            "    mz(q)\n"
+        )
+
+        # The ``native`` field must mirror what kernel.to_json() produces
+        envelope = {
+            "sdk": "cudaq",
+            "format_version": 1,
+            "name": "ghz",
+            "num_qubits": 3,
+            "operations": [
+                {"gate": "h", "targets": [0]},
+                {"gate": "cx", "controls": [0], "targets": [1]},
+                {"gate": "cx", "controls": [1], "targets": [2]},
+                {"gate": "mz", "targets": "all"},
+            ],
+            "native": {
+                "name": "ghz",
+                "funcSrc": func_src,
+                "signature": {},
+                "location": "",
+                "entryPoint": "ghz",
+            },
+        }
+
+        cudaq_json = json.dumps(envelope, indent=2)
+
+        artifact = artifact_factory(
+            data=cudaq_json.encode("utf-8"),
+            kind="cudaq.json",
+            role="program",
+            media_type="application/json",
+        )
+        record = run_factory(adapter="devqubit-cudaq", artifacts=[artifact])
+
+        circuit_data = extract_circuit(record, store)
+
+        assert circuit_data is not None
+        assert circuit_data.format == CircuitFormat.CUDAQ_JSON
+        assert circuit_data.sdk == SDK.CUDAQ
+
+        summary = summarize_circuit_data(circuit_data)
+
+        assert summary.num_qubits == 3
+        assert summary.gate_count_1q >= 1  # H
+        assert summary.gate_count_2q >= 2  # 2x CX
+        assert summary.gate_count_measure >= 1  # mz
+        assert summary.sdk == SDK.CUDAQ
 
 
 class TestCircuitHashing:
