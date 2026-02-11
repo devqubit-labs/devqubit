@@ -38,7 +38,6 @@ from typing import Any
 from devqubit_engine.uec.models.result import (
     CountsFormat,
     NormalizedExpectation,
-    QuasiProbability,
     ResultError,
     ResultItem,
     ResultSnapshot,
@@ -122,7 +121,15 @@ def detect_result_type(result: Any) -> str:
     if isinstance(result, list):
         if not result:
             return "unknown"
-        inner = detect_result_type(result[0])
+        first = result[0]
+        # Nested list: broadcast over arguments x spin operators
+        if isinstance(first, list):
+            if first:
+                inner = detect_result_type(first[0])
+                if inner == "observe":
+                    return "batch_observe"
+            return "unknown"
+        inner = detect_result_type(first)
         if inner in ("sample", "observe"):
             return f"batch_{inner}"
         return "unknown"
@@ -528,29 +535,36 @@ def _extract_counts_from_observe(
 # ============================================================================
 
 
-def _build_sample_items(
+def _build_sample_item(
     result: Any,
     *,
-    item_offset: int = 0,
+    item_index: int = 0,
     call_kwargs: dict[str, Any] | None = None,
-) -> list[ResultItem]:
+) -> ResultItem | None:
     """
-    Build ResultItems for a single SampleResult.
+    Build a single ``ResultItem`` for one ``SampleResult``.
+
+    Each ``SampleResult`` maps to exactly one ``ResultItem`` carrying
+    measurement counts.  This keeps ``item_index`` aligned with the
+    broadcast position (UEC contract: 1 item per circuit/parameter set).
 
     Parameters
     ----------
     result : Any
         CUDA-Q ``SampleResult``.
-    item_offset : int
-        Starting item index.
+    item_index : int
+        Position in the batch (0-based).
     call_kwargs : dict, optional
         Keyword arguments passed to ``cudaq.sample()``.
-    """
-    items: list[ResultItem] = []
 
+    Returns
+    -------
+    ResultItem or None
+        ``None`` when counts extraction fails.
+    """
     counts, meta = _extract_counts_and_meta(result)
     if not counts:
-        return items
+        return None
 
     explicit = bool((call_kwargs or {}).get("explicit_measurements"))
 
@@ -563,93 +577,59 @@ def _build_sample_items(
 
     total_shots = meta.get("shots") or sum(normalized_counts.values())
 
-    items.append(
-        ResultItem(
-            item_index=item_offset,
-            success=True,
-            counts={
-                "counts": normalized_counts,
-                "shots": total_shots,
-                "format": counts_format,
-            },
-        )
+    return ResultItem(
+        item_index=item_index,
+        success=True,
+        counts={
+            "counts": normalized_counts,
+            "shots": total_shots,
+            "format": counts_format,
+        },
     )
 
-    if total_shots > 0:
-        distribution = {k: float(v) / total_shots for k, v in normalized_counts.items()}
-        probs_values = list(distribution.values())
-        items.append(
-            ResultItem(
-                item_index=item_offset + 1,
-                success=True,
-                quasi_probability=QuasiProbability(
-                    distribution=distribution,
-                    sum_probs=sum(probs_values),
-                    min_prob=min(probs_values),
-                    max_prob=max(probs_values),
-                ),
-            )
-        )
 
-    return items
-
-
-def _build_observe_items(
+def _build_observe_item(
     result: Any,
     *,
-    item_offset: int = 0,
-    shots: int | None = None,
-    call_kwargs: dict[str, Any] | None = None,
-) -> list[ResultItem]:
+    item_index: int = 0,
+    circuit_index: int = 0,
+    observable_index: int = 0,
+) -> ResultItem | None:
     """
-    Build ResultItems for a single ObserveResult.
+    Build a single ``ResultItem`` for one ``ObserveResult``.
+
+    The canonical value is the expectation; shot-based counts (when
+    available) are preserved in the raw artifact only.
 
     Parameters
     ----------
     result : Any
         CUDA-Q ``ObserveResult``.
-    item_offset : int
-        Starting item index.
-    shots : int or None
-        Shot count.  Passed to ``_extract_counts_from_observe`` to
-        guard against the analytic-mode segfault.
-    call_kwargs : dict, optional
-        Keyword arguments passed to ``cudaq.observe()``.
+    item_index : int
+        Position in the flattened batch (0-based).
+    circuit_index : int
+        Index of the argument set in a broadcast.
+    observable_index : int
+        Index of the spin operator in a broadcast.
+
+    Returns
+    -------
+    ResultItem or None
+        ``None`` when expectation extraction fails.
     """
-    items: list[ResultItem] = []
-
     exp_val = _extract_expectation_from_observe(result)
-    if exp_val is not None:
-        items.append(
-            ResultItem(
-                item_index=item_offset,
-                success=True,
-                expectation=NormalizedExpectation(
-                    circuit_index=0,
-                    observable_index=0,
-                    value=exp_val,
-                    std_error=None,
-                ),
-            )
-        )
+    if exp_val is None:
+        return None
 
-    obs_counts, _ = _extract_counts_from_observe(result, shots=shots)
-    if obs_counts:
-        obs_counts = _normalize_bitstrings_to_cbit0_right(obs_counts)
-        total_shots = sum(obs_counts.values())
-        items.append(
-            ResultItem(
-                item_index=item_offset + 1,
-                success=True,
-                counts={
-                    "counts": obs_counts,
-                    "shots": total_shots,
-                    "format": dict(_CUDAQ_COUNTS_FORMAT),
-                },
-            )
-        )
-
-    return items
+    return ResultItem(
+        item_index=item_index,
+        success=True,
+        expectation=NormalizedExpectation(
+            circuit_index=circuit_index,
+            observable_index=observable_index,
+            value=exp_val,
+        ),
+    )
 
 
 # ============================================================================
@@ -710,42 +690,50 @@ def build_result_snapshot(
             result_type = detect_result_type(result)
 
         try:
-            if result_type == "observe":
-                items = _build_observe_items(
-                    result,
-                    shots=shots,
-                    call_kwargs=call_kwargs,
-                )
+            if result_type == "sample":
+                item = _build_sample_item(result, call_kwargs=call_kwargs)
+                if item is not None:
+                    items.append(item)
 
-            elif result_type == "sample":
-                items = _build_sample_items(result, call_kwargs=call_kwargs)
+            elif result_type == "observe":
+                item = _build_observe_item(result)
+                if item is not None:
+                    items.append(item)
 
             elif result_type == "batch_sample" and isinstance(result, list):
-                offset = 0
-                for single in result:
-                    sub_items = _build_sample_items(
+                for i, single in enumerate(result):
+                    item = _build_sample_item(
                         single,
-                        item_offset=offset,
+                        item_index=i,
                         call_kwargs=call_kwargs,
                     )
-                    for si in sub_items:
-                        si.item_index = offset
-                        offset += 1
-                    items.extend(sub_items)
+                    if item is not None:
+                        items.append(item)
 
             elif result_type == "batch_observe" and isinstance(result, list):
-                offset = 0
-                for single in result:
-                    sub_items = _build_observe_items(
-                        single,
-                        item_offset=offset,
-                        shots=shots,
-                        call_kwargs=call_kwargs,
-                    )
-                    for si in sub_items:
-                        si.item_index = offset
-                        offset += 1
-                    items.extend(sub_items)
+                if result and isinstance(result[0], list):
+                    # Nested: broadcast arguments × broadcast spin operators
+                    idx = 0
+                    for circuit_i, sub in enumerate(result):
+                        for obs_i, single in enumerate(sub):
+                            item = _build_observe_item(
+                                single,
+                                item_index=idx,
+                                circuit_index=circuit_i,
+                                observable_index=obs_i,
+                            )
+                            if item is not None:
+                                items.append(item)
+                            idx += 1
+                else:
+                    for i, single in enumerate(result):
+                        item = _build_observe_item(
+                            single,
+                            item_index=i,
+                            circuit_index=i,
+                        )
+                        if item is not None:
+                            items.append(item)
 
         except Exception as exc:
             logger.debug("Failed to extract normalized results: %s", exc)

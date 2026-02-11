@@ -38,6 +38,9 @@ class TestDetectResultType:
     def test_empty_list(self):
         assert detect_result_type([]) == "unknown"
 
+    def test_nested_observe_broadcast(self, observe_result):
+        assert detect_result_type([[observe_result]]) == "batch_observe"
+
 
 class TestNormalizeBitstrings:
 
@@ -68,7 +71,7 @@ class TestBuildResultSnapshotSample:
         )
         assert snap.success is True
         assert snap.status == "completed"
-        assert len(snap.items) >= 1
+        assert len(snap.items) == 1
 
     def test_counts_extracted_and_normalized(self, bell_sample_result):
         snap = build_result_snapshot(
@@ -82,17 +85,14 @@ class TestBuildResultSnapshotSample:
         assert counts_item.counts["counts"]["11"] == 520
         assert counts_item.counts["shots"] == 1000
 
-    def test_quasi_probabilities_derived(self, bell_sample_result):
+    def test_single_item_per_result(self, bell_sample_result):
         snap = build_result_snapshot(
             bell_sample_result,
             result_type="sample",
             backend_name="qpp-cpu",
             shots=1000,
         )
-        assert len(snap.items) >= 2
-        dist = snap.items[1].quasi_probability.distribution
-        assert abs(dist["00"] - 0.48) < 0.01
-        assert abs(dist["11"] - 0.52) < 0.01
+        assert len(snap.items) == 1
 
     def test_uniform_counts(self, uniform_sample_result):
         snap = build_result_snapshot(
@@ -186,17 +186,18 @@ class TestBuildResultSnapshotObserve:
         assert exp is not None
         assert abs(exp.value - (-0.42)) < 1e-10
 
-    def test_observe_with_counts(self, observe_result_with_counts):
+    def test_observe_with_counts_only_expectation_in_item(
+        self, observe_result_with_counts
+    ):
         snap = build_result_snapshot(
             observe_result_with_counts,
             result_type="observe",
             backend_name="qpp-cpu",
             shots=1000,
         )
-        has_exp = any(it.expectation is not None for it in snap.items)
-        has_counts = any(it.counts is not None for it in snap.items)
-        assert has_exp
-        assert has_counts
+        assert len(snap.items) == 1
+        assert snap.items[0].expectation is not None
+        assert snap.items[0].counts is None
 
 
 class TestBuildResultSnapshotBroadcast:
@@ -210,7 +211,9 @@ class TestBuildResultSnapshotBroadcast:
             results, result_type="batch_sample", backend_name="qpp-cpu", shots=1000
         )
         assert snap.success is True
-        assert len(snap.items) >= 2
+        assert len(snap.items) == 2
+        assert snap.items[0].item_index == 0
+        assert snap.items[1].item_index == 1
 
     def test_batch_observe(self, make_observe_result):
         results = [
@@ -221,8 +224,28 @@ class TestBuildResultSnapshotBroadcast:
             results, result_type="batch_observe", backend_name="nvidia"
         )
         assert snap.success is True
-        expectations = [it for it in snap.items if it.expectation is not None]
-        assert len(expectations) == 2
+        assert len(snap.items) == 2
+        assert snap.items[0].expectation.circuit_index == 0
+        assert snap.items[1].expectation.circuit_index == 1
+
+    def test_nested_observe_broadcast(self, make_observe_result):
+        results = [
+            [make_observe_result(-0.5), make_observe_result(0.3)],
+            [make_observe_result(0.1), make_observe_result(-0.7)],
+        ]
+        snap = build_result_snapshot(
+            results, result_type="batch_observe", backend_name="nvidia"
+        )
+        assert snap.success is True
+        assert len(snap.items) == 4
+        assert snap.items[0].expectation.circuit_index == 0
+        assert snap.items[0].expectation.observable_index == 0
+        assert snap.items[1].expectation.circuit_index == 0
+        assert snap.items[1].expectation.observable_index == 1
+        assert snap.items[2].expectation.circuit_index == 1
+        assert snap.items[2].expectation.observable_index == 0
+        assert snap.items[3].expectation.circuit_index == 1
+        assert snap.items[3].expectation.observable_index == 1
 
 
 class TestBuildResultSnapshotErrors:
