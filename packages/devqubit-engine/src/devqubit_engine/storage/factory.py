@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Protocol
 from urllib.parse import parse_qs, urlparse
@@ -157,18 +158,6 @@ class StorageURL:
         Path component (filesystem path or object prefix).
     params : dict
         Query parameters from the URL.
-
-    Examples
-    --------
-    >>> url = StorageURL("s3://my-bucket/prefix?region=us-east-1")
-    >>> url.scheme
-    's3'
-    >>> url.bucket
-    'my-bucket'
-    >>> url.prefix
-    'prefix'
-    >>> url.params
-    {'region': 'us-east-1'}
     """
 
     def __init__(self, url: str) -> None:
@@ -264,11 +253,6 @@ def register_store_backend(scheme: str, backend: ObjectStoreBackend) -> None:
         URL scheme (e.g., "file", "s3", "gs", "my-custom-scheme").
     backend : ObjectStoreBackend
         Callable that constructs an object store.
-
-    Examples
-    --------
-    >>> register_store_backend("myscheme", MyCustomStore)
-    >>> store = create_store("myscheme://location")
     """
     _STORE_BACKENDS[scheme] = backend
     logger.debug("Registered store backend: %s", scheme)
@@ -284,11 +268,6 @@ def register_registry_backend(scheme: str, backend: RegistryBackend) -> None:
         URL scheme (e.g., "file", "s3", "gs", "my-custom-scheme").
     backend : RegistryBackend
         Callable that constructs a registry.
-
-    Examples
-    --------
-    >>> register_registry_backend("myscheme", MyCustomRegistry)
-    >>> registry = create_registry("myscheme://location")
     """
     _REGISTRY_BACKENDS[scheme] = backend
     logger.debug("Registered registry backend: %s", scheme)
@@ -352,14 +331,18 @@ def _load_plugins() -> None:
 
 # Load plugins lazily on first use
 _plugins_loaded: bool = False
+_plugins_lock = threading.Lock()
 
 
 def _ensure_plugins_loaded() -> None:
     """Load storage plugins on first use, not on import."""
     global _plugins_loaded
-    if not _plugins_loaded:
-        _load_plugins()
-        _plugins_loaded = True
+    if _plugins_loaded:
+        return
+    with _plugins_lock:
+        if not _plugins_loaded:
+            _load_plugins()
+            _plugins_loaded = True
 
 
 def _get_storage_url(
@@ -407,8 +390,8 @@ def create_store(
         Storage URL (overrides config). Supported schemes:
 
         - ``file://path`` - Local filesystem (default)
-        - ``s3://bucket/prefix`` - Amazon S3 (requires ``pip install devqubit-engine[s3]``)
-        - ``gs://bucket/prefix`` - Google Cloud Storage (requires ``pip install devqubit-engine[gcs]``)
+        - ``s3://bucket/prefix`` - Amazon S3
+        - ``gs://bucket/prefix`` - Google Cloud Storage
 
     config : Config, optional
         Configuration object. Uses global config if not provided.
