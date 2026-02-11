@@ -8,7 +8,9 @@
 
 **Local-first experiment tracking for quantum computing.** Capture circuits, backend state, and configuration — runs are reproducible, comparable, and easy to share. Access your data via Python API, CLI, or Web UI.
 
-> **Status:** Alpha — APIs may evolve in `0.x` releases.
+> [!WARNING]
+> **Status:** Alpha — devqubit APIs may evolve in `0.x` releases.
+> Users should expect frequent changes that are likely to be incompatible with previously published versions.
 
 ## Why devqubit?
 
