@@ -164,7 +164,7 @@ def _build_raw_properties(
 def create_device_snapshot(
     target_info: TargetInfo | None = None,
     *,
-    tracker: "Run | None" = None,
+    tracker: Run | None = None,
     runtime_events: list[dict[str, Any]] | None = None,
 ) -> DeviceSnapshot:
     """

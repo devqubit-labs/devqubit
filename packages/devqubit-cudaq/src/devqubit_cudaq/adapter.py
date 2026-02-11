@@ -130,8 +130,8 @@ def _log_kernel(
                 index=0,
             )
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Kernel diagram generation failed: %s", exc)
 
     # Log MLIR (Quake) representation
     try:
@@ -152,8 +152,8 @@ def _log_kernel(
                     index=0,
                 )
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Kernel MLIR capture failed: %s", exc)
 
     # Log QIR representation
     try:
@@ -174,8 +174,8 @@ def _log_kernel(
                     index=0,
                 )
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Kernel QIR capture failed: %s", exc)
 
     return artifacts
 
@@ -678,6 +678,7 @@ class TrackedCudaqExecutor:
                     h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
                     return structural, h
             except Exception:
+                # Best-effort: fall back to name-based hashing below.
                 pass
 
             payload = f"{get_kernel_name(kernel)}:{repr(args)}"

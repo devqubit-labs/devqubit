@@ -413,7 +413,7 @@ def collect_gpu_info() -> dict[str, Any]:
         )
         if result.returncode == 0 and result.stdout.strip():
             gpu_info["nvidia_smi_devices"] = result.stdout.strip().splitlines()
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("Unable to collect GPU info via nvidia-smi: %s", exc)
 
     return gpu_info

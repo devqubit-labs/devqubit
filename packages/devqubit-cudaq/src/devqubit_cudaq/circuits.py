@@ -297,14 +297,14 @@ def _to_jsonable(value: Any) -> Any:
                     "sha256": _sha256_tag_bytes(tobytes()),
                 }
             except Exception:
-                pass
+                pass  # Fall through to str() or repr() below.
 
     # CUDA-Q types: str() is more stable than repr()
     if "cudaq" in mod:
         try:
             return str(value)
         except Exception:
-            pass
+            pass  # Fall through to repr() below.
 
     # Last resort: repr, scrub hex addresses for cross-process stability
     s = repr(value)
@@ -466,8 +466,8 @@ def _get_fallback_content(kernel: Any) -> str | None:
         mlir = str(kernel)
         if mlir and ("func.func" in mlir or "quake." in mlir or "module" in mlir):
             return mlir
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to derive MLIR from str(kernel): %s", exc)
 
     try:
         import cudaq  # local import
@@ -475,8 +475,8 @@ def _get_fallback_content(kernel: Any) -> str | None:
         diagram = cudaq.draw(kernel)
         if isinstance(diagram, str) and diagram.strip():
             return diagram
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Failed to draw kernel via cudaq.draw(): %s", exc)
 
     return None
 

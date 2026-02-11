@@ -217,13 +217,13 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
             if names:
                 out["register_names"] = [str(n) for n in names]
         except Exception:
-            pass
+            pass  # Best-effort: register_names extraction is non-fatal.
 
     if hasattr(sample_obj, "most_probable"):
         try:
             out["most_probable"] = str(sample_obj.most_probable())
         except Exception:
-            pass
+            pass  # Best-effort: most_probable not critical.
 
     if hasattr(sample_obj, "get_register_counts") and out.get("register_names"):
         reg_counts: dict[str, Any] = {}
@@ -330,8 +330,8 @@ def _extract_observe_raw(
     if hasattr(observe_obj, "expectation"):
         try:
             out["expectation"] = float(observe_obj.expectation())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to extract expectation value: %s", exc)
 
     # Guard: .counts() on an analytic ObserveResult segfaults (pybind11
     # returns an invalid SampleResult whose methods crash the process).
@@ -346,7 +346,7 @@ def _extract_observe_raw(
             try:
                 out["counts_obj"] = _extract_observe_counts_raw(sr)
             except Exception:
-                pass
+                pass  # Best-effort: observe counts extraction is optional.
 
     return out
 
@@ -392,14 +392,14 @@ def result_to_raw_artifact(
     if rt == "sample":
         try:
             return _extract_sample_raw(result)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to extract sample raw artifact: %s", exc)
 
     if rt == "observe":
         try:
             return _extract_observe_raw(result, shots=shots)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Failed to extract observe raw artifact: %s", exc)
 
     # Unknown result type — scrubbed str/repr fallback
     try:
@@ -449,7 +449,7 @@ def _extract_counts_and_meta(
         try:
             meta["shots"] = int(sample_obj.get_total_shots())
         except Exception:
-            pass
+            pass  # Best-effort: total_shots not critical.
 
     if not skip_registers and hasattr(sample_obj, "register_names"):
         try:
@@ -457,7 +457,7 @@ def _extract_counts_and_meta(
             if names:
                 meta["register_names"] = names
         except Exception:
-            pass
+            pass  # Best-effort: register_names not critical.
 
     try:
         if hasattr(sample_obj, "items"):
