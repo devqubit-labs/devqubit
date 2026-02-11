@@ -167,14 +167,12 @@ class Query:
 # Token patterns for lexer (case-insensitive for keywords)
 _TOKEN_PATTERNS = [
     ("AND", r"\band\b"),
-    ("OR", r"\bor\b"),  # recognized but not fully supported in MVP
+    ("OR", r"\bor\b"),  # NOT YET IMPLEMENTED — tokenized only to produce a clear error
     ("EXISTS", r"\bexists\b"),
     ("OP", r">=|<=|!=|>|<|=|~"),
     ("NUMBER", r"-?\d+\.?\d*"),
     ("STRING", r'"[^"]*"|\'[^\']*\''),
     ("FIELD", r"[a-zA-Z_][a-zA-Z0-9_]*(?:\.[a-zA-Z_][a-zA-Z0-9_]*)*"),
-    ("LPAREN", r"\("),
-    ("RPAREN", r"\)"),
     ("WS", r"\s+"),
 ]
 

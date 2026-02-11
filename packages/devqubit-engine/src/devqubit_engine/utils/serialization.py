@@ -296,7 +296,8 @@ def json_dumps(
     float_precision : int, default=15
         Significant digits for float normalization.
     indent : int or None, optional
-        Indentation. Default is 2 unless compact=True.
+        JSON indentation level. Default is None (single-line output).
+        Ignored when compact=True.
     """
     if compact:
         normalize_floats = True
