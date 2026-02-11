@@ -58,14 +58,14 @@ from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.errors import EnvelopeValidationError
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import (
+    generate_ulid,
     is_manual_run_record,
-    sha256_digest,
+    sha256_bytes,
     utc_now_iso,
 )
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
 from devqubit_engine.utils.qasm3 import coerce_openqasm3_sources
 from devqubit_engine.utils.serialization import json_dumps, to_jsonable
-from ulid import ULID
 
 
 logger = logging.getLogger(__name__)
@@ -139,13 +139,7 @@ class Run:
     ) -> None:
         self._lock = threading.Lock()
 
-        # Generate unique run ID — compatible with both python-ulid and py-ulid
-        # python-ulid: ULID() returns object with __str__ => str(obj) works
-        # py-ulid:     ULID() returns object with .generate() => returns string
-        ulid_gen = ULID()
-        self._run_id = (
-            ulid_gen.generate() if hasattr(ulid_gen, "generate") else str(ulid_gen)
-        )
+        self._run_id = generate_ulid()
         self._project = project
         self._adapter = adapter
         self._run_name = run_name
@@ -465,7 +459,7 @@ class Run:
 
         if limit > 0 and size > limit:
             if truncate:
-                full_digest = sha256_digest(data)
+                full_digest = sha256_bytes(data)
                 data = data[:limit]
                 meta = dict(meta) if meta else {}
                 meta["truncated"] = True
