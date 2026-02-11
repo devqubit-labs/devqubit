@@ -112,27 +112,17 @@ class RedactionConfig:
     patterns: list[str] = field(default_factory=lambda: list(DEFAULT_REDACT_PATTERNS))
     replacement: str = "[REDACTED]"
 
-    # Internal compiled patterns cache (not part of init/repr/compare)
-    _compiled: list[re.Pattern[str]] | None = field(
-        default=None,
-        init=False,
-        repr=False,
-        compare=False,
-    )
-    _compiled_key: tuple[str, ...] | None = field(
-        default=None,
+    # Compiled patterns, populated once in __post_init__
+    _compiled: list[re.Pattern[str]] = field(
+        default_factory=list,
         init=False,
         repr=False,
         compare=False,
     )
 
-    def _get_compiled(self) -> list[re.Pattern[str]]:
-        """Get compiled patterns, recompiling when patterns change."""
-        current_key = tuple(self.patterns)
-        if self._compiled is None or self._compiled_key != current_key:
-            self._compiled = _get_compiled_patterns(self.patterns)
-            self._compiled_key = current_key
-        return self._compiled
+    def __post_init__(self) -> None:
+        """Compile regex patterns eagerly at construction time."""
+        self._compiled = _get_compiled_patterns(self.patterns)
 
     def should_redact(self, key: str) -> bool:
         """
@@ -151,7 +141,7 @@ class RedactionConfig:
         if not self.enabled:
             return False
 
-        for pattern in self._get_compiled():
+        for pattern in self._compiled:
             if pattern.search(key):
                 return True
         return False
