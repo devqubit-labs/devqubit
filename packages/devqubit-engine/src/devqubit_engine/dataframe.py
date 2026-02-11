@@ -28,6 +28,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Column order for standard (non-dynamic) fields in DataFrames.
+STANDARD_COLUMNS: list[str] = [
+    "run_id",
+    "run_name",
+    "project",
+    "adapter",
+    "status",
+    "created_at",
+    "ended_at",
+    "group_id",
+    "group_name",
+    "backend_name",
+]
+
 
 def _require_pandas() -> Any:
     """Import pandas or raise a clear error."""
@@ -164,38 +178,14 @@ def runs_to_dataframe(
 
     if not rows:
         # Return empty DataFrame with standard columns
-        return pd.DataFrame(
-            columns=[
-                "run_id",
-                "run_name",
-                "project",
-                "adapter",
-                "status",
-                "created_at",
-                "ended_at",
-                "group_id",
-                "group_name",
-                "backend_name",
-            ]
-        )
+        return pd.DataFrame(columns=STANDARD_COLUMNS)
 
     df = pd.DataFrame(rows)
 
     # Sort columns: standard fields first, then dynamic fields alphabetically
-    standard = [
-        "run_id",
-        "run_name",
-        "project",
-        "adapter",
-        "status",
-        "created_at",
-        "ended_at",
-        "group_id",
-        "group_name",
-        "backend_name",
-    ]
-    present_standard = [c for c in standard if c in df.columns]
-    dynamic = sorted(c for c in df.columns if c not in standard)
+    standard_set = set(STANDARD_COLUMNS)
+    present_standard = [c for c in STANDARD_COLUMNS if c in df.columns]
+    dynamic = sorted(c for c in df.columns if c not in standard_set)
     df = df[present_standard + dynamic]
 
     return df

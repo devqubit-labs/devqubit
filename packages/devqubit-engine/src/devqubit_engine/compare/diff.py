@@ -865,5 +865,5 @@ def diff(
         for ctx in bundle_contexts:
             try:
                 ctx.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to close bundle context: %s", exc)

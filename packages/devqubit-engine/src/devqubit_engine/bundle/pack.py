@@ -232,7 +232,8 @@ def pack_run(
             try:
                 if not store.exists(d):
                     missing.append(d)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Object existence check failed for %s: %s", d[:24], exc)
                 missing.append(d)
         if missing:
             raise FileNotFoundError(
@@ -456,8 +457,10 @@ def unpack_bundle(
                         logger.debug("Skipping existing object: %s", digest[:24])
                         skipped.append(digest)
                         continue
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.debug(
+                        "Object existence check failed for %s: %s", digest[:24], exc
+                    )
 
             obj_path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
 

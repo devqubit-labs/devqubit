@@ -211,8 +211,8 @@ def gc_plan(
             stats.unreferenced_objects += 1
             try:
                 stats.bytes_reclaimable += store.get_size(digest)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to get size for %s: %s", digest[:24], exc)
 
     logger.info(
         "GC plan: %d referenced, %d orphaned, %d bytes reclaimable (scanned %d runs, %d objects)",
