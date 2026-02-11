@@ -13,6 +13,7 @@ pip install "devqubit[qiskit-runtime]"  # Qiskit + Runtime
 pip install "devqubit[braket]"          # Amazon Braket
 pip install "devqubit[cirq]"            # Google Cirq
 pip install "devqubit[pennylane]"       # PennyLane
+pip install "devqubit[cudaq]"           # NVIDIA CUDA-Q
 ```
 
 ## Track an Experiment

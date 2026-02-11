@@ -12,9 +12,9 @@
 
 ## Why devqubit?
 
-General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great for logging parameters, metrics, and artifacts. But quantum workloads need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
+General-purpose experiment trackers (MLflow, Weights & Biases, neptune.ai) are great for logging parameters, metrics, and artifacts. But quantum workloads need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
 
-| Challenge | MLflow / W&B / DVC | devqubit |
+| Challenge | MLflow / W&B / neptune.ai | devqubit |
 |-----------|-------------------|----------|
 | **Circuit artifacts** | manual file logging | OpenQASM 3 + SDK-native formats (automatic) |
 | **Device context** | manual | backend snapshots, calibration/noise context (automatic) |
@@ -28,7 +28,7 @@ General-purpose experiment trackers (MLflow, Weights & Biases, DVC) are great fo
 ## Features
 
 - **Automatic circuit capture** — QPY, OpenQASM 3, SDK-native formats
-- **Multi-SDK support** — Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane
+- **Multi-SDK support** — Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane, CUDA-Q
 - **Content-addressable storage** — deduplicated artifacts with SHA-256 digests
 - **Reproducibility fingerprints** — detect changes in program, device, or config
 - **Run comparison** — TVD analysis, structural diff, calibration drift
@@ -52,6 +52,7 @@ pip install "devqubit[qiskit-runtime]"  # IBM Quantum Runtime
 pip install "devqubit[braket]"          # Amazon Braket
 pip install "devqubit[cirq]"            # Google Cirq
 pip install "devqubit[pennylane]"       # PennyLane
+pip install "devqubit[cudaq]"           # NVIDIA CUDA-Q
 pip install "devqubit[all]"             # All adapters
 
 # With local web UI
