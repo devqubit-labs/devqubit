@@ -8,8 +8,10 @@ import json
 import pytest
 from devqubit_cudaq.circuits import _CUDAQ_GATES
 from devqubit_cudaq.serialization import (
+    _KNOWN_GATES,
     CudaqCircuitLoader,
     CudaqCircuitSerializer,
+    _parse_operations_from_funcSrc,
     capture_mlir,
     capture_qir,
     draw_kernel,
@@ -219,3 +221,29 @@ class TestSummarizeCudaqCircuit:
         summary = summarize_cudaq_circuit(bare_kernel)
         assert summary.sdk == SDK.CUDAQ
         assert summary.gate_count_total == 0
+
+    def test_bell_kernel_classifies_2q_gate(self, bell_kernel):
+        summary = summarize_cudaq_circuit(bell_kernel)
+        assert summary.gate_count_2q >= 1
+
+
+class TestParseMultiQubitGates:
+    """Verify funcSrc parser recognizes direct multi-qubit gate calls."""
+
+    def test_direct_cx_call_parsed(self):
+        src = "cx(q[0], q[1])"
+        ops = _parse_operations_from_funcSrc(src)
+        assert len(ops) == 1
+        assert ops[0]["gate"] == "cx"
+        assert ops[0]["targets"] == [0, 1]
+
+    def test_direct_cz_and_swap_parsed(self):
+        src = "cz(q[0], q[2])\nswap(q[1], q[3])"
+        ops = _parse_operations_from_funcSrc(src)
+        gates = [op["gate"] for op in ops]
+        assert "cz" in gates
+        assert "swap" in gates
+
+    def test_known_gates_superset_of_cudaq_gates(self):
+        missing = set(_CUDAQ_GATES) - _KNOWN_GATES
+        assert not missing, f"Gates in _CUDAQ_GATES but not in _KNOWN_GATES: {missing}"
