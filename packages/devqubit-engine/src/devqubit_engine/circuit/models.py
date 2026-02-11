@@ -211,12 +211,10 @@ class GateClassifier:
             Statistics with keys: gate_count_1q, gate_count_2q,
             gate_count_multi, gate_count_measure, is_clifford.
         """
-        stats: dict[str, int | bool | None] = {
-            "gate_count_1q": 0,
-            "gate_count_2q": 0,
-            "gate_count_multi": 0,
-            "gate_count_measure": 0,
-        }
+        gate_count_1q = 0
+        gate_count_2q = 0
+        gate_count_multi = 0
+        gate_count_measure = 0
         is_clifford = True
         has_gates = False
 
@@ -226,22 +224,27 @@ class GateClassifier:
 
             match info.category:
                 case GateCategory.SINGLE_QUBIT:
-                    stats["gate_count_1q"] += count  # type: ignore[operator]
+                    gate_count_1q += count
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.TWO_QUBIT:
-                    stats["gate_count_2q"] += count  # type: ignore[operator]
+                    gate_count_2q += count
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.MULTI_QUBIT:
-                    stats["gate_count_multi"] += count  # type: ignore[operator]
+                    gate_count_multi += count
                     is_clifford = False
                 case GateCategory.MEASURE:
-                    stats["gate_count_measure"] += count  # type: ignore[operator]
+                    gate_count_measure += count
                 case GateCategory.BARRIER:
                     pass
                 case _:
                     is_clifford = False
 
-        stats["is_clifford"] = is_clifford if has_gates else None
-        return stats
+        return {
+            "gate_count_1q": gate_count_1q,
+            "gate_count_2q": gate_count_2q,
+            "gate_count_multi": gate_count_multi,
+            "gate_count_measure": gate_count_measure,
+            "is_clifford": is_clifford if has_gates else None,
+        }

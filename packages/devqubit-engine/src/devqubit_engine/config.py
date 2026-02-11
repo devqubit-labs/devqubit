@@ -302,7 +302,7 @@ class Config:
         }
 
 
-def _parse_bool(value: str | None, default: bool = False) -> bool:
+def _parse_bool(value: str | None, default: bool = True) -> bool:
     """
     Parse a boolean value from an environment variable string.
 
@@ -311,7 +311,7 @@ def _parse_bool(value: str | None, default: bool = False) -> bool:
     value : str or None
         Environment variable value to parse.
     default : bool, optional
-        Default value if the input is None or empty. Default is False.
+        Default value if the input is None or empty. Default is True.
 
     Returns
     -------
@@ -392,7 +392,9 @@ def load_config() -> Config:
     root_dir = Path(home_env).expanduser() if home_env else _default_root_dir()
 
     # Redaction config
-    redact_disabled = _parse_bool(os.environ.get("DEVQUBIT_REDACT_DISABLE"))
+    redact_disabled = _parse_bool(
+        os.environ.get("DEVQUBIT_REDACT_DISABLE"), default=False
+    )
     extra_patterns = _parse_patterns(os.environ.get("DEVQUBIT_REDACT_PATTERNS"))
 
     patterns = list(DEFAULT_REDACT_PATTERNS)
