@@ -634,7 +634,9 @@ class LocalRegistry:
             for a in record_dict.get("artifacts", [])
             if isinstance(a, dict)
         ]
-        return RunRecord(record=record_dict, artifacts=artifacts)
+        rec = RunRecord(record=record_dict, artifacts=artifacts)
+        rec.mark_finalized()
+        return rec
 
     def load_or_none(self, run_id: str) -> RunRecord | None:
         """

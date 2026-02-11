@@ -107,6 +107,71 @@ class RunRecord:
     artifacts: list[ArtifactRef] | None = field(default_factory=list)
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
+    def __post_init__(self) -> None:
+        """Cache immutable fields and prepare finalization support."""
+        # These fields are set once at construction and never modified.
+        self._cached_run_id: str = self.record.get("run_id", "")
+        self._cached_created_at: str = self.record.get("created_at", "")
+
+        # Snapshot populated by mark_finalized(); once set, all property
+        # reads bypass the lock entirely.
+        self._finalized: bool = False
+        self._snapshot: dict[str, Any] = {}
+
+    def mark_finalized(self) -> None:
+        """
+        Freeze a snapshot of all mutable fields.
+
+        After this call every property read returns cached values without
+        acquiring the lock. Intended to be called once the run record is
+        fully persisted and will no longer be mutated.
+        """
+        with self._lock:
+            info = self.record.get("info", {})
+            data = self.record.get("data", {})
+            proj = self.record.get("project", {})
+            backend = self.record.get("backend", {})
+            fps = self.record.get("fingerprints", {})
+
+            self._snapshot = {
+                "project": (
+                    proj.get("name", "")
+                    if isinstance(proj, dict)
+                    else (str(proj) if proj else "")
+                ),
+                "adapter": self.record.get("adapter", ""),
+                "status": (
+                    info.get("status", "RUNNING")
+                    if isinstance(info, dict)
+                    else "RUNNING"
+                ),
+                "ended_at": (info.get("ended_at") if isinstance(info, dict) else None),
+                "run_name": (info.get("run_name") if isinstance(info, dict) else None),
+                "backend_name": (
+                    backend.get("name") if isinstance(backend, dict) else None
+                ),
+                "group_id": self.record.get("group_id"),
+                "group_name": self.record.get("group_name"),
+                "parent_run_id": self.record.get("parent_run_id"),
+                "fingerprints": dict(fps) if isinstance(fps, dict) else {},
+                "params": (
+                    dict(data.get("params", {}))
+                    if isinstance(data, dict) and isinstance(data.get("params"), dict)
+                    else {}
+                ),
+                "metrics": (
+                    dict(data.get("metrics", {}))
+                    if isinstance(data, dict) and isinstance(data.get("metrics"), dict)
+                    else {}
+                ),
+                "tags": (
+                    dict(data.get("tags", {}))
+                    if isinstance(data, dict) and isinstance(data.get("tags"), dict)
+                    else {}
+                ),
+            }
+            self._finalized = True
+
     def _get_artifacts(self) -> list[ArtifactRef]:
         """
         Safely get artifacts list.
@@ -128,8 +193,7 @@ class RunRecord:
         str
             Run ID, typically a ULID. Empty string if not set.
         """
-        with self._lock:
-            return self.record.get("run_id", "")
+        return self._cached_run_id
 
     @property
     def project(self) -> str:
@@ -141,6 +205,8 @@ class RunRecord:
         str
             Project name. Empty string if not set.
         """
+        if self._finalized:
+            return self._snapshot["project"]
         with self._lock:
             proj = self.record.get("project", {})
             if isinstance(proj, dict):
@@ -157,6 +223,8 @@ class RunRecord:
         str
             Adapter name (e.g., "qiskit", "pennylane", "cirq").
         """
+        if self._finalized:
+            return self._snapshot["adapter"]
         with self._lock:
             return self.record.get("adapter", "")
 
@@ -171,6 +239,8 @@ class RunRecord:
             One of: "RUNNING", "FINISHED", "FAILED", "KILLED".
             Defaults to "RUNNING" if not explicitly set.
         """
+        if self._finalized:
+            return self._snapshot["status"]
         with self._lock:
             info = self.record.get("info", {})
             if isinstance(info, dict):
@@ -187,8 +257,7 @@ class RunRecord:
         str
             ISO 8601 formatted timestamp. Empty string if not set.
         """
-        with self._lock:
-            return self.record.get("created_at", "")
+        return self._cached_created_at
 
     @property
     def fingerprints(self) -> dict[str, str]:
@@ -201,6 +270,8 @@ class RunRecord:
             Dictionary of fingerprint type to SHA-256 digest.
             Common keys: "program", "device", "intent", "run".
         """
+        if self._finalized:
+            return dict(self._snapshot["fingerprints"])
         with self._lock:
             fps = self.record.get("fingerprints", {})
             return dict(fps) if isinstance(fps, dict) else {}
@@ -247,6 +318,8 @@ class RunRecord:
             Backend name (e.g., "ibm_brisbane", "lightning.qubit"),
             or None if not set.
         """
+        if self._finalized:
+            return self._snapshot["backend_name"]
         with self._lock:
             backend = self.record.get("backend", {})
             if isinstance(backend, dict):
@@ -269,6 +342,8 @@ class RunRecord:
         str or None
             Group identifier, or None if not part of a group.
         """
+        if self._finalized:
+            return self._snapshot["group_id"]
         with self._lock:
             return self.record.get("group_id")
 
@@ -282,6 +357,8 @@ class RunRecord:
         str or None
             Group name, or None if not set.
         """
+        if self._finalized:
+            return self._snapshot["group_name"]
         with self._lock:
             return self.record.get("group_name")
 
@@ -300,6 +377,8 @@ class RunRecord:
         str or None
             Parent run ID, or None if this is a root run.
         """
+        if self._finalized:
+            return self._snapshot["parent_run_id"]
         with self._lock:
             return self.record.get("parent_run_id")
 
@@ -313,6 +392,8 @@ class RunRecord:
         str or None
             Run name, or None if not set.
         """
+        if self._finalized:
+            return self._snapshot["run_name"]
         with self._lock:
             info = self.record.get("info", {})
             if isinstance(info, dict):
@@ -341,6 +422,8 @@ class RunRecord:
         str or None
             ISO 8601 formatted end timestamp, or None if still running.
         """
+        if self._finalized:
+            return self._snapshot["ended_at"]
         with self._lock:
             info = self.record.get("info", {})
             if isinstance(info, dict):
@@ -360,6 +443,8 @@ class RunRecord:
         dict
             Parameter name to value mapping.
         """
+        if self._finalized:
+            return dict(self._snapshot["params"])
         with self._lock:
             data = self.record.get("data", {})
             if isinstance(data, dict):
@@ -379,6 +464,8 @@ class RunRecord:
         dict
             Metric name to numeric value mapping.
         """
+        if self._finalized:
+            return dict(self._snapshot["metrics"])
         with self._lock:
             data = self.record.get("data", {})
             if isinstance(data, dict):
@@ -398,6 +485,8 @@ class RunRecord:
         dict
             Tag name to string value mapping.
         """
+        if self._finalized:
+            return dict(self._snapshot["tags"])
         with self._lock:
             data = self.record.get("data", {})
             if isinstance(data, dict):

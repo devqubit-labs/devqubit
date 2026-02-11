@@ -691,7 +691,9 @@ class GCSRegistry:
             for a in record_dict.get("artifacts", [])
             if isinstance(a, dict)
         ]
-        return RunRecord(record=record_dict, artifacts=artifacts)
+        rec = RunRecord(record=record_dict, artifacts=artifacts)
+        rec.mark_finalized()
+        return rec
 
     def load_or_none(self, run_id: str) -> RunRecord | None:
         """
@@ -1027,9 +1029,9 @@ class GCSRegistry:
                                 for a in record_dict.get("artifacts", [])
                                 if isinstance(a, dict)
                             ]
-                            results.append(
-                                RunRecord(record=record_dict, artifacts=artifacts)
-                            )
+                            rec = RunRecord(record=record_dict, artifacts=artifacts)
+                            rec.mark_finalized()
+                            results.append(rec)
                             if len(results) >= limit:
                                 break
                         matched += 1
@@ -1048,9 +1050,9 @@ class GCSRegistry:
                         for a in record_dict.get("artifacts", [])
                         if isinstance(a, dict)
                     ]
-                    all_matches.append(
-                        RunRecord(record=record_dict, artifacts=artifacts)
-                    )
+                    rec = RunRecord(record=record_dict, artifacts=artifacts)
+                    rec.mark_finalized()
+                    all_matches.append(rec)
             except Exception:
                 continue
 

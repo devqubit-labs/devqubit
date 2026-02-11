@@ -709,6 +709,7 @@ class _BundleContext:
             if isinstance(a, dict)
         ]
         self._record = RunRecord(record=record_dict, artifacts=artifacts)
+        self._record.mark_finalized()
 
         return self._record, self._bundle.store
 
