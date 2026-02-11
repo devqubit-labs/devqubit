@@ -35,11 +35,6 @@ Listing Contents
 >>> contents = list_bundle_contents("experiment.zip")
 >>> for item in contents:
 ...     print(item)
-
-Replay
-------
->>> from devqubit.bundle import replay
->>> result = replay("experiment.zip", backend="aer_simulator")
 """
 
 from __future__ import annotations
@@ -52,7 +47,6 @@ __all__ = [
     "unpack_bundle",
     "Bundle",
     "list_bundle_contents",
-    "replay",
     "PackResult",
     "UnpackResult",
 ]
@@ -67,7 +61,6 @@ if TYPE_CHECKING:
         unpack_bundle,
     )
     from devqubit_engine.bundle.reader import Bundle
-    from devqubit_engine.bundle.replay import replay
 
 
 _LAZY_IMPORTS = {
@@ -75,7 +68,6 @@ _LAZY_IMPORTS = {
     "unpack_bundle": ("devqubit_engine.bundle.pack", "unpack_bundle"),
     "list_bundle_contents": ("devqubit_engine.bundle.pack", "list_bundle_contents"),
     "Bundle": ("devqubit_engine.bundle.reader", "Bundle"),
-    "replay": ("devqubit_engine.bundle.replay", "replay"),
     "PackResult": ("devqubit_engine.bundle.pack", "PackResult"),
     "UnpackResult": ("devqubit_engine.bundle.pack", "UnpackResult"),
 }

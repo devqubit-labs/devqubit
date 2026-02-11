@@ -4,9 +4,9 @@
 """
 Comparison and verification CLI commands.
 
-This module provides commands for comparing runs, verifying against
-baselines, and replaying quantum experiments. Uses the compare module's
-formatters for consistent output across CLI and Python API.
+This module provides commands for comparing runs, and verifying against
+baselines. Uses the compare module's formatters for consistent output
+across CLI and Python API.
 
 Commands
 --------
@@ -14,8 +14,6 @@ diff
     Compare two runs or bundles comprehensively.
 verify
     Verify a run against baseline with policy checks.
-replay
-    Replay a quantum experiment on a simulator.
 """
 
 from __future__ import annotations
@@ -26,7 +24,6 @@ import click
 from devqubit_engine.cli._utils import (
     echo,
     is_quiet,
-    print_json,
     resolve_run,
     root_from_ctx,
 )
@@ -36,7 +33,6 @@ def register(cli: click.Group) -> None:
     """Register compare commands with CLI."""
     cli.add_command(diff_cmd)
     cli.add_command(verify_cmd)
-    cli.add_command(replay_cmd)
 
 
 @click.command("diff")
@@ -324,181 +320,4 @@ def verify_cmd(
     if result.ok and promote and not baseline:
         echo(f"\n[OK] Promoted {candidate.run_id} to baseline for project")
 
-    ctx.exit(0 if result.ok else 1)
-
-
-@click.command("replay")
-@click.argument("ref", required=False)
-@click.option("--project", "-p", help="Project name (for run name resolution).")
-@click.option("--backend", "-b", default=None, help="Simulator backend name.")
-@click.option("--shots", "-s", type=int, help="Override shot count.")
-@click.option("--seed", type=int, help="Random seed for reproducibility (best-effort).")
-@click.option("--save", is_flag=True, help="Save replay as a new tracked run.")
-@click.option(
-    "--save-project",
-    default=None,
-    help="Project name for saved run (defaults to --project).",
-)
-@click.option(
-    "--experimental",
-    is_flag=True,
-    help="Acknowledge experimental status (required).",
-)
-@click.option(
-    "--list-backends",
-    is_flag=True,
-    help="List available simulator backends.",
-)
-@click.option(
-    "--format",
-    "fmt",
-    type=click.Choice(["pretty", "json"]),
-    default="pretty",
-)
-@click.pass_context
-def replay_cmd(
-    ctx: click.Context,
-    ref: str | None,
-    project: str | None,
-    backend: str | None,
-    shots: int | None,
-    seed: int | None,
-    save: bool,
-    save_project: str | None,
-    experimental: bool,
-    list_backends: bool,
-    fmt: str,
-) -> None:
-    """
-    Replay a quantum experiment from a bundle or run.
-
-    Reconstructs the circuit and executes it on a simulator backend.
-    Use 'devqubit diff' to compare replay results with the original.
-
-    REF can be a run ID, run name (with --project), or bundle file path (.zip).
-
-    EXPERIMENTAL: Replay is best-effort and may not be fully reproducible.
-    Use --experimental flag to acknowledge this.
-
-    Note: Currently only simulator backends are supported.
-    Note: Only native SDK formats (QPY, JAQCD, Cirq JSON, Tape JSON) are supported.
-          OpenQASM is NOT supported to ensure exact program representation.
-
-    Examples:
-        devqubit replay experiment.zip --experimental
-        devqubit replay abc123 --backend aer_simulator --experimental --seed 42
-        devqubit replay my-run --project bell_state --experimental --save
-        devqubit replay --list-backends
-    """
-    from devqubit_engine.bundle.replay import list_available_backends, replay
-    from devqubit_engine.tracking.record import resolve_run_id
-
-    if list_backends:
-        backends = list_available_backends()
-        if fmt == "json":
-            print_json(backends)
-            return
-
-        if backends:
-            echo("Available simulator backends:")
-            echo("(Note: only simulators are currently supported)")
-            echo("")
-            for sdk in sorted(backends.keys()):
-                echo(f"  {sdk}:")
-                for b in backends[sdk]:
-                    echo(f"    - {b}")
-        else:
-            echo("No backends available.")
-            echo("Install: qiskit-aer, amazon-braket-sdk, cirq, or pennylane")
-        return
-
-    if not ref:
-        raise click.ClickException("REF argument required (bundle path or run ID/name)")
-
-    if not experimental:
-        raise click.ClickException(
-            "Replay is EXPERIMENTAL and may not be fully reproducible.\n"
-            "Use --experimental flag to acknowledge this."
-        )
-
-    root = root_from_ctx(ctx)
-
-    # Resolve run ID if not a bundle path
-    resolved_ref = ref
-    if not ref.endswith(".zip") and not Path(ref).exists():
-        from devqubit_engine.config import Config
-        from devqubit_engine.storage.factory import create_registry
-
-        config = Config(root_dir=root)
-        registry = create_registry(config=config)
-        resolved_ref = resolve_run_id(ref, project, registry)
-
-    try:
-        result = replay(
-            resolved_ref,
-            backend=backend,
-            root=root,
-            shots=shots,
-            seed=seed,
-            save_run=save,
-            project=save_project or project,
-            ack_experimental=True,
-        )
-    except FileNotFoundError as e:
-        raise click.ClickException(f"Bundle not found: {e}") from e
-    except Exception as e:
-        error_msg = str(e)
-        if "not found" in error_msg.lower():
-            if project:
-                raise click.ClickException(
-                    f"Run not found: '{ref}' (looked up as ID and as name in project '{project}')"
-                ) from e
-            raise click.ClickException(
-                f"Run not found: '{ref}'. Use --project to look up by name."
-            ) from e
-        raise click.ClickException(f"Replay failed: {e}") from e
-
-    if fmt == "json":
-        print_json(result.to_dict())
-        ctx.exit(0 if result.ok else 1)
-        return
-
-    # Pretty format
-    lines = [
-        "=" * 70,
-        "REPLAY RESULT (EXPERIMENTAL)",
-        "=" * 70,
-        f"Original run:     {result.original_run_id}",
-        f"Original adapter: {result.original_adapter}",
-        f"Original backend: {result.original_backend}",
-        f"Replay backend:   {result.backend_used} (simulator)",
-        f"Circuit source:   {result.circuit_source}",
-        f"Shots:            {result.shots}",
-    ]
-
-    if result.seed is not None:
-        lines.append(f"Seed:             {result.seed} (best-effort)")
-
-    lines.extend(
-        [
-            "",
-            f"Result: {'[OK]' if result.ok else '[FAILED]'}",
-            f"  {result.message}",
-        ]
-    )
-
-    if result.replay_run_id:
-        lines.append(f"\nReplay saved as: {result.replay_run_id}")
-        lines.append(
-            f"Compare with: devqubit diff {result.original_run_id} {result.replay_run_id}"
-        )
-
-    if result.errors:
-        lines.extend(["", "Warnings:"])
-        for err in result.errors:
-            lines.append(f"  [!] {err}")
-
-    lines.extend(["", "=" * 70])
-
-    echo("\n".join(lines))
     ctx.exit(0 if result.ok else 1)
