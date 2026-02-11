@@ -484,7 +484,8 @@ class TrackedCudaqExecutor:
             "shots": shots,
         }
         if hamiltonian is not None:
-            execution_options["hamiltonian"] = str(hamiltonian)
+            execution_options["spin_operator"] = repr(hamiltonian)
+            execution_options["spin_operator_type"] = type(hamiltonian).__name__
         if call_kwargs:
             execution_options["kwargs"] = to_jsonable(call_kwargs)
 
@@ -782,16 +783,13 @@ class TrackedCudaqExecutor:
             CUDA-Q observe result (list for broadcasting).
         """
         actual_shots = shots_count if shots_count > 0 else None
-        enriched_kwargs = dict(kwargs) if kwargs else {}
-        enriched_kwargs["spin_operator"] = repr(hamiltonian)
-        enriched_kwargs["spin_operator_type"] = type(hamiltonian).__name__
         return self._tracked_execute(
             "observe",
             kernel,
             args,
             shots=actual_shots,
             hamiltonian=hamiltonian,
-            call_kwargs=enriched_kwargs,
+            call_kwargs=kwargs if kwargs else None,
         )
 
     def _build_stats(self) -> dict[str, Any]:
