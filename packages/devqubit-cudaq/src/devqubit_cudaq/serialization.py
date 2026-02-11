@@ -24,6 +24,7 @@ import re
 from collections import Counter
 from typing import Any
 
+import numpy as np
 from devqubit_cudaq.circuits import (
     _CUDAQ_GATES,
     _get_native_json,
@@ -137,9 +138,12 @@ def capture_qir(kernel: Any, version: str = "1.0") -> str | None:
 
 def draw_kernel(kernel: Any, args: tuple[Any, ...] = ()) -> str | None:
     """
-    Draw circuit diagram via ``cudaq.draw(kernel, *args)``.
+    Render a CUDA-Q kernel as an ASCII circuit diagram.
 
-    Used for human-readable logging only — not for hashing.
+    This helper calls ``cudaq.draw`` to obtain a human-readable circuit
+    representation. It is intended for logging/debugging only (e.g., printing
+    a GHZ circuit or a VQE ansatz). It must not be used for hashing or any
+    logic that depends on a stable, deterministic textual representation.
 
     Parameters
     ----------
@@ -154,13 +158,34 @@ def draw_kernel(kernel: Any, args: tuple[Any, ...] = ()) -> str | None:
         ASCII diagram on success, else ``None``.
     """
     try:
-        import cudaq  # local import
+        import cudaq
 
+        # If user passed a single array/list/tuple as the only arg,
+        # auto-expand it: args=((a,b,c),) -> args=(a,b,c)
+        if len(args) == 1 and isinstance(args[0], (list, tuple, np.ndarray)):
+            args = tuple(args[0])
+
+        # Convert numpy scalars to Python scalars
+        norm_args = []
+        for a in args:
+            if isinstance(a, np.generic):  # np.float64, np.int64, ...
+                a = a.item()
+            norm_args.append(a)
+        args = tuple(norm_args)
+
+        # Try common call pattern
         out = cudaq.draw(kernel, *args)
         if isinstance(out, str) and out:
             return out
+
+        # Fallback: explicit format first (some versions expose this signature)
+        out = cudaq.draw("ascii", kernel, *args)
+        if isinstance(out, str) and out:
+            return out
+
     except Exception as exc:
         logger.debug("cudaq.draw() failed: %s", exc)
+
     return None
 
 
