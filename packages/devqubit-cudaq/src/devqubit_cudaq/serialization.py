@@ -245,6 +245,7 @@ _QREF_RE = re.compile(r"\w+\[([^\]]+)\]")
 # Gates recognized by the parser.
 _KNOWN_GATES: frozenset[str] = frozenset(
     {
+        # Single-qubit
         "h",
         "x",
         "y",
@@ -256,13 +257,35 @@ _KNOWN_GATES: frozenset[str] = frozenset(
         "rz",
         "r1",
         "sdg",
+        "sdag",
         "tdg",
-        "swap",
+        "tdag",
         "u3",
         "phaseshift",
+        # Two-qubit
+        "cx",
+        "cy",
+        "cz",
+        "cnot",
+        "swap",
+        "crx",
+        "cry",
+        "crz",
+        "cr1",
+        "cs",
+        "ct",
+        "ch",
+        # Multi-qubit
+        "ccx",
+        "ccnot",
+        "toffoli",
+        "cswap",
+        "fredkin",
+        # Measurement
         "mz",
         "mx",
         "my",
+        "measure",
     }
 )
 
