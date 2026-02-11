@@ -30,6 +30,7 @@ pip install devqubit[qiskit-runtime]  # IBM Qiskit Runtime (cloud primitives)
 pip install devqubit[braket]          # Amazon Braket
 pip install devqubit[cirq]            # Google Cirq
 pip install devqubit[pennylane]       # Xanadu PennyLane
+pip install devqubit[cudaq]           # NVIDIA CUDA-Q
 ```
 
 ## Where data is stored

@@ -16,6 +16,7 @@ pip install 'devqubit[qiskit-runtime]'  # IBM Qiskit Runtime (cloud primitives)
 pip install 'devqubit[braket]'          # Amazon Braket
 pip install 'devqubit[cirq]'            # Google Cirq
 pip install 'devqubit[pennylane]'       # Xanadu PennyLane
+pip install 'devqubit[cudaq]'           # NVIDIA CUDA-Q
 
 # Or install all adapters at once
 pip install 'devqubit[all]'
@@ -287,6 +288,52 @@ dev = qml.device("qiskit.remote", wires=2, backend="ibm_brisbane")
 The device snapshot includes:
 - **Frontend config**: PennyLane device settings (shots, diff_method, interface)
 - **Resolved backend**: Underlying Braket/Qiskit device topology and calibration
+
+---
+
+## NVIDIA CUDA-Q
+
+```python
+import cudaq
+from devqubit import track
+
+@cudaq.kernel
+def bell():
+    q = cudaq.qvector(2)
+    h(q[0])
+    x.ctrl(q[0], q[1])
+    mz(q)
+
+with track(project="cudaq-experiment") as run:
+    executor = run.wrap(cudaq)
+    result = executor.sample(bell, shots_count=1000)
+```
+
+### Observe (Expectation Values)
+
+```python
+from cudaq import spin
+
+hamiltonian = spin.z(0)
+
+with track(project="cudaq-vqe") as run:
+    executor = run.wrap(cudaq)
+    result = executor.observe(bell, hamiltonian)
+    print(result.expectation())
+```
+
+The adapter captures the spin operator representation and type in `execution_options` for reproducibility.
+
+### Captured Artifacts
+
+| Artifact | Kind | Role |
+|----------|------|------|
+| Kernel JSON | `cudaq.kernel.json` | `program` |
+| Kernel diagram | `cudaq.kernel.diagram` | `program` |
+| MLIR (Quake) | `cudaq.kernel.mlir` | `program` |
+| QIR | `cudaq.kernel.qir` | `program` |
+| Counts / expectation | `result.cudaq.output.json` | `result` |
+| Execution envelope | `devqubit.envelope.json` | `envelope` |
 
 ---
 
