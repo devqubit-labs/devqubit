@@ -146,6 +146,13 @@ class Run:
         self._artifacts: list[ArtifactRef] = []
         self._pending_tracked_jobs: list[Any] = []
 
+        # Metric-series buffer: accumulated points awaiting flush.
+        # Kept separate from record["data"]["metric_series"] (which is
+        # only written at finalize for schema compat) to enable lightweight
+        # incremental persistence via the registry's metric_points table.
+        self._metric_buffer: list[dict[str, Any]] = []
+        self._metric_steps_since_flush: int = 0
+
         # Get config and backends
         cfg = config or get_config()
         self._store = store or create_store(config=cfg)
@@ -273,17 +280,21 @@ class Run:
         """
         Log a metric value.
 
-        Metrics are numeric values that measure experimental outcomes.
+        When ``step`` is provided the value is appended to the metric's
+        time-series history **and** the scalar summary
+        (``data.metrics[key]``) is updated to the latest value so that
+        run listings / comparisons always reflect the most recent state.
 
         Parameters
         ----------
         key : str
-            Metric name.
+            Metric name (e.g. ``"train/loss"``, ``"qnn/fidelity"``).
         value : float
             Metric value (will be converted to float).
         step : int, optional
             Step number for time series tracking. If provided, the metric
-            is stored as a time series point. If None, stores as a scalar.
+            is stored as a time series point **and** the scalar summary is
+            updated. If ``None``, stores only as a scalar summary.
 
         Raises
         ------
@@ -302,20 +313,31 @@ class Run:
             if step < 0:
                 raise ValueError(f"step must be non-negative, got {step}")
 
+            ts = utc_now_iso()
+            point = {"value": value_f, "step": step, "timestamp": ts}
+
             with self._lock:
+                # Append to in-record series
                 if "metric_series" not in self.record["data"]:
                     self.record["data"]["metric_series"] = {}
-
                 if key not in self.record["data"]["metric_series"]:
                     self.record["data"]["metric_series"][key] = []
+                self.record["data"]["metric_series"][key].append(point)
 
-                self.record["data"]["metric_series"][key].append(
-                    {
-                        "value": value_f,
-                        "step": step,
-                        "timestamp": utc_now_iso(),
-                    }
+                # Always keep scalar summary up-to-date (last value)
+                self.record["data"]["metrics"][key] = value_f
+
+                # Buffer for incremental flush
+                self._metric_buffer.append(
+                    {"run_id": self._run_id, "key": key, **point}
                 )
+                self._metric_steps_since_flush += 1
+
+            # Auto-flush when configured
+            flush_n = self._config.flush_every_n_steps
+            if flush_n and self._metric_steps_since_flush >= flush_n:
+                self.flush()
+
             logger.debug("Logged metric series: %s[%d]=%f", key, step, value_f)
         else:
             with self._lock:
@@ -333,6 +355,40 @@ class Run:
         """
         for key, value in metrics.items():
             self.log_metric(key, value)
+
+    def flush(self) -> None:
+        """
+        Persist the current run state and buffered metric history.
+
+        Writes the run record (with updated summary metrics) to the
+        registry, and — if the registry supports it — flushes the
+        in-memory metric-series buffer via batched ``INSERT``.
+
+        This method is safe to call from hot loops. It acquires the
+        internal lock only briefly to swap out the buffer.
+        """
+        with self._lock:
+            buf = self._metric_buffer
+            self._metric_buffer = []
+            self._metric_steps_since_flush = 0
+
+        # Flush buffered metric points
+        if buf and hasattr(self._registry, "save_metric_points"):
+            try:
+                self._registry.save_metric_points(buf)
+            except Exception:
+                logger.exception("Failed to flush metric points buffer")
+                # Re-queue so data is not lost
+                with self._lock:
+                    self._metric_buffer = buf + self._metric_buffer
+
+        # Persist run record (summary + status)
+        try:
+            self._registry.save(self.record)
+        except Exception:
+            logger.exception("Failed to flush run record")
+
+        logger.debug("Flushed run state: run_id=%s", self._run_id)
 
     def set_tag(self, key: str, value: str) -> None:
         """
@@ -1079,7 +1135,8 @@ class Run:
         2. Compute fingerprints from all envelopes
         3. Enrich all envelopes with tracker namespace + fingerprints
         4. Persist enriched envelopes (in-place artifact ref update)
-        5. Save to registry
+        5. Flush remaining metric buffer
+        6. Save to registry
 
         Parameters
         ----------
@@ -1091,6 +1148,9 @@ class Run:
             if success and self.record["info"]["status"] == "RUNNING":
                 self.record["info"]["status"] = "FINISHED"
                 self.record["info"]["ended_at"] = utc_now_iso()
+
+        # Flush any remaining metric buffer before final save
+        self.flush()
 
         # Finalize pending tracked jobs
         self._finalize_pending_tracked_jobs()

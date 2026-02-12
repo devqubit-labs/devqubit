@@ -334,13 +334,12 @@
     "metric_point": {
       "type": "object",
       "description": "Single point in a metric time series.",
-      "required": ["value"],
+      "required": ["value", "step", "timestamp"],
       "properties": {
         "value": { "type": "number", "description": "Metric value." },
         "step": {
           "type": "integer",
           "minimum": 0,
-          "default": 0,
           "description": "Step/iteration number."
         },
         "timestamp": {

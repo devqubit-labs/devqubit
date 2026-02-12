@@ -169,6 +169,12 @@ class RunRecord:
                     if isinstance(data, dict) and isinstance(data.get("tags"), dict)
                     else {}
                 ),
+                "metric_series": (
+                    dict(data.get("metric_series", {}))
+                    if isinstance(data, dict)
+                    and isinstance(data.get("metric_series"), dict)
+                    else {}
+                ),
             }
             self._finalized = True
 
@@ -492,6 +498,29 @@ class RunRecord:
             if isinstance(data, dict):
                 tags = data.get("tags", {})
                 return dict(tags) if isinstance(tags, dict) else {}
+            return {}
+
+    @property
+    def metric_series(self) -> dict[str, list[dict[str, Any]]]:
+        """
+        Get the metric time-series history.
+
+        Each key maps to a list of ``{"value": float, "step": int,
+        "timestamp": str}`` dicts in logging order.
+
+        Returns
+        -------
+        dict
+            Metric name to list of time-series points. Empty ``{}``
+            when no series data has been logged.
+        """
+        if self._finalized:
+            return dict(self._snapshot["metric_series"])
+        with self._lock:
+            data = self.record.get("data", {})
+            if isinstance(data, dict):
+                ms = data.get("metric_series", {})
+                return dict(ms) if isinstance(ms, dict) else {}
             return {}
 
     def to_dict(self) -> dict[str, Any]:
