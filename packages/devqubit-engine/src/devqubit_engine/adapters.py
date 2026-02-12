@@ -21,7 +21,7 @@ import logging
 import threading
 import traceback
 from dataclasses import dataclass
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -152,10 +152,44 @@ class AdapterLoadError:
         return f"{self.entry_point}: {self.exc_type}: {self.message}"
 
 
-# Module-level cache for loaded adapters (protected by _cache_lock)
-_adapters: list[AdapterProtocol] | None = None
-_adapter_errors: list[AdapterLoadError] = []
+# Module-level cache for loaded adapters (protected by _cache_lock).
+# Use tuples internally to prevent accidental external mutation of cached state.
+_adapters: tuple[AdapterProtocol, ...] | None = None
+_adapter_errors: tuple[AdapterLoadError, ...] = ()
 _cache_lock = threading.RLock()
+
+
+def _iter_adapter_entry_points() -> list[EntryPoint]:
+    """
+    Get entry points for the adapter group, handling API differences.
+
+    Returns
+    -------
+    list of EntryPoint
+        Entry points registered under ``devqubit.adapters``.
+
+    Notes
+    -----
+    The entry point API differs across Python/importlib_metadata versions.
+    The most compatible approach is to call ``entry_points()`` with no args
+    and then use ``.select(group=...)`` if available; otherwise treat the
+    result as a mapping keyed by group. :contentReference[oaicite:1]{index=1}
+    """
+    eps = entry_points()
+    select = getattr(eps, "select", None)
+    if callable(select):
+        return list(eps.select(group=ADAPTER_ENTRY_POINT_GROUP))
+    return list(eps.get(ADAPTER_ENTRY_POINT_GROUP, []))
+
+
+def _make_load_error(ep: EntryPoint, exc: Exception) -> AdapterLoadError:
+    """Create a structured AdapterLoadError."""
+    return AdapterLoadError(
+        entry_point=f"{ep.name}={ep.value}",
+        exc_type=type(exc).__name__,
+        message=str(exc),
+        traceback=traceback.format_exc(),
+    )
 
 
 def clear_adapter_cache() -> None:
@@ -169,7 +203,7 @@ def clear_adapter_cache() -> None:
     global _adapters, _adapter_errors
     with _cache_lock:
         _adapters = None
-        _adapter_errors = []
+        _adapter_errors = ()
     logger.debug("Adapter cache cleared")
 
 
@@ -202,17 +236,15 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
 
     with _cache_lock:
         if _adapters is not None and not force_reload:
-            return _adapters
+            return list(_adapters)
 
         logger.debug("Loading adapters from entry points")
 
-        _adapters = []
-        _adapter_errors = []
+        loaded: list[AdapterProtocol] = []
+        errors: list[AdapterLoadError] = []
+        seen_names: set[str] = set()
 
-        # Get entry points for adapter group (Python 3.9+)
-        group_eps = entry_points(group=ADAPTER_ENTRY_POINT_GROUP)
-
-        for ep in group_eps:
+        for ep in _iter_adapter_entry_points():
             ep_spec = f"{ep.name}={ep.value}"
             logger.debug("Loading adapter: %s", ep_spec)
 
@@ -220,40 +252,43 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
                 adapter_cls = ep.load()
                 adapter = adapter_cls()
 
-                # Validate adapter has required 'name' attribute
-                if not getattr(adapter, "name", None):
+                name = getattr(adapter, "name", None)
+                if not name:
                     raise TypeError(
                         f"Adapter class {adapter_cls.__name__} has no 'name' attribute"
                     )
 
-                # Validate adapter conforms to protocol
+                # Validate adapter conforms to protocol (runtime structural check)
                 if not isinstance(adapter, AdapterProtocol):
                     raise TypeError(
-                        f"Adapter {adapter.name} does not implement AdapterProtocol"
+                        f"Adapter {name} does not implement AdapterProtocol"
                     )
 
+                # Guard against duplicate adapter names (prevents nondeterministic resolution)
+                if name in seen_names:
+                    raise ValueError(f"Duplicate adapter name detected: {name!r}")
+                seen_names.add(name)
+
                 # Warn if entry point name differs from adapter.name
-                if ep.name != adapter.name:
+                if ep.name != name:
                     logger.warning(
                         "Entry point name %r does not match adapter.name %r",
                         ep.name,
-                        adapter.name,
+                        name,
                     )
 
-                _adapters.append(adapter)
-                logger.info("Loaded adapter: %s", adapter.name)
+                loaded.append(adapter)
+                logger.info("Loaded adapter: %s", name)
 
             except Exception as e:
-                error = AdapterLoadError(
-                    entry_point=ep_spec,
-                    exc_type=type(e).__name__,
-                    message=str(e),
-                    traceback=traceback.format_exc(),
-                )
-                _adapter_errors.append(error)
+                err = _make_load_error(ep, e)
+                errors.append(err)
                 logger.warning(
                     "Failed to load adapter %s: %s", ep_spec, e, exc_info=True
                 )
+
+        _adapters = tuple(loaded)
+        _adapter_errors = tuple(errors)
 
         logger.debug(
             "Adapter loading complete: %d loaded, %d errors",
@@ -261,7 +296,7 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
             len(_adapter_errors),
         )
 
-        return _adapters
+        return list(_adapters)
 
 
 def adapter_load_errors() -> list[AdapterLoadError]:
@@ -316,11 +351,7 @@ def get_adapter_by_name(name: str) -> AdapterProtocol | None:
     return None
 
 
-def resolve_adapter(
-    executor: Any,
-    *,
-    force_reload: bool = False,
-) -> AdapterProtocol:
+def resolve_adapter(executor: Any, *, force_reload: bool = False) -> AdapterProtocol:
     """
     Resolve the adapter that supports a given executor.
 
@@ -347,8 +378,6 @@ def resolve_adapter(
         If no adapter supports the executor, or if multiple adapters
         claim support.
     """
-    adapters = load_adapters(force_reload=force_reload)
-
     executor_type = type(executor).__name__
     executor_module = getattr(executor, "__module__", "")
 
@@ -358,61 +387,68 @@ def resolve_adapter(
         executor_module,
     )
 
-    matches: list[AdapterProtocol] = []
-    for adapter in adapters:
-        try:
-            if adapter.supports_executor(executor):
-                matches.append(adapter)
-                logger.debug("Adapter %s supports executor", adapter.name)
-        except Exception as e:
-            # Don't let one broken adapter prevent resolution
-            logger.warning(
-                "Adapter %s raised exception in supports_executor: %s",
-                adapter.name,
-                e,
-                exc_info=True,
+    # Semantics preserved: if not found and force_reload=False, retry once with force_reload=True.
+    attempt_force_reload = force_reload
+    adapters: list[AdapterProtocol] = []
+
+    for _ in range(2):
+        adapters = load_adapters(force_reload=attempt_force_reload)
+
+        matches: list[AdapterProtocol] = []
+        for adapter in adapters:
+            try:
+                if adapter.supports_executor(executor):
+                    matches.append(adapter)
+                    logger.debug("Adapter %s supports executor", adapter.name)
+            except Exception as e:
+                # Don't let one broken adapter prevent resolution
+                logger.warning(
+                    "Adapter %s raised exception in supports_executor: %s",
+                    adapter.name,
+                    e,
+                    exc_info=True,
+                )
+
+        if len(matches) == 1:
+            logger.debug("Resolved adapter: %s", matches[0].name)
+            return matches[0]
+
+        if len(matches) > 1:
+            names = ", ".join(a.name for a in matches)
+            raise ValueError(
+                f"Multiple adapters match executor type {executor_type}: {names}. "
+                "This indicates a bug in adapter implementations - each executor "
+                "type should be supported by exactly one adapter."
             )
-            continue
 
-    if len(matches) == 1:
-        logger.debug("Resolved adapter: %s", matches[0].name)
-        return matches[0]
+        if attempt_force_reload:
+            break
 
-    if len(matches) > 1:
-        names = ", ".join(a.name for a in matches)
-        raise ValueError(
-            f"Multiple adapters match executor type {executor_type}: {names}. "
-            "This indicates a bug in adapter implementations - each executor "
-            "type should be supported by exactly one adapter."
-        )
+        logger.debug("No adapter found, retrying with force_reload=True")
+        attempt_force_reload = True
 
-    # No matches found - try force reload once to handle stale cache
-    if not force_reload:
-        logger.debug("No adapter found, retrying with force_reload")
-        return resolve_adapter(executor, force_reload=True)
-
-    # Build detailed error message
     available = ", ".join(a.name for a in adapters) if adapters else "(none installed)"
+    errors = adapter_load_errors()
 
     error_lines = [
-        f"No adapter found for executor type {executor_type} "
-        f"(module={executor_module!r}).",
+        f"No adapter found for executor type {executor_type} (module={executor_module!r}).",
         f"Available adapters: {available}.",
         "",
         "To fix this:",
         "  1. Install the appropriate adapter package:",
-        "     pip install devqubit-qiskit      # For Qiskit",
-        "     pip install devqubit-pennylane   # For PennyLane",
-        "     pip install devqubit-cirq        # For Cirq",
-        "     pip install devqubit-braket      # For Amazon Braket",
+        "     pip install devqubit[qiskit ]     # For Qiskit",
+        "     pip install devqubit[pennylane]   # For PennyLane",
+        "     pip install devqubit[cirq]        # For Cirq",
+        "     pip install devqubit[braket]      # For Amazon Braket",
+        "     pip install devqubit[cudaq]       # For NVIDIA CUDA-Q",
     ]
 
-    if _adapter_errors:
+    if errors:
         error_lines.append("")
         error_lines.append("Adapter load errors (may indicate missing dependencies):")
-        for err in _adapter_errors[:5]:
+        for err in errors[:5]:
             error_lines.append(f"  - {err.entry_point}: {err.exc_type}: {err.message}")
-        if len(_adapter_errors) > 5:
-            error_lines.append(f"  ... and {len(_adapter_errors) - 5} more errors")
+        if len(errors) > 5:
+            error_lines.append(f"  ... and {len(errors) - 5} more errors")
 
     raise ValueError("\n".join(error_lines))
