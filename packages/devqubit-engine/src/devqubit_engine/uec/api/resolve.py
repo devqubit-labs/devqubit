@@ -122,8 +122,21 @@ def _try_load_envelope(
 
     try:
         envelope_data = load_artifact_json(artifact, store)
+        if envelope_data is None:
+            error_msg = (
+                f"Envelope artifact not found in store "
+                f"(digest={artifact.digest[:24]}...)"
+            )
+            logger.warning("%s for run %s", error_msg, record.run_id)
+            if raise_on_error:
+                adapter = record.record.get("adapter", "unknown")
+                raise EnvelopeValidationError(str(adapter), [error_msg])
+            return None
         if not isinstance(envelope_data, dict):
-            error_msg = "Envelope artifact is not a dict"
+            error_msg = (
+                f"Envelope artifact is not a dict "
+                f"(got {type(envelope_data).__name__})"
+            )
             logger.warning("%s for run %s", error_msg, record.run_id)
             if raise_on_error:
                 adapter = record.record.get("adapter", "unknown")
