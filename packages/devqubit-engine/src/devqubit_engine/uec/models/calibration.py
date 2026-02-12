@@ -13,9 +13,8 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from statistics import median as _median
 from typing import Any, Sequence
-
-import numpy as np
 
 
 logger = logging.getLogger(__name__)
@@ -82,7 +81,7 @@ def _median_val(values: Sequence[float | None]) -> float | None:
     valid = [v for v in values if v is not None]
     if not valid:
         return None
-    return float(np.median(valid))
+    return float(_median(valid))
 
 
 @dataclass
