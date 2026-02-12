@@ -129,7 +129,8 @@ def is_pennylane_tape(obj: Any) -> bool:
         ):
             return True
         return False
-    except ImportError:
+    except ImportError as e:
+        logger.debug("Suppressed error: %s", e)
         return False
 
 
@@ -154,8 +155,8 @@ def _param_to_jsonable(p: Any) -> Any:
     if hasattr(p, "item"):
         try:
             return float(p.item())
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug("Float extraction via .item() failed: %s", e)
 
     # 3. Autograd ArrayBox — extract wrapped _value
     if hasattr(p, "_value"):
@@ -164,14 +165,14 @@ def _param_to_jsonable(p: Any) -> Any:
             if hasattr(val, "item"):
                 return float(val.item())
             return float(val)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Float conversion failed: %s", e)
 
     # 4. Direct float() — catches remaining scalar-like objects
     try:
         return float(p)
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Float conversion failed: %s", e)
 
     # 5. Multi-element array (batched parameters) — summarise
     shape = getattr(p, "shape", None)
@@ -233,19 +234,19 @@ def _format_param_text(p: Any) -> str:
     if hasattr(p, "item"):
         try:
             return f"{float(p.item()):.4f}"
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug("Float extraction via .item() failed: %s", e)
     if hasattr(p, "_value"):
         try:
             val = p._value
             v = float(val.item()) if hasattr(val, "item") else float(val)
             return f"{v:.4f}"
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Float extraction via .item() failed: %s", e)
     try:
         return f"{float(p):.4f}"
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Float conversion failed: %s", e)
 
     # Batched array => summary
     shape = getattr(p, "shape", None)
@@ -329,8 +330,8 @@ def _tape_to_diagram(tape: Any) -> str | None:
             text = tape_text_fn(tape)
             if text and text.strip():
                 return _strip_param_definitions(text)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to render tape diagram: %s", e)
     return None
 
 
@@ -989,8 +990,8 @@ def summarize_pennylane_tape(tape: Any) -> CircuitSummary:
     try:
         if hasattr(tape, "graph"):
             depth = tape.graph.get_depth()
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get depth: %s", e)
 
     return CircuitSummary(
         num_qubits=len(tape.wires),

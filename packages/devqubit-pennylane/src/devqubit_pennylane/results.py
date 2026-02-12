@@ -145,7 +145,8 @@ def _to_numpy(arr: Any) -> np.ndarray | None:
         if isinstance(arr, np.ndarray):
             return arr
         return np.asarray(arr)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to convert to numpy array: %s", e)
         return None
 
 

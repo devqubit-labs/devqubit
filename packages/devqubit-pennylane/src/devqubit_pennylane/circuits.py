@@ -77,16 +77,16 @@ def _normalize_wire(wire: Any) -> int:
     # Try direct int conversion
     try:
         return int(wire)
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Int conversion failed: %s", e)
 
     # Try to get index from wire object
     idx = getattr(wire, "index", None)
     if idx is not None:
         try:
             return int(idx)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Int conversion failed: %s", e)
 
     # Use deterministic SHA256-based hash for non-integer wires
     # This ensures consistent results across processes and machines
@@ -204,7 +204,8 @@ def _convert_operation(op: Any) -> dict[str, Any]:
             # Numeric value
             try:
                 params[key] = float(p)
-            except (TypeError, ValueError):
+            except (TypeError, ValueError) as e:
+                logger.debug("Float conversion failed: %s", e)
                 params[key] = None
                 params[f"{key}_expr"] = str(p)[:100]
 
@@ -329,7 +330,8 @@ def _is_trainable_param(p: Any) -> bool:
         try:
             float(p)
             return False
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            logger.debug("Float conversion failed: %s", e)
             return True
 
     return False
@@ -355,36 +357,36 @@ def _extract_numeric_value(p: Any) -> float | None:
     # Try direct float conversion first
     try:
         return float(p)
-    except (TypeError, ValueError):
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Float conversion failed: %s", e)
 
     # Try .item() for tensor-like objects
     if hasattr(p, "item"):
         try:
             return float(p.item())
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug("Float extraction via .item() failed: %s", e)
 
     # Try .numpy() for JAX/TF tensors
     if hasattr(p, "numpy"):
         try:
             return float(p.numpy())
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug("Float conversion failed: %s", e)
 
     # Try ._value for autograd ArrayBox
     if hasattr(p, "_value"):
         try:
             return float(p._value)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Float conversion failed: %s", e)
 
     # Try .val for some symbolic wrappers
     if hasattr(p, "val"):
         try:
             return float(p.val)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Float conversion failed: %s", e)
 
     return None
 
@@ -413,16 +415,16 @@ def _get_num_wires(tape: Any) -> int:
                 indices = [_normalize_wire(w) for w in wire_list]
                 return max(indices) + 1
             return len(wire_list)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Wire extraction failed: %s", e)
 
     # Try num_wires attribute
     num_wires = getattr(tape, "num_wires", None)
     if num_wires is not None:
         try:
             return int(num_wires)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Int conversion failed: %s", e)
 
     # Fall back to scanning operations
     max_wire = -1
@@ -432,8 +434,8 @@ def _get_num_wires(tape: Any) -> int:
             for w in op_wires:
                 idx = _normalize_wire(w)
                 max_wire = max(max_wire, idx)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Wire extraction failed: %s", e)
 
     return max_wire + 1 if max_wire >= 0 else 0
 

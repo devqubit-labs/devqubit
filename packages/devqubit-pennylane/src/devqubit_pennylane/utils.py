@@ -10,6 +10,7 @@ the adapter components following the devqubit Uniform Execution Contract (UEC).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -162,8 +163,8 @@ def extract_shots_info(device_or_tape: Any) -> ShotsInfo:
                     num_copies=len(shot_list),
                 )
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Attribute access failed: %s", e)
 
     # Fallback: assume analytic
     return ShotsInfo(
@@ -194,6 +195,8 @@ def get_shots(device: Any) -> int | None:
     return extract_shots_info(device).total_shots
 
 
+logger = logging.getLogger(__name__)
+
 _pennylane_version: str | None = None
 
 
@@ -214,7 +217,8 @@ def pennylane_version() -> str:
         import pennylane as qml
 
         _pennylane_version = getattr(qml, "__version__", "unknown")
-    except ImportError:
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
         _pennylane_version = "unknown"
     return _pennylane_version
 
@@ -231,7 +235,8 @@ def get_adapter_version() -> str:
         from importlib.metadata import version
 
         _adapter_version = version("devqubit-pennylane")
-    except Exception:
+    except ImportError as e:
+        logger.debug("Package version lookup failed: %s", e)
         _adapter_version = "unknown"
     return _adapter_version
 
@@ -267,8 +272,8 @@ def collect_sdk_versions() -> dict[str, str]:
         versions["pennylane_lightning"] = getattr(
             pennylane_lightning, "__version__", "unknown"
         )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # Braket plugin
     try:
@@ -277,16 +282,16 @@ def collect_sdk_versions() -> dict[str, str]:
         versions["pennylane_braket"] = getattr(
             pennylane_braket, "__version__", "unknown"
         )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # Amazon Braket SDK (if Braket plugin is used)
     try:
         import braket
 
         versions["amazon_braket_sdk"] = getattr(braket, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # Qiskit plugin
     try:
@@ -295,48 +300,48 @@ def collect_sdk_versions() -> dict[str, str]:
         versions["pennylane_qiskit"] = getattr(
             pennylane_qiskit, "__version__", "unknown"
         )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # Qiskit (if Qiskit plugin is used)
     try:
         import qiskit
 
         versions["qiskit"] = getattr(qiskit, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # Cirq plugin
     try:
         import pennylane_cirq
 
         versions["pennylane_cirq"] = getattr(pennylane_cirq, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # JAX (for autodiff)
     try:
         import jax
 
         versions["jax"] = getattr(jax, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # PyTorch (for autodiff)
     try:
         import torch
 
         versions["torch"] = getattr(torch, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     # TensorFlow (for autodiff)
     try:
         import tensorflow as tf
 
         versions["tensorflow"] = getattr(tf, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     _sdk_versions = versions
     return dict(_sdk_versions)
@@ -448,8 +453,8 @@ def get_wires(device: Any) -> list[Any] | None:
     try:
         if hasattr(device, "wires"):
             return list(device.wires)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Attribute access failed: %s", e)
     return None
 
 

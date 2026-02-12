@@ -134,8 +134,8 @@ def _log_tapes(
                 index=0,
             )
         )
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Unexpected error: %s", e)
 
     return artifacts
 
@@ -161,15 +161,15 @@ def _unwrap_result(obj: Any) -> Any:
             return float(obj)
         if isinstance(obj, np.ndarray):
             return obj.tolist()
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Float conversion failed: %s", e)
 
     # 0-d tensor with .item()
     if hasattr(obj, "item") and not isinstance(obj, (list, tuple, dict)):
         try:
             return obj.item()
-        except (TypeError, ValueError, RuntimeError):
-            pass
+        except (TypeError, ValueError, RuntimeError) as e:
+            logger.debug("PennyLane operation failed: %s", e)
 
     # Recurse into sequences
     if isinstance(obj, (list, tuple)):
@@ -650,7 +650,8 @@ def patch_device(
                     result_type = (
                         extract_result_type(tapes) if execution_succeeded else None
                     )
-                except Exception:
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("Failed to extract result type: %s", e)
                     result_type = None
                 self._devqubit_result_snapshot = _log_results(
                     tracker,
@@ -807,8 +808,8 @@ def unpatch_device(device: Any) -> bool:
         if hasattr(device, attr):
             try:
                 delattr(device, attr)
-            except (AttributeError, TypeError):
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Suppressed error: %s", e)
 
     return True
 
@@ -897,8 +898,8 @@ class PennyLaneAdapter:
             try:
                 desc["wires"] = list(device.wires)
                 desc["num_wires"] = len(device.wires)
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Failed to extract wires: %s", e)
 
         # Add shots info
         shots_info = extract_shots_info(device)

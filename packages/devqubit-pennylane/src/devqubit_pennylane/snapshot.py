@@ -419,8 +419,8 @@ def _extract_wires(device: Any) -> tuple[int | None, dict[str, Any]]:
             wires = list(device.wires)
             props["wires"] = wires
             num_qubits = len(wires)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Attribute access failed: %s", e)
 
     return num_qubits, props
 
@@ -456,8 +456,8 @@ def _extract_diff_method(device: Any) -> dict[str, Any]:
                 if val is not None:
                     props["diff_method"] = str(val)
                     break
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Attribute access failed: %s", e)
 
     return props
 
@@ -473,8 +473,8 @@ def _extract_interface(device: Any) -> dict[str, Any]:
                 if val is not None:
                     props["interface"] = str(val)
                     break
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Attribute access failed: %s", e)
 
     return props
 
@@ -489,8 +489,8 @@ def _extract_data_types(device: Any) -> dict[str, Any]:
                 val = getattr(device, dtype_attr)
                 if val is not None:
                     props[dtype_attr] = str(val)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get dtype: %s", e)
 
     return props
 
@@ -504,8 +504,8 @@ def _extract_seed(device: Any) -> dict[str, Any]:
             seed = device.seed
             if seed is not None:
                 props["seed"] = to_jsonable(seed)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get seed: %s", e)
 
     return props
 
@@ -518,8 +518,8 @@ def _extract_capabilities(device: Any) -> dict[str, Any]:
     try:
         if hasattr(device, "execute_kwargs"):
             props["execute_kwargs"] = to_jsonable(device.execute_kwargs)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get execute_kwargs: %s", e)
 
     # Supported operations
     try:
@@ -527,8 +527,8 @@ def _extract_capabilities(device: Any) -> dict[str, Any]:
             ops = device.operations
             if ops is not None:
                 props["num_supported_operations"] = len(ops)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get operations: %s", e)
 
     # Supported observables
     try:
@@ -536,8 +536,8 @@ def _extract_capabilities(device: Any) -> dict[str, Any]:
             obs = device.observables
             if obs is not None:
                 props["num_supported_observables"] = len(obs)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get observables: %s", e)
 
     return props
 
@@ -750,8 +750,8 @@ def create_device_snapshot(
             )
             if arn:
                 backend_id = str(arn)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get device ARN: %s", e)
 
     elif sdk_frontend == "qiskit":
         try:
@@ -767,8 +767,8 @@ def create_device_snapshot(
                 bid = getattr(backend_obj, "backend_id", None)
                 if bid:
                     backend_id = str(bid() if callable(bid) else bid)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get backend info: %s", e)
 
     # Extract wire info
     try:
@@ -865,22 +865,26 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
 
     try:
         provider = _detect_execution_provider(device)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to detect execution provider: %s", e)
         provider = "local"
 
     try:
         sdk_frontend = _detect_sdk_frontend(device)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to detect SDK frontend: %s", e)
         sdk_frontend = "pennylane"
 
     try:
         backend_name = get_device_name(device)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get device name: %s", e)
         backend_name = "unknown"
 
     try:
         backend_type = _detect_backend_type(device, provider)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to detect backend type: %s", e)
         backend_type = "simulator"
 
     result: dict[str, Any] = {
@@ -900,8 +904,8 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
             )
             result["backend_id"] = str(arn) if arn else None
             result["backend_obj"] = getattr(device, "_device", None)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get device ARN: %s", e)
 
     elif sdk_frontend == "qiskit":
         try:
@@ -913,7 +917,7 @@ def resolve_pennylane_backend(device: Any) -> dict[str, Any] | None:
                 bid = getattr(backend, "backend_id", None)
                 if bid:
                     result["backend_id"] = str(bid() if callable(bid) else bid)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get backend info: %s", e)
 
     return result
