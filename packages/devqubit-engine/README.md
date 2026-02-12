@@ -2,7 +2,8 @@
 
 Core engine for devqubit experiment tracking. Provides storage, registry, run management, comparison, and CLI.
 
-> **Note**: Users should install `devqubit` (the meta-package) instead, which includes this package plus convenient extras.
+> [!IMPORTANT]
+> Users should install `devqubit` (the meta-package) instead, which includes this package plus convenient extras.
 
 ## Installation
 
