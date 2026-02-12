@@ -281,6 +281,7 @@ class BundleStore:
             try:
                 int(hex_part, 16)
             except ValueError:
+                logger.debug("Skipping non-hex digest: %s", hex_part[:24])
                 continue
 
             digest = f"sha256:{hex_part}"

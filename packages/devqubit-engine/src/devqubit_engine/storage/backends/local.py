@@ -151,7 +151,7 @@ class LocalStore:
             try:
                 os.close(fd)
             except OSError:
-                pass
+                logger.debug("fd already closed during cleanup")
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)
             raise
@@ -447,7 +447,7 @@ class LocalRegistry:
                 try:
                     self._local.conn.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close connection after rollback failure")
                 self._local.conn = None
             raise
 
@@ -992,6 +992,7 @@ class LocalRegistry:
                                 break
                         matched += 1
                 except Exception:
+                    logger.debug("Failed to load run %s during search", run_id)
                     continue
             return results
 
@@ -1011,6 +1012,7 @@ class LocalRegistry:
                         )
                         break
             except Exception:
+                logger.debug("Failed to load run %s during sorted search", run_id)
                 continue
 
         def sort_key(rec: RunRecord) -> Any:
@@ -1384,7 +1386,7 @@ class LocalRegistry:
             try:
                 conn.close()
             except Exception:
-                pass
+                logger.debug("Failed to close SQLite connection during cleanup")
             self._local.conn = None
 
     def close_all(self) -> None:
@@ -1398,7 +1400,7 @@ class LocalRegistry:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close SQLite connection during close_all")
             self._connections.clear()
         self._local = threading.local()
 

@@ -1036,6 +1036,7 @@ class GCSRegistry:
                                 break
                         matched += 1
                 except Exception:
+                    logger.debug("Failed to load run during search from GCS")
                     continue
             return results
 
@@ -1054,6 +1055,7 @@ class GCSRegistry:
                     rec.mark_finalized()
                     all_matches.append(rec)
             except Exception:
+                logger.debug("Failed to load run during sorted search from GCS")
                 continue
 
         def sort_key(rec: RunRecord) -> Any:
@@ -1292,7 +1294,7 @@ class GCSRegistry:
             try:
                 conn.close()
             except Exception:
-                pass
+                logger.debug("Failed to close index connection during cleanup")
             self._local.conn = None
 
     def close_all(self) -> None:
@@ -1306,7 +1308,7 @@ class GCSRegistry:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close index connection during close_all")
             self._connections.clear()
         self._local = threading.local()
 

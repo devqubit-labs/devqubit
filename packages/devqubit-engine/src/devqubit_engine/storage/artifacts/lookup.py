@@ -402,7 +402,7 @@ def list_artifacts(
             try:
                 size = store.get_size(art.digest)
             except Exception:
-                pass
+                logger.debug("Failed to get size for artifact %s", art.digest[:24])
 
         results.append(ArtifactInfo(ref=art, index=i, name=name, size=size))
 

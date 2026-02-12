@@ -161,8 +161,6 @@ class StorageURL:
     """
 
     def __init__(self, url: str) -> None:
-        import os
-
         # Treat empty / absolute / ~ paths as file:// paths
         if not url or url.startswith("/") or url.startswith("~"):
             url = f"file://{url}" if url else "file://"

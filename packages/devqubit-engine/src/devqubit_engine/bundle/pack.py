@@ -289,7 +289,7 @@ def pack_run(
             try:
                 tmp_path.unlink()
             except OSError:
-                pass
+                logger.debug("Failed to clean up temp file: %s", tmp_path)
 
     return PackResult(
         run_id=run_id,

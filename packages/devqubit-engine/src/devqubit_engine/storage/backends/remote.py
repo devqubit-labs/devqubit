@@ -1121,7 +1121,7 @@ class RemoteRegistry(RegistryProtocol):
         offset: int = 0,
         sort_by: str | None = None,
         descending: bool = True,
-    ) -> list["RunRecord"]:
+    ) -> list[RunRecord]:
         """
         Search runs using a query expression.
 

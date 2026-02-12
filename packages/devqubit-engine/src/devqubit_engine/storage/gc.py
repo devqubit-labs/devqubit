@@ -473,7 +473,9 @@ def prune_runs(
                     if run_time >= cutoff:
                         continue  # Run is not old enough
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug(
+                        "Failed to parse created_at for run %s: %s", run_id, created_at
+                    )
 
             if run_id:
                 to_prune.append(run_id)

@@ -25,6 +25,7 @@ groups
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import click
@@ -37,6 +38,9 @@ from devqubit_engine.cli._utils import (
     safe_get,
     truncate_id,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def register(cli: click.Group) -> None:
@@ -165,6 +169,7 @@ def list_runs(
                     if len(filtered_runs) >= limit:
                         break
             except Exception:
+                logger.debug("Failed to load run %s for tag filtering", run_id)
                 continue
         runs = filtered_runs
 

@@ -1120,6 +1120,7 @@ class S3Registry:
                                 break
                         matched += 1
                 except Exception:
+                    logger.debug("Failed to load run during search from S3")
                     continue
             return results
 
@@ -1138,6 +1139,7 @@ class S3Registry:
                     rec.mark_finalized()
                     all_matches.append(rec)
             except Exception:
+                logger.debug("Failed to load run during sorted search from S3")
                 continue
 
         def sort_key(rec: RunRecord) -> Any:
@@ -1371,7 +1373,7 @@ class S3Registry:
             try:
                 conn.close()
             except Exception:
-                pass
+                logger.debug("Failed to close index connection during cleanup")
             self._local.conn = None
 
     def close_all(self) -> None:
@@ -1385,7 +1387,7 @@ class S3Registry:
                 try:
                     conn.close()
                 except Exception:
-                    pass
+                    logger.debug("Failed to close index connection during close_all")
             self._connections.clear()
         self._local = threading.local()
 
