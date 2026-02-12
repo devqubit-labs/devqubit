@@ -192,7 +192,7 @@ uv lock --upgrade
 uv sync --locked --all-packages
 ```
 
-> **Tip:** If `uv sync --locked` fails, run `uv lock` and commit the updated lockfile.
+> **Tip:** If `uv sync --locked` fails, run `uv lock` and commit the updated lockfile. Only commit the updated lockfile when the resulting dependency changes are expected and agreed upon, and coordinate with maintainers (for example via PR review) before merging those changes.
 
 ## Reporting bugs
 
