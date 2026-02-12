@@ -47,7 +47,7 @@ def get_adapter_version() -> str:
             from importlib.metadata import version
 
             _adapter_version = version("devqubit-cirq")
-        except Exception:
+        except ImportError:
             _adapter_version = "unknown"
     return _adapter_version
 

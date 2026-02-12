@@ -130,8 +130,8 @@ def _extract_num_qubits(executor: Any) -> int | None:
         if metadata is not None and hasattr(metadata, "qubit_set"):
             return len(list(metadata.qubit_set))
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract num_qubits from device: %s", e)
 
     return None
 
@@ -227,11 +227,11 @@ def _extract_connectivity(executor: Any) -> list[tuple[int, int]] | None:
                         if idx1 is not None and idx2 is not None:
                             edges.append((idx1, idx2))
                     return edges if edges else None
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("Failed to parse qubit_pairs edges: %s", e)
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract connectivity: %s", e)
 
     return None
 
@@ -268,8 +268,8 @@ def _extract_native_gates(executor: Any) -> list[str] | None:
             if gates:
                 return [type(g).__name__ for g in gates]
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract native gates: %s", e)
 
     return None
 
@@ -315,8 +315,10 @@ def _build_raw_properties(executor: Any) -> dict[str, Any]:
                     try:
                         qubits = list(metadata.qubit_set)
                         raw_properties["qubit_labels"] = [str(q) for q in qubits]
-                    except Exception:
-                        pass
+                    except (AttributeError, TypeError) as e:
+                        logger.debug(
+                            "Failed to extract qubit_labels from metadata: %s", e
+                        )
 
                 # Gate set info
                 if hasattr(metadata, "gateset"):
@@ -326,8 +328,8 @@ def _build_raw_properties(executor: Any) -> dict[str, Any]:
                             raw_properties["gateset"] = [
                                 type(g).__name__ for g in gateset.gates
                             ]
-                    except Exception:
-                        pass
+                    except (AttributeError, TypeError) as e:
+                        logger.debug("Failed to extract gateset: %s", e)
 
             # Qubits from device directly
             if hasattr(device, "qubits"):
@@ -335,11 +337,13 @@ def _build_raw_properties(executor: Any) -> dict[str, Any]:
                     qubits = list(device.qubits)
                     if "qubit_labels" not in raw_properties:
                         raw_properties["qubit_labels"] = [str(q) for q in qubits]
-                except Exception:
-                    pass
+                except (AttributeError, TypeError) as e:
+                    logger.debug(
+                        "Failed to extract qubit_labels from device.qubits: %s", e
+                    )
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to build raw device properties: %s", e)
 
     # Noise model info (DensityMatrixSimulator, etc.)
     try:
@@ -347,8 +351,8 @@ def _build_raw_properties(executor: Any) -> dict[str, Any]:
         if noise_model is not None:
             raw_properties["has_noise_model"] = True
             raw_properties["noise_model_class"] = noise_model.__class__.__name__
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract noise model info: %s", e)
 
     # Simulator-specific settings
     try:
@@ -362,8 +366,8 @@ def _build_raw_properties(executor: Any) -> dict[str, Any]:
         if seed is not None:
             raw_properties["seed"] = seed if isinstance(seed, int) else str(seed)
 
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract seed: %s", e)
 
     return raw_properties
 
@@ -456,7 +460,8 @@ def create_device_snapshot(
 
     try:
         sdk_version = cirq_version()
-    except Exception:
+    except (ImportError, AttributeError) as e:
+        logger.debug("Failed to get cirq version: %s", e)
         sdk_version = "unknown"
 
     # Log raw_properties as artifact if tracker is provided

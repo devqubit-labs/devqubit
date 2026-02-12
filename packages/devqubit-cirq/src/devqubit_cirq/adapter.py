@@ -517,7 +517,8 @@ def _finalize_envelope_with_result(
         try:
             try:
                 result_payload = to_jsonable(result)
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to serialize result, falling back to repr: %s", e)
                 result_payload = {"repr": repr(result)[:2000]}
 
             raw_result_ref = tracker.log_json(
@@ -699,8 +700,8 @@ class TrackedSimulator:
                     first_param = next(iter(params), None)
                     if first_param is not None and hasattr(first_param, "param_dict"):
                         resolver = first_param
-                except Exception:
-                    pass
+                except (TypeError, StopIteration, AttributeError) as e:
+                    logger.debug("Failed to extract resolver from params: %s", e)
 
         structural_hash, parametric_hash = compute_circuit_hashes(
             circuit_list, resolver
@@ -770,8 +771,8 @@ class TrackedSimulator:
         try:
             device_snapshot = self.tracker.record.get("device_snapshot", {})
             physical_provider = device_snapshot.get("provider", "local")
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get provider from device_snapshot: %s", e)
 
         # Set tracker tags and params
         self.tracker.set_tag("backend_name", simulator_name)
@@ -1146,8 +1147,8 @@ class CirqAdapter:
 
             if isinstance(executor, cirq.Sampler):
                 return True
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.debug("Optional import unavailable: %s", e)
 
         # Fallback: duck-typing for 3rd-party Cirq-compatible samplers
         if not hasattr(executor, "run"):
@@ -1179,7 +1180,8 @@ class CirqAdapter:
 
         try:
             physical_provider = _detect_execution_provider(simulator)
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to detect execution provider: %s", e)
             physical_provider = "local"
 
         return {

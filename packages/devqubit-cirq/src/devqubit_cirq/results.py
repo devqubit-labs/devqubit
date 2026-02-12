@@ -10,12 +10,16 @@ and normalizing results to devqubit's canonical format.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
 
 # Use CountsFormat from UEC for format metadata
 from devqubit_engine.uec.models.result import CountsFormat
+
+
+logger = logging.getLogger(__name__)
 
 
 # Pre-built CountsFormat dict – immutable metadata, no need to rebuild per call.
@@ -48,7 +52,8 @@ def get_result_measurements(result: Any) -> dict[str, Any]:
     try:
         meas = getattr(result, "measurements", None)
         return meas if isinstance(meas, dict) else {}
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get result measurements: %s", e)
         return {}
 
 
@@ -175,7 +180,8 @@ def _is_result_like(obj: Any) -> bool:
     """
     try:
         return isinstance(getattr(obj, "measurements", None), dict)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to check result-like object: %s", e)
         return False
 
 
@@ -209,8 +215,8 @@ def _extract_params(result: Any) -> dict[str, Any] | None:
         # Fallback: try to convert directly
         if hasattr(params, "items"):
             return {str(k): _to_serializable(v) for k, v in params.items()}
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to extract params: %s", e)
 
     return None
 
@@ -241,12 +247,14 @@ def _process_result(
     try:
         meas = get_result_measurements(result)
         counts, keys, nbits, key_bit_ranges = counts_from_measurements(meas)
-    except Exception:
+    except (TypeError, ValueError, KeyError) as e:
+        logger.debug("Failed to extract counts from measurements: %s", e)
         counts, keys, nbits = {}, [], 0
 
     try:
         params = _extract_params(result)
-    except Exception:
+    except (TypeError, ValueError, AttributeError) as e:
+        logger.debug("Failed to extract params from result: %s", e)
         params = None
 
     exp: dict[str, Any] = {
@@ -324,8 +332,8 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
     if _is_result_like(results):
         try:
             experiments.append(_process_result(results, 0))
-        except Exception:
-            pass
+        except (TypeError, ValueError, AttributeError) as e:
+            logger.debug("Failed to process single result: %s", e)
         return {
             "experiments": experiments,
             "format": dict(_CIRQ_COUNTS_FORMAT),
@@ -344,8 +352,8 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
                         experiments.append(
                             _process_result(r, idx, batch_idx, sweep_idx)
                         )
-                    except Exception:
-                        pass
+                    except (TypeError, ValueError, AttributeError) as e:
+                        logger.debug("Failed to process batch result [%d]: %s", idx, e)
                     idx += 1
             return {
                 "experiments": experiments,
@@ -356,8 +364,8 @@ def normalize_counts_payload(results: Any) -> dict[str, Any]:
         for i, r in enumerate(results):
             try:
                 experiments.append(_process_result(r, i))
-            except Exception:
-                pass
+            except (TypeError, ValueError, AttributeError) as e:
+                logger.debug("Failed to process result [%d]: %s", i, e)
 
     return {
         "experiments": experiments,

@@ -10,6 +10,7 @@ for Google Cirq circuits.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from typing import Any
 
@@ -24,6 +25,9 @@ from devqubit_engine.circuit.models import (
 )
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
 from devqubit_engine.circuit.summary import CircuitSummary
+
+
+logger = logging.getLogger(__name__)
 
 
 # Gate classification table for Cirq gates
@@ -238,7 +242,8 @@ def serialize_openqasm3(circuit: Any, *, name: str = "", index: int = 0) -> Circ
             if isinstance(src, str) and src.strip():
                 break
             src = None
-        except TypeError:
+        except TypeError as e:
+            logger.debug("Suppressed error: %s", e)
             continue
         except Exception as e:
             raise SerializerError(f"OpenQASM 3.0 serialization failed: {e}") from e
@@ -284,8 +289,8 @@ def circuit_to_text(circuit: Any, index: int = 0) -> str:
         to_text = getattr(circuit, "to_text_diagram", None)
         if callable(to_text):
             return f"{header}\n{to_text()}"
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to render circuit diagram: %s", e)
     return f"{header}\n{repr(circuit)}"
 
 
@@ -540,14 +545,15 @@ def summarize_cirq_circuit(circuit: Any) -> CircuitSummary:
         try:
             if cirq.is_parameterized(gate):
                 has_params = True
-        except Exception:
-            pass
+        except (TypeError, AttributeError) as e:
+            logger.debug("Failed to check parameterized gate: %s", e)
 
     stats = _classifier.classify_counts(dict(gate_counts))
 
     try:
         depth = len(circuit)
-    except Exception:
+    except (TypeError, AttributeError) as e:
+        logger.debug("Failed to get circuit depth: %s", e)
         depth = 0
 
     return CircuitSummary(

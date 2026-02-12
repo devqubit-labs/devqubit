@@ -72,15 +72,15 @@ def _qubit_to_index(qubit: Any, qubit_map: dict[str, int] | None = None) -> int:
     if hasattr(qubit, "x"):
         try:
             return int(qubit.x)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get LineQubit index: %s", e)
 
     # GridQubit: has .row and .col attributes
     if hasattr(qubit, "row") and hasattr(qubit, "col"):
         try:
             return int(qubit.row) * 1000 + int(qubit.col)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get GridQubit index: %s", e)
 
     # NamedQubit or other: use deterministic mapping
     qubit_str = str(qubit)
@@ -165,8 +165,8 @@ def _get_gate_params(gate: Any) -> list[tuple[str, Any]]:
                 if val is not None and _is_symbolic(val):
                     params.append((attr, val))
             return params
-    except (ImportError, TypeError, AttributeError):
-        pass
+    except (ImportError, TypeError, AttributeError) as e:
+        logger.debug("Attribute access failed: %s", e)
 
     # For non-parameterized gates, only include non-default values
     # from gates that REQUIRE user-specified parameters
@@ -218,8 +218,8 @@ def _is_symbolic(value: Any) -> bool:
         try:
             if value.free_symbols:
                 return True
-        except (TypeError, AttributeError):
-            pass
+        except (TypeError, AttributeError) as e:
+            logger.debug("Suppressed error: %s", e)
 
     # Check for Cirq Symbol
     type_name = type(value).__name__.lower()
@@ -261,7 +261,8 @@ def _build_qubit_map(circuit: Any) -> dict[str, int]:
     """
     try:
         all_qubits = list(circuit.all_qubits())
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get circuit qubits for qubit map: %s", e)
         return {}
 
     if not all_qubits:
@@ -283,16 +284,16 @@ def _build_qubit_map(circuit: Any) -> dict[str, int]:
             try:
                 qubit_map[qubit_str] = int(qubit.x)
                 continue
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Int conversion failed: %s", e)
 
         # GridQubit: use row * 1000 + col
         if hasattr(qubit, "row") and hasattr(qubit, "col"):
             try:
                 qubit_map[qubit_str] = int(qubit.row) * 1000 + int(qubit.col)
                 continue
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Int conversion failed: %s", e)
 
         # NamedQubit or other: use deterministic sequential index
         qubit_map[qubit_str] = named_offset + i
@@ -411,8 +412,8 @@ def _convert_operation(
             if resolver is not None:
                 try:
                     resolved_value = resolver.value_of(param_value)
-                except Exception:
-                    pass
+                except (TypeError, ValueError, KeyError) as e:
+                    logger.debug("Failed to resolve param %r: %s", param_value, e)
 
             if resolved_value is not None:
                 try:
@@ -474,7 +475,8 @@ def _get_num_qubits(
             indices = [_qubit_to_index(q, qubit_map) for q in all_qubits]
             return max(indices) + 1
         return 0
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to count qubits: %s", e)
         return 0
 
 
