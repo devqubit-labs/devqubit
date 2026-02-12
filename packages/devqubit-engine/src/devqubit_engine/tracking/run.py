@@ -414,7 +414,7 @@ class Run:
             buf = self._metric_buffer
             self._metric_buffer = []
 
-        # Flush buffered metric points
+        # Flush buffered metric points to the metric_points table
         if buf and hasattr(self._registry, "save_metric_points"):
             try:
                 self._registry.save_metric_points(buf)
@@ -1224,7 +1224,7 @@ class Run:
 
             # Reconstruct metric_series from the metric_points table
             # so the finalized record JSON is complete (backward compat,
-            # export, remote backends). During the run this was kept
+            # export, remote backends).  During the run this was kept
             # out of the record to avoid O(n) JSON rewrites on flush.
             if hasattr(self._registry, "load_metric_series"):
                 series = self._registry.load_metric_series(self._run_id)

@@ -166,7 +166,13 @@ class TestHistoryReadPath:
 
     def test_iter_metric_points_full(self, store, registry, qml_config):
         """iter_metric_points returns all points in step order."""
-        ids = self._create_runs(store, registry, qml_config, n_runs=1, n_steps=50)
+        ids = self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=1,
+            n_steps=50,
+        )
 
         pts = list(iter_metric_points(registry, ids[0], "train/loss"))
 
@@ -177,7 +183,13 @@ class TestHistoryReadPath:
 
     def test_iter_metric_points_range(self, store, registry, qml_config):
         """Step range filtering works."""
-        ids = self._create_runs(store, registry, qml_config, n_runs=1, n_steps=100)
+        ids = self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=1,
+            n_steps=100,
+        )
 
         pts = list(
             iter_metric_points(
@@ -195,7 +207,13 @@ class TestHistoryReadPath:
 
     def test_long_format_multi_run(self, store, registry, qml_config):
         """metric_history_long returns overlay-ready long-format rows."""
-        self._create_runs(store, registry, qml_config, n_runs=3, n_steps=50)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=3,
+            n_steps=50,
+        )
 
         rows = metric_history_long(
             registry,
@@ -210,7 +228,13 @@ class TestHistoryReadPath:
 
     def test_long_format_downsampling(self, store, registry, qml_config):
         """max_points caps total returned rows."""
-        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=200)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=2,
+            n_steps=200,
+        )
 
         rows = metric_history_long(
             registry,
@@ -224,9 +248,19 @@ class TestHistoryReadPath:
     def test_long_format_to_dataframe(self, store, registry, qml_config):
         """to_dataframe converts rows to pandas successfully."""
         pytest.importorskip("pandas")
-        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=30)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=2,
+            n_steps=30,
+        )
 
-        rows = metric_history_long(registry, project="qnn", keys=["val/acc"])
+        rows = metric_history_long(
+            registry,
+            project="qnn",
+            keys=["val/acc"],
+        )
         df = to_dataframe(rows)
 
         assert len(df) == 2 * 30
@@ -368,77 +402,5 @@ class TestMetricPointsTable:
 
         registry.delete(rid)
 
-        # iter_metric_points falls back to load(), which raises RunNotFoundError
-        from devqubit_engine.storage.errors import RunNotFoundError
-
-        with pytest.raises(RunNotFoundError):
-            list(registry.iter_metric_points(rid, "x"))
-
-
-class TestBackwardCompat:
-    """Records written before metric_points table still work."""
-
-    def test_iter_falls_back_to_record_json(self, registry):
-        """When metric_points table has no rows, falls back to record JSON."""
-        # Manually insert a record with metric_series but no table rows
-        old_record = {
-            "schema": "devqubit.run/1.0",
-            "run_id": "LEGACY001",
-            "created_at": "2025-06-01T00:00:00Z",
-            "project": {"name": "old"},
-            "adapter": "manual",
-            "info": {"status": "FINISHED"},
-            "data": {
-                "params": {},
-                "metrics": {"loss": 0.05},
-                "tags": {},
-                "metric_series": {
-                    "loss": [
-                        {"value": 1.0, "step": 0, "timestamp": "2025-06-01T00:00:00Z"},
-                        {"value": 0.5, "step": 5, "timestamp": "2025-06-01T00:00:01Z"},
-                        {
-                            "value": 0.05,
-                            "step": 10,
-                            "timestamp": "2025-06-01T00:00:02Z",
-                        },
-                    ],
-                },
-            },
-            "artifacts": [],
-        }
-        registry.save(old_record)
-
-        # iter_metric_points should fall back to record JSON
-        pts = list(registry.iter_metric_points("LEGACY001", "loss"))
-        assert len(pts) == 3
-        assert pts[0]["step"] == 0
-        assert pts[2]["step"] == 10
-
-    def test_history_module_reads_legacy_records(self, registry):
-        """metric_history_long works with legacy records too."""
-        for rid in ("LEG_A", "LEG_B"):
-            registry.save(
-                {
-                    "schema": "devqubit.run/1.0",
-                    "run_id": rid,
-                    "created_at": "2025-06-01T00:00:00Z",
-                    "project": {"name": "legacy"},
-                    "adapter": "manual",
-                    "info": {"status": "FINISHED"},
-                    "data": {
-                        "params": {},
-                        "metrics": {"acc": 0.9},
-                        "tags": {},
-                        "metric_series": {
-                            "acc": [
-                                {"value": 0.5, "step": 0, "timestamp": "t0"},
-                                {"value": 0.9, "step": 1, "timestamp": "t1"},
-                            ],
-                        },
-                    },
-                    "artifacts": [],
-                }
-            )
-
-        rows = metric_history_long(registry, project="legacy", keys=["acc"])
-        assert len(rows) == 4  # 2 runs x 2 points
+        # metric_points rows are gone
+        assert len(list(registry.iter_metric_points(rid, "x"))) == 0

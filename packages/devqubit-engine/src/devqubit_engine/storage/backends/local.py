@@ -699,27 +699,13 @@ class LocalRegistry:
             + " ORDER BY step"
         )
 
-        found = False
         with self._get_connection() as conn:
             for row in conn.execute(sql, params):
-                found = True
                 yield {
                     "step": row["step"],
                     "timestamp": row["timestamp"],
                     "value": row["value"],
                 }
-
-        # Fallback: read from record JSON (backward compat)
-        if not found:
-            rec = self.load(run_id)
-            series = rec.metric_series.get(key, [])
-            for pt in sorted(series, key=lambda p: p.get("step", 0)):
-                s = pt.get("step", 0)
-                if start_step is not None and s < start_step:
-                    continue
-                if end_step is not None and s > end_step:
-                    break
-                yield pt
 
     def load_metric_series(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
         """

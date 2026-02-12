@@ -6,22 +6,6 @@ Metric history read-path for time-series data.
 
 Provides streaming and tabular access to logged metric series, suitable
 for plotting overlays, long-format exports, and downstream analytics.
-
-The core API is iterator-based (no heavy dependencies).  Optional
-``to_dataframe()`` converts to ``pandas.DataFrame`` for convenience.
-
-Examples
---------
-Iterate over a single metric's history:
-
->>> from devqubit_engine.tracking.history import iter_metric_points
->>> for pt in iter_metric_points(registry, run_id, "train/loss"):
-...     print(pt["step"], pt["value"])
-
-Build a long-format table across multiple runs:
-
->>> from devqubit_engine.tracking.history import metric_history_long
->>> rows = metric_history_long(registry, run_ids=["abc", "def"], keys=["loss"])
 """
 
 from __future__ import annotations
@@ -48,11 +32,8 @@ def iter_metric_points(
     """
     Yield metric points for *key* from a single run.
 
-    Points are returned in step-ascending order.  When the registry
-    exposes a ``iter_metric_points`` method (e.g. ``LocalRegistry``
-    with the ``metric_points`` table), that fast-path is used.
-    Otherwise, the full ``metric_series`` from the run record is
-    iterated.
+    Points are returned in step-ascending order from the registry's
+    ``metric_points`` table.
 
     Parameters
     ----------
@@ -72,28 +53,12 @@ def iter_metric_points(
     dict
         ``{"value": float, "step": int, "timestamp": str}``
     """
-    # Fast path: dedicated metric_points table
-    if hasattr(registry, "iter_metric_points"):
-        yield from registry.iter_metric_points(
-            run_id,
-            key,
-            start_step=start_step,
-            end_step=end_step,
-        )
-        return
-
-    # Fallback: read from record JSON
-    record = registry.load(run_id)
-    series = record.metric_series.get(key, [])
-    sorted_pts = sorted(series, key=lambda p: p.get("step", 0))
-
-    for pt in sorted_pts:
-        s = pt.get("step", 0)
-        if start_step is not None and s < start_step:
-            continue
-        if end_step is not None and s > end_step:
-            break
-        yield pt
+    yield from registry.iter_metric_points(
+        run_id,
+        key,
+        start_step=start_step,
+        end_step=end_step,
+    )
 
 
 def metric_history_long(
@@ -162,15 +127,7 @@ def metric_history_long(
     for rid in run_ids:
         record = registry.load(rid)
         proj_name = record.project
-
-        # Prefer metric_points table (fast, works for in-progress runs).
-        # Fall back to record JSON for legacy records.
-        if hasattr(registry, "load_metric_series"):
-            series_dict = registry.load_metric_series(rid)
-            if not series_dict:
-                series_dict = record.metric_series
-        else:
-            series_dict = record.metric_series
+        series_dict = registry.load_metric_series(rid)
 
         for mkey, points in series_dict.items():
             if keys_set and mkey not in keys_set:
