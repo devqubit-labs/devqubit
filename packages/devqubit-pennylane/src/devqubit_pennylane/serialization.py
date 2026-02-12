@@ -133,6 +133,56 @@ def is_pennylane_tape(obj: Any) -> bool:
         return False
 
 
+def _param_to_jsonable(p: Any) -> Any:
+    """
+    Convert a single parameter to a JSON-safe value.
+
+    Handles scalars, 0-d arrays, Autograd ArrayBox, and batched
+    (multi-element) arrays.  Batched arrays are summarised instead of
+    being dumped verbatim.
+
+    Returns
+    -------
+    float | dict
+        A float for scalar values, or a summary dict for batched params.
+    """
+    # 1. Plain Python scalar
+    if isinstance(p, (int, float)):
+        return float(p)
+
+    # 2. Try .item() — works for 0-d numpy/torch/jax arrays
+    if hasattr(p, "item"):
+        try:
+            return float(p.item())
+        except (TypeError, ValueError, RuntimeError):
+            pass
+
+    # 3. Autograd ArrayBox — extract wrapped _value
+    if hasattr(p, "_value"):
+        try:
+            val = p._value
+            if hasattr(val, "item"):
+                return float(val.item())
+            return float(val)
+        except (TypeError, ValueError):
+            pass
+
+    # 4. Direct float() — catches remaining scalar-like objects
+    try:
+        return float(p)
+    except (TypeError, ValueError):
+        pass
+
+    # 5. Multi-element array (batched parameters) — summarise
+    shape = getattr(p, "shape", None)
+    if shape is not None:
+        dtype = str(getattr(p, "dtype", "unknown"))
+        return {"batched": True, "shape": list(shape), "dtype": dtype}
+
+    # 6. Last resort — truncated string
+    return str(p)[:120]
+
+
 def _serialize_operation(op: Any) -> dict[str, Any]:
     """Serialize a single operation to dict."""
     op_dict: dict[str, Any] = {
@@ -140,10 +190,7 @@ def _serialize_operation(op: Any) -> dict[str, Any]:
         "wires": list(op.wires),
     }
     if op.parameters:
-        try:
-            op_dict["parameters"] = [float(p) for p in op.parameters]
-        except (TypeError, ValueError):
-            op_dict["parameters"] = [str(p) for p in op.parameters]
+        op_dict["parameters"] = [_param_to_jsonable(p) for p in op.parameters]
     return op_dict
 
 
@@ -177,9 +224,122 @@ def _serialize_measurement(m: Any) -> dict[str, Any]:
     return m_dict
 
 
+def _format_param_text(p: Any) -> str:
+    """Format a single parameter for text display."""
+    if isinstance(p, (int, float)):
+        return f"{p:.4f}" if isinstance(p, float) else str(p)
+
+    # 0-d array / ArrayBox => scalar
+    if hasattr(p, "item"):
+        try:
+            return f"{float(p.item()):.4f}"
+        except (TypeError, ValueError, RuntimeError):
+            pass
+    if hasattr(p, "_value"):
+        try:
+            val = p._value
+            v = float(val.item()) if hasattr(val, "item") else float(val)
+            return f"{v:.4f}"
+        except (TypeError, ValueError):
+            pass
+    try:
+        return f"{float(p):.4f}"
+    except (TypeError, ValueError):
+        pass
+
+    # Batched array => summary
+    shape = getattr(p, "shape", None)
+    if shape is not None:
+        return f"<batch {list(shape)}>"
+    return str(p)[:60]
+
+
+def _strip_param_definitions(diagram: str) -> str:
+    """
+    Remove parameter definition blocks (M0 = ...) from tape_text output.
+
+    Keeps only the wire diagram lines.
+    """
+    lines = diagram.splitlines()
+    result: list[str] = []
+    in_param_block = False
+    for line in lines:
+        # Detect start of parameter definition block (e.g. "M0 = ")
+        stripped = line.strip()
+        if (
+            stripped
+            and len(stripped) >= 3
+            and stripped[0] == "M"
+            and "=" in stripped[:6]
+        ):
+            # Check pattern: M<digits> = or M<digits> =
+            prefix = stripped.split("=", 1)[0].strip()
+            if prefix[0] == "M" and prefix[1:].isdigit():
+                in_param_block = True
+                continue
+        if in_param_block:
+            # Parameter blocks contain numpy-style arrays: lines starting
+            # with [ or containing floats in scientific notation
+            if (
+                stripped.startswith("[")
+                or stripped.startswith("-")
+                or stripped.startswith("0")
+                or (stripped and stripped[0].isdigit())
+            ):
+                continue
+            # Continuation lines with just numbers
+            if stripped.endswith("]"):
+                in_param_block = False
+                continue
+            # Empty line ends param block
+            if not stripped:
+                in_param_block = False
+                # Don't add extra blank line
+                continue
+            # Non-array line — we're past the param block
+            in_param_block = False
+        result.append(line)
+    # Strip trailing blank lines
+    while result and not result[-1].strip():
+        result.pop()
+    return "\n".join(result)
+
+
+def _tape_to_diagram(tape: Any) -> str | None:
+    """
+    Render a tape as an ASCII wire diagram via PennyLane's drawer.
+
+    Returns None if PennyLane is unavailable or drawing fails.
+    Parameter definition blocks (M0 = ...) are stripped — only the
+    wire diagram is kept.
+    """
+    try:
+        import pennylane as qml
+
+        # tape_text is the correct API for tapes (qml.draw is for QNodes)
+        tape_text_fn = getattr(getattr(qml, "drawer", None), "tape_text", None)
+        if tape_text_fn is not None:
+            text = tape_text_fn(tape)
+            if text and text.strip():
+                return _strip_param_definitions(text)
+
+        # Fallback: older PennyLane versions may have it at top level
+        tape_text_fn = getattr(qml, "tape_text", None)
+        if tape_text_fn is not None:
+            text = tape_text_fn(tape)
+            if text and text.strip():
+                return _strip_param_definitions(text)
+    except Exception:
+        pass
+    return None
+
+
 def tape_to_text(tape: Any, index: int = 0) -> str:
     """
-    Convert a PennyLane tape to human-readable text format.
+    Convert a PennyLane tape to human-readable diagram.
+
+    Uses ``qml.draw`` for a proper ASCII wire diagram when available,
+    falling back to a compact operation listing.
 
     Parameters
     ----------
@@ -193,47 +353,51 @@ def tape_to_text(tape: Any, index: int = 0) -> str:
     str
         Human-readable tape diagram.
     """
-    lines = [f"=== Tape {index} ==="]
+    header_lines = [f"=== Tape {index} ==="]
 
     # Wires info
-    lines.append(f"Wires: {list(tape.wires)}")
+    header_lines.append(f"Wires: {list(tape.wires)}")
 
     # Shots info using shared utility
     shots_info = extract_shots_info(tape)
     if shots_info.analytic:
-        lines.append("Shots: None (analytic)")
+        header_lines.append("Shots: None (analytic)")
     else:
-        lines.append(f"Shots: {shots_info.total_shots}")
+        header_lines.append(f"Shots: {shots_info.total_shots}")
         if shots_info.shot_vector:
-            lines.append(f"Shot vector: {shots_info.shot_vector}")
+            header_lines.append(f"Shot vector: {shots_info.shot_vector}")
 
-    # Operations
-    lines.append("")
-    lines.append("Operations:")
+    # Try native qml.draw first
+    diagram = _tape_to_diagram(tape)
+    if diagram:
+        header_lines.append("")
+        header_lines.append(diagram)
+        return "\n".join(header_lines)
+
+    # Fallback: compact operation listing with safe param formatting
+    header_lines.append("")
+    header_lines.append("Operations:")
     for op in tape.operations:
         params_str = ""
         if op.parameters:
-            try:
-                params_str = f"({', '.join(f'{p:.4f}' if isinstance(p, float) else str(p) for p in op.parameters)})"
-            except Exception:
-                params_str = f"({op.parameters})"
-        lines.append(f"  {op.name}{params_str} @ wires={list(op.wires)}")
+            parts = [_format_param_text(p) for p in op.parameters]
+            params_str = f"({', '.join(parts)})"
+        header_lines.append(f"  {op.name}{params_str} @ wires={list(op.wires)}")
 
-    # Measurements
-    lines.append("")
-    lines.append("Measurements:")
+    header_lines.append("")
+    header_lines.append("Measurements:")
     for m in tape.measurements:
         m_type = type(m).__name__
         obs_str = f" of {m.obs}" if hasattr(m, "obs") and m.obs else ""
         wires_str = f" @ wires={list(m.wires)}" if m.wires else ""
-        lines.append(f"  {m_type}{obs_str}{wires_str}")
+        header_lines.append(f"  {m_type}{obs_str}{wires_str}")
 
-    return "\n".join(lines)
+    return "\n".join(header_lines)
 
 
 def tapes_to_text(tapes: list[Any]) -> str:
     """
-    Convert multiple PennyLane tapes to human-readable text format.
+    Convert multiple PennyLane tapes to human-readable diagrams.
 
     Parameters
     ----------

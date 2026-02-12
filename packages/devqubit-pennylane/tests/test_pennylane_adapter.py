@@ -227,7 +227,7 @@ class TestTrackedExecution:
         artifact_kinds = {a.kind for a in loaded.artifacts}
 
         assert "pennylane.tapes.json" in artifact_kinds
-        assert "pennylane.tapes.txt" in artifact_kinds
+        assert "pennylane.tapes.diagram" in artifact_kinds
         assert "results" in loaded.record
 
     def test_expval_tracking(self, store, registry, default_qubit):

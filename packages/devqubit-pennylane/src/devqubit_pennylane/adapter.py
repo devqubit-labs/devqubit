@@ -120,7 +120,7 @@ def _log_tapes(
 
     try:
         ref = tracker.log_bytes(
-            kind="pennylane.tapes.txt",
+            kind="pennylane.tapes.diagram",
             data=tapes_to_text(tapes).encode("utf-8"),
             media_type="text/plain; charset=utf-8",
             role="program",
@@ -138,6 +138,45 @@ def _log_tapes(
         pass
 
     return artifacts
+
+
+def _unwrap_result(obj: Any) -> Any:
+    """
+    Recursively unwrap PennyLane/autograd result values to plain Python types.
+
+    Handles ArrayBox, numpy arrays/scalars, and nested lists/tuples so that
+    ``to_jsonable`` receives only standard Python objects.
+    """
+    # Autograd ArrayBox → unwrap _value and recurse
+    if hasattr(obj, "_value"):
+        return _unwrap_result(obj._value)
+
+    # numpy scalar → Python float/int
+    try:
+        import numpy as np
+
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+    except ImportError:
+        pass
+
+    # 0-d tensor with .item()
+    if hasattr(obj, "item") and not isinstance(obj, (list, tuple, dict)):
+        try:
+            return obj.item()
+        except (TypeError, ValueError, RuntimeError):
+            pass
+
+    # Recurse into sequences
+    if isinstance(obj, (list, tuple)):
+        unwrapped = [_unwrap_result(v) for v in obj]
+        return type(obj)(unwrapped)
+
+    return obj
 
 
 def _log_results(
@@ -178,10 +217,13 @@ def _log_results(
     # Log raw results (even if None for failed executions)
     raw_result_ref = None
     try:
+        # Unwrap autograd/numpy objects before serialization so
+        # to_jsonable receives plain Python types (not ArrayBox).
+        unwrapped = _unwrap_result(results) if results is not None else None
         raw_result_ref = tracker.log_json(
             name="results",
             obj={
-                "results": to_jsonable(results) if results is not None else None,
+                "results": to_jsonable(unwrapped) if unwrapped is not None else None,
                 "num_circuits": num_circuits,
                 "result_type": result_type,
                 "success": success,
