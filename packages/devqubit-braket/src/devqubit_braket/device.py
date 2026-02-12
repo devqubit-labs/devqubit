@@ -67,7 +67,7 @@ def _parse_qubit_key(qubits_key: str) -> list[int]:
     try:
         cleaned = qubits_key.translate(str.maketrans("()-[]", ",,,,,", " "))
         return [int(t) for t in cleaned.split(",") if t]
-    except Exception:
+    except (ValueError, TypeError):
         return []
 
 
@@ -134,7 +134,7 @@ def extract_calibration(device: Any) -> DeviceCalibration | None:
     """
     try:
         props_obj = getattr(device, "properties", None)
-    except Exception:
+    except (AttributeError, TypeError):
         return None
 
     props = obj_to_dict(props_obj)
@@ -159,7 +159,7 @@ def extract_calibration(device: Any) -> DeviceCalibration | None:
         for q_key, q_entry in oneq_props.items():
             try:
                 q = int(q_key)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
 
             entries = _extract_fidelity_entries(
@@ -206,7 +206,7 @@ def extract_calibration(device: Any) -> DeviceCalibration | None:
                 qubits_out.append(
                     QubitCalibration(qubit=q, gate_error_1q=float(median(errs)))
                 )
-            except Exception:
+            except (ValueError, TypeError):
                 qubits_out.append(QubitCalibration(qubit=q))
 
     cal = DeviceCalibration(
@@ -255,7 +255,7 @@ def _detect_physical_provider(device: Any) -> str:
             arn_str = str(arn() if callable(arn) else arn).lower()
             if "aws" in arn_str or "braket" in arn_str:
                 return "aws_braket"
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     try:
@@ -264,7 +264,7 @@ def _detect_physical_provider(device: Any) -> str:
             device_type_str = str(device_type).lower()
             if "simulator" in device_type_str and "aws" not in str(module_name):
                 return "local"
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     return "aws_braket"
@@ -297,14 +297,14 @@ def _resolve_backend_type(device: Any) -> str:
                 return "simulator"
             if "qpu" in device_type_str:
                 return "hardware"
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     try:
         arn = getattr(device, "arn", None)
         if arn and "simulator" in str(arn).lower():
             return "simulator"
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     return "hardware" if "awsdevice" in class_name else "simulator"
@@ -339,7 +339,7 @@ def _extract_native_gates(
         ng = get_nested(props_obj, ("paradigm", "nativeGateSet"))
         if isinstance(ng, list) and ng:
             return [str(x) for x in ng]
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     if isinstance(props_dict, dict):
@@ -399,13 +399,13 @@ def _extract_topology(
 
             if num_qubits is not None or connectivity is not None:
                 return num_qubits, connectivity
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         pass
 
     # 2) Fallback: parse properties
     try:
         props_obj = getattr(device, "properties", None)
-    except Exception:
+    except (AttributeError, TypeError):
         props_obj = None
 
     qc = get_nested(props_obj, ("paradigm", "qubitCount"))
@@ -414,7 +414,7 @@ def _extract_topology(
     if qc is not None:
         try:
             num_qubits = int(qc)
-        except Exception:
+        except (ValueError, TypeError):
             pass
 
     # fullyConnected flag - if true, don't expand edges
@@ -434,13 +434,13 @@ def _extract_topology(
         for u, nbrs in cg.items():
             try:
                 ui = int(u)
-            except Exception:
+            except (ValueError, TypeError):
                 continue
             if isinstance(nbrs, list):
                 for v in nbrs:
                     try:
                         edge_set.add((ui, int(v)))
-                    except Exception:
+                    except (ValueError, TypeError):
                         continue
         if edge_set:
             connectivity = sorted(edge_set)
@@ -466,7 +466,7 @@ def _extract_backend_id(device: Any) -> str | None:
         arn = getattr(device, "arn", None)
         if arn:
             return str(arn() if callable(arn) else arn)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
     return None
 
@@ -503,7 +503,7 @@ def _build_raw_properties(
         device_type = getattr(device, "type", None)
         if device_type is not None:
             raw_properties["device_type"] = str(device_type)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     try:
@@ -511,14 +511,14 @@ def _build_raw_properties(
             parts = arn.split("/")
             if len(parts) >= 2:
                 raw_properties["provider_name"] = parts[1]
-    except Exception:
+    except (AttributeError, TypeError, IndexError):
         pass
 
     try:
         status = getattr(device, "status", None)
         if status is not None:
             raw_properties["status"] = str(status)
-    except Exception:
+    except (AttributeError, TypeError):
         pass
 
     if props_dict:

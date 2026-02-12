@@ -39,6 +39,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pandas as pd
+
 
 __all__ = [
     # Run loading
@@ -67,7 +69,6 @@ __all__ = [
 
 
 if TYPE_CHECKING:
-    import pandas as pd
     from devqubit_engine.storage.types import (
         BaselineInfo,
         RegistryProtocol,
@@ -641,7 +642,7 @@ def runs_to_dataframe(
 
     Returns
     -------
-    pandas.DataFrame
+    pd.DataFrame
         One row per run.
 
     Examples
