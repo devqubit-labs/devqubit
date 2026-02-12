@@ -13,6 +13,7 @@ Whether it's a typo fix, bug report, new adapter, or a wild feature idea — we 
 - Browse [open issues](https://github.com/devqubit-labs/devqubit/issues) for bugs or feature requests
 - Propose an idea or ask questions in [Discussions](https://github.com/devqubit-labs/devqubit/discussions)
 - Pick anything that interests you — even small fixes matter
+
 ## Quickstart
 
 ```bash
@@ -33,15 +34,6 @@ uv run pre-commit run --all-files
 uv run pytest
 ```
 
-### Minimal setup (faster)
-
-If you only need core packages without heavy adapter/UI dependencies:
-
-```bash
-uv sync --locked --all-packages
-uv run pytest
-```
-
 ## Prerequisites
 
 - Git
@@ -59,6 +51,7 @@ packages/
 ├── devqubit-qiskit-runtime/ # IBM Runtime adapter
 ├── devqubit-braket/         # Amazon Braket adapter
 ├── devqubit-cirq/           # Google Cirq adapter
+├── devqubit-cudaq/          # NVIDIA CUDA-Q adapter
 └── devqubit-pennylane/      # PennyLane adapter
 ```
 
