@@ -45,17 +45,6 @@ def qml_config(workspace):
     return Config(root_dir=workspace, validate=False, capture_git=False)
 
 
-@pytest.fixture
-def auto_flush_config(workspace):
-    """Config with auto-flush every 50 steps."""
-    return Config(
-        root_dir=workspace,
-        validate=False,
-        capture_git=False,
-        flush_every_n_steps=50,
-    )
-
-
 # =============================================================================
 # Storage Fixtures
 # =============================================================================

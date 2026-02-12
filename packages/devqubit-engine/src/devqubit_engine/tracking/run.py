@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import threading
 import traceback as _tb
+import weakref
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -72,6 +73,57 @@ logger = logging.getLogger(__name__)
 
 # Maximum artifact size in bytes (20 MB default)
 MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
+
+# Internal auto-flush interval. Chosen to balance crash-safety (short
+# enough that a kill loses at most a few seconds of data) against I/O
+# overhead (long enough to batch many points per write).
+_FLUSH_INTERVAL_SECONDS: float = 10.0
+
+
+class _FlushWorker:
+    """
+    Daemon thread that periodically flushes run state to the registry.
+
+    Internal sync thread: a background daemon wakes every ``interval``
+    seconds and persists buffered data so the user never has to think
+    about crash-safety or flush timing.
+
+    Parameters
+    ----------
+    run : Run
+        The run to flush.  Stored as a weak reference so the worker
+        does not prevent garbage collection if the run is abandoned.
+    interval : float
+        Seconds between flush cycles.
+    """
+
+    def __init__(self, run: Run, interval: float = _FLUSH_INTERVAL_SECONDS) -> None:
+        self._run_ref: weakref.ref[Run] = weakref.ref(run)
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="devqubit-flush",
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        """Wake every *interval* seconds and flush, until stopped."""
+        while not self._stop.wait(self._interval):
+            run = self._run_ref()
+            if run is None:
+                break
+            try:
+                run.flush()
+            except Exception:
+                # Logged inside flush(); nothing else to do.
+                pass
+
+    def stop(self) -> None:
+        """Signal the worker to stop and wait for it to finish."""
+        self._stop.set()
+        self._thread.join(timeout=5.0)
 
 
 class Run:
@@ -147,11 +199,11 @@ class Run:
         self._pending_tracked_jobs: list[Any] = []
 
         # Metric-series buffer: accumulated points awaiting flush.
-        # Kept separate from record["data"]["metric_series"] (which is
-        # only written at finalize for schema compat) to enable lightweight
-        # incremental persistence via the registry's metric_points table.
         self._metric_buffer: list[dict[str, Any]] = []
-        self._metric_steps_since_flush: int = 0
+
+        # Background flush worker — started in __enter__, stopped in
+        # _finalize. None until context manager entry.
+        self._flush_worker: _FlushWorker | None = None
 
         # Get config and backends
         cfg = config or get_config()
@@ -317,7 +369,7 @@ class Run:
             point = {"value": value_f, "step": step, "timestamp": ts}
 
             with self._lock:
-                # Append to in-record series
+                # Append to in-record series (schema compat / finalize)
                 if "metric_series" not in self.record["data"]:
                     self.record["data"]["metric_series"] = {}
                 if key not in self.record["data"]["metric_series"]:
@@ -331,12 +383,6 @@ class Run:
                 self._metric_buffer.append(
                     {"run_id": self._run_id, "key": key, **point}
                 )
-                self._metric_steps_since_flush += 1
-
-            # Auto-flush when configured
-            flush_n = self._config.flush_every_n_steps
-            if flush_n and self._metric_steps_since_flush >= flush_n:
-                self.flush()
 
             logger.debug("Logged metric series: %s[%d]=%f", key, step, value_f)
         else:
@@ -360,17 +406,16 @@ class Run:
         """
         Persist the current run state and buffered metric history.
 
-        Writes the run record (with updated summary metrics) to the
-        registry, and — if the registry supports it — flushes the
-        in-memory metric-series buffer via batched ``INSERT``.
+        Called automatically by the background flush worker every few
+        seconds while the run is active.  Can also be called manually
+        for immediate persistence (e.g. before a known-risky operation).
 
-        This method is safe to call from hot loops. It acquires the
-        internal lock only briefly to swap out the buffer.
+        Thread-safe: acquires the internal lock only briefly to swap
+        out the buffer.
         """
         with self._lock:
             buf = self._metric_buffer
             self._metric_buffer = []
-            self._metric_steps_since_flush = 0
 
         # Flush buffered metric points
         if buf and hasattr(self._registry, "save_metric_points"):
@@ -1149,6 +1194,12 @@ class Run:
                 self.record["info"]["status"] = "FINISHED"
                 self.record["info"]["ended_at"] = utc_now_iso()
 
+        # Stop background flush worker before the final synchronous flush
+        # to avoid racing with it.
+        if self._flush_worker is not None:
+            self._flush_worker.stop()
+            self._flush_worker = None
+
         # Flush any remaining metric buffer before final save
         self.flush()
 
@@ -1205,13 +1256,11 @@ class Run:
 
         The record is saved with ``status=RUNNING`` so that long-running
         hardware jobs are immediately visible in the registry and the
-        frontend while the experiment is in progress.
+        frontend while the experiment is in progress. A background
+        flush worker is started to periodically persist metric data.
         """
         self._registry.save(self.record)
-        logger.debug(
-            "Persisted initial RUNNING record: run_id=%s",
-            self._run_id,
-        )
+        self._flush_worker = _FlushWorker(self, interval=_FLUSH_INTERVAL_SECONDS)
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:

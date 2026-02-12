@@ -8,7 +8,6 @@ from __future__ import annotations
 import math
 
 import pytest
-from devqubit_engine.config import Config
 from devqubit_engine.tracking.history import (
     iter_metric_points,
     metric_history_long,
@@ -16,11 +15,6 @@ from devqubit_engine.tracking.history import (
 )
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.tracking.run import track
-
-
-# =====================================================================
-# log_metric(step=...) updates scalar summary
-# =====================================================================
 
 
 class TestSummaryUpdate:
@@ -70,11 +64,6 @@ class TestSummaryUpdate:
         assert "final_fidelity" not in loaded.metric_series
 
 
-# =====================================================================
-# Run.flush() — crash safety & incremental persist
-# =====================================================================
-
-
 class TestFlush:
     """flush() must persist summary + metric_points mid-run."""
 
@@ -122,32 +111,36 @@ class TestFlush:
         pts = list(registry.iter_metric_points(rid, "energy"))
         assert len(pts) == 200
 
-    def test_auto_flush(self, store, registry, auto_flush_config):
-        """With flush_every_n_steps, data is persisted automatically."""
+    def test_background_flush(self, store, registry, qml_config, monkeypatch):
+        """Background worker persists data without user intervention."""
+        import time
+
+        import devqubit_engine.tracking.run as run_mod
+
+        # Speed up for testing: 0.5s instead of default 10s
+        monkeypatch.setattr(run_mod, "_FLUSH_INTERVAL_SECONDS", 0.5)
+
         with track(
             project="auto",
             store=store,
             registry=registry,
-            config=auto_flush_config,
+            config=qml_config,
             capture_env=False,
         ) as run:
             rid = run.run_id
-            for i in range(120):
+            for i in range(500):
                 run.log_metric("loss", 1.0 / (i + 1), step=i)
 
-            # After 120 steps with flush_every=50, at least 2 auto-flushes
-            # happened (at step 49 and step 99). Check the DB.
+            # Wait for background worker to fire
+            time.sleep(1.0)
+
+            # Data should be in the DB — no manual flush called
             pts = list(registry.iter_metric_points(rid, "loss"))
-            assert len(pts) >= 100
+            assert len(pts) == 500
 
-        # After finalize, everything is there
+        # After finalize, everything is still there
         pts_all = list(registry.iter_metric_points(rid, "loss"))
-        assert len(pts_all) == 120
-
-
-# =====================================================================
-# History read-path — iter, long-format, downsampling
-# =====================================================================
+        assert len(pts_all) == 500
 
 
 class TestHistoryReadPath:
@@ -184,7 +177,13 @@ class TestHistoryReadPath:
 
     def test_iter_metric_points_range(self, store, registry, qml_config):
         """Step range filtering works."""
-        ids = self._create_runs(store, registry, qml_config, n_runs=1, n_steps=100)
+        ids = self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=1,
+            n_steps=100,
+        )
 
         pts = list(
             iter_metric_points(
@@ -202,7 +201,13 @@ class TestHistoryReadPath:
 
     def test_long_format_multi_run(self, store, registry, qml_config):
         """metric_history_long returns overlay-ready long-format rows."""
-        self._create_runs(store, registry, qml_config, n_runs=3, n_steps=50)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=3,
+            n_steps=50,
+        )
 
         rows = metric_history_long(
             registry,
@@ -217,7 +222,13 @@ class TestHistoryReadPath:
 
     def test_long_format_downsampling(self, store, registry, qml_config):
         """max_points caps total returned rows."""
-        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=200)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=2,
+            n_steps=200,
+        )
 
         rows = metric_history_long(
             registry,
@@ -231,7 +242,13 @@ class TestHistoryReadPath:
     def test_long_format_to_dataframe(self, store, registry, qml_config):
         """to_dataframe converts rows to pandas successfully."""
         pytest.importorskip("pandas")
-        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=30)
+        self._create_runs(
+            store,
+            registry,
+            qml_config,
+            n_runs=2,
+            n_steps=30,
+        )
 
         rows = metric_history_long(registry, project="qnn", keys=["val/acc"])
         df = to_dataframe(rows)
@@ -243,11 +260,6 @@ class TestHistoryReadPath:
         """metric_history_long raises ValueError without run_ids/project."""
         with pytest.raises(ValueError, match="Provide run_ids"):
             metric_history_long(registry)
-
-
-# =====================================================================
-# RunRecord.metric_series property
-# =====================================================================
 
 
 class TestRunRecordMetricSeries:
@@ -315,11 +327,6 @@ class TestRunRecordMetricSeries:
         rec.mark_finalized()
 
         assert rec.metric_series["x"][0]["value"] == 42
-
-
-# =====================================================================
-# metric_points table — batched inserts & queries
-# =====================================================================
 
 
 class TestMetricPointsTable:
@@ -392,11 +399,6 @@ class TestMetricPointsTable:
             list(registry.iter_metric_points(rid, "x"))
 
 
-# =====================================================================
-# Backward compatibility — pre-metric_points records
-# =====================================================================
-
-
 class TestBackwardCompat:
     """Records written before metric_points table still work."""
 
@@ -463,31 +465,4 @@ class TestBackwardCompat:
             )
 
         rows = metric_history_long(registry, project="legacy", keys=["acc"])
-        assert len(rows) == 4  # 2 runs × 2 points
-
-
-# =====================================================================
-# Config — flush_every_n_steps
-# =====================================================================
-
-
-class TestFlushConfig:
-    """flush_every_n_steps config field works end-to-end."""
-
-    def test_config_default_none(self):
-        """Default: no auto-flush."""
-        cfg = Config()
-        assert cfg.flush_every_n_steps is None
-
-    def test_config_roundtrip(self):
-        """Value survives to_dict."""
-        cfg = Config(flush_every_n_steps=500)
-        assert cfg.to_dict()["flush_every_n_steps"] == 500
-
-    def test_env_var(self, clean_env):
-        """DEVQUBIT_FLUSH_EVERY_N_STEPS env var is parsed."""
-        from devqubit_engine.config import load_config
-
-        clean_env.setenv("DEVQUBIT_FLUSH_EVERY_N_STEPS", "200")
-        cfg = load_config()
-        assert cfg.flush_every_n_steps == 200
+        assert len(rows) == 4  # 2 runs x 2 points
