@@ -35,7 +35,7 @@ class TestTopLevelExports:
         assert hasattr(devqubit, "__version__")
         assert isinstance(devqubit.__version__, str)
 
-    def test_low_level_not_in_top_level(self) -> None:
+    def test_internal_apis_not_exported_from_top_level(self) -> None:
         """Low-level APIs are in submodules, not top-level."""
         import devqubit
 
@@ -108,7 +108,7 @@ class TestComparison:
         assert hasattr(result, "identical")
         assert hasattr(result, "tvd")
 
-    def test_verify_policy(self) -> None:
+    def test_verify_policy_configuration(self) -> None:
         """VerifyPolicy is configurable."""
         from devqubit.compare import VerifyPolicy
 
@@ -206,7 +206,7 @@ class TestConfig:
 class TestRunsSubmodule:
     """Tests for devqubit.runs submodule."""
 
-    def test_exports(self) -> None:
+    def test_runs_submodule_exports(self) -> None:
         """All expected exports are available."""
         from devqubit import runs
 
@@ -269,14 +269,14 @@ class TestRunsSubmodule:
 class TestCompareSubmodule:
     """Tests for devqubit.compare submodule."""
 
-    def test_core_functions(self) -> None:
+    def test_compare_core_functions_available(self) -> None:
         """Core functions are available."""
         from devqubit import compare
 
         assert hasattr(compare, "diff")
         assert hasattr(compare, "verify_baseline")
 
-    def test_result_types(self) -> None:
+    def test_compare_result_types_available(self) -> None:
         """Result types are available."""
         from devqubit import compare
 
