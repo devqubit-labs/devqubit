@@ -46,6 +46,7 @@ def __getattr__(name: str) -> Any:
         except ImportError as exc:
             raise ImportError(
                 "The devqubit UI requires additional dependencies.\n"
+                f"Failed to import the optional UI dependency {module_path!r} required "
                 "Install with: pip install 'devqubit[ui]'\n"
                 f"Original error: {exc}"
             ) from exc
