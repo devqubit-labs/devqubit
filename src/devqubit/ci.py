@@ -4,24 +4,25 @@
 """
 CI/CD integration utilities.
 
-This module provides tools for integrating devqubit verification
-into CI/CD pipelines.
+Helpers for embedding devqubit verification results into continuous
+integration pipelines. Supports JUnit XML reports and GitHub Actions
+workflow annotations.
 
-JUnit Output
-------------
->>> from devqubit import verify_against_baseline
+JUnit Reports
+-------------
+>>> from devqubit.compare import verify_baseline
 >>> from devqubit.ci import write_junit
->>> result = verify_against_baseline(...)
+>>> result = verify_baseline("nightly-run", project="bell-state")
 >>> write_junit(result, "results.xml")
 
-GitHub Actions
---------------
+GitHub Actions Annotations
+--------------------------
 >>> from devqubit.ci import github_annotations
 >>> print(github_annotations(result))
-::notice title=Verification Passed::Candidate RUN_ID matches baseline
+::notice title=Verification Passed::Candidate matches baseline
 
-Custom JUnit Names
-------------------
+Custom Test Names
+-----------------
 >>> write_junit(
 ...     result,
 ...     "results.xml",
@@ -54,25 +55,25 @@ _LAZY_IMPORTS = {
 
 def github_annotations(result: Any) -> str:
     """
-    Format verification result as GitHub Actions annotations.
+    Format a verification result as GitHub Actions workflow commands.
 
     Parameters
     ----------
     result : VerifyResult
-        Verification result to format.
+        Result from :func:`~devqubit.compare.verify_baseline`.
 
     Returns
     -------
     str
-        GitHub Actions workflow commands.
+        One or more ``::notice`` / ``::error`` workflow commands suitable
+        for printing to stdout in a GitHub Actions step.
 
-    Example
-    -------
-    >>> from devqubit import verify_against_baseline
+    Examples
+    --------
+    >>> from devqubit.compare import verify_baseline
     >>> from devqubit.ci import github_annotations
-    >>> result = verify_against_baseline(...)
+    >>> result = verify_baseline("nightly-run", project="bell-state")
     >>> print(github_annotations(result))
-    ::notice title=Verification Passed::Candidate RUN_ID matches baseline
     """
     from devqubit_engine.compare.ci import result_to_github_annotations
 
@@ -80,7 +81,7 @@ def github_annotations(result: Any) -> str:
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -91,5 +92,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

@@ -1,11 +1,16 @@
 # devqubit-qiskit
 
-Qiskit adapter for devqubit. Automatically captures circuits, results, and backend information from Qiskit and Aer.
+[![PyPI](https://img.shields.io/pypi/v/devqubit-qiskit)](https://pypi.org/project/devqubit-qiskit/)
+
+Qiskit adapter for [devqubit](https://github.com/devqubit-labs/devqubit) — automatic circuit capture, backend snapshots, and result logging for Qiskit and Aer backends.
+
+> [!IMPORTANT]
+> **This is an internal adapter package.** Install via `pip install "devqubit[qiskit]"` and use the `devqubit` public API.
 
 ## Installation
 
 ```bash
-pip install devqubit[qiskit]
+pip install "devqubit[qiskit]"
 ```
 
 ## Usage
@@ -28,9 +33,19 @@ with track(project="bell-state") as run:
 
 ## What's Captured
 
-- **Circuits** — QPY format, OpenQASM 3
-- **Results** — Counts, quasi-distributions
-- **Backend info** — Name, configuration, coupling map
+| Artifact | Kind | Role |
+|---|---|---|
+| QPY binary | `qiskit.qpy.circuits` | `program` |
+| OpenQASM 3 | `source.openqasm3` | `program` |
+| Circuit diagram | `qiskit.circuits.diagram` | `program` |
+| Measurement counts | `result.counts.json` | `result` |
+| Full SDK result | `result.qiskit.result_json` | `result_raw` |
+| Backend properties | `device.qiskit.raw_properties.json` | `device_raw` |
+| Execution envelope | `devqubit.envelope.json` | `envelope` |
+
+## Documentation
+
+See the [Adapters guide](https://devqubit.readthedocs.io/en/latest/guides/adapters.html) for details on wrapping options, batch execution, and performance tuning.
 
 ## License
 

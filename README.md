@@ -6,7 +6,9 @@
 
 # devqubit
 
-**Local-first experiment tracking for quantum computing.** Capture circuits, backend state, and configuration — runs are reproducible, comparable, and easy to share. Access your data via Python API, CLI, or Web UI.
+**Local-first experiment tracking for quantum computing.**
+
+Capture circuits, backend state, and configuration automatically — runs are reproducible, comparable, and easy to share. Access your data via Python API, CLI, or Web UI.
 
 > [!WARNING]
 > **Status:** Alpha — devqubit APIs may evolve in `0.x` releases.
@@ -14,18 +16,18 @@
 
 ## Why devqubit?
 
-General-purpose experiment trackers (MLflow, Weights & Biases, neptune.ai) are great for logging parameters, metrics, and artifacts. But quantum workloads need *extra structure* that isn't first-class there by default: capturing what actually executed (program + compilation), where it executed (backend/device), and how it executed (runtime options).
+General-purpose experiment trackers (MLflow, W&B, neptune.ai) work well for classical ML, but quantum workloads need structure they don't provide out of the box: what actually executed (program + compilation), where it ran (backend/device), and how it ran (runtime options, calibration state).
 
 | Challenge | MLflow / W&B / neptune.ai | devqubit |
-|-----------|-------------------|----------|
-| **Circuit artifacts** | manual file logging | OpenQASM 3 + SDK-native formats (automatic) |
-| **Device context** | manual | backend snapshots, calibration/noise context (automatic) |
-| **Reproducibility** | depends on what you log | program + device + config fingerprints (automatic) |
-| **Result comparison** | metric/table-oriented | distribution-aware, structural diff, drift detection |
-| **Noise-aware verification** | requires custom logic | configurable policies with noise tolerance |
-| **Portable sharing** | artifact/version workflows | self-contained bundles (manifest + SHA-256 digests) |
+|---|---|---|
+| **Circuit artifacts** | Manual file logging | OpenQASM 3 + SDK-native formats (automatic) |
+| **Device context** | Manual | Backend snapshots, calibration/noise context (automatic) |
+| **Reproducibility** | Depends on what you log | Program + device + config fingerprints (automatic) |
+| **Result comparison** | Metric/table-oriented | Distribution-aware TVD, structural diff, drift detection |
+| **Noise-aware verification** | Requires custom code | Configurable policies with noise tolerance |
+| **Portable sharing** | Artifact/version workflows | Self-contained bundles (manifest + SHA-256 digests) |
 
-**devqubit is quantum-first:** same circuit, same backend, different day — different results. devqubit helps you track *why*.
+Same circuit, same backend, different day — different results. devqubit helps you track *why*.
 
 ## Features
 
@@ -33,9 +35,10 @@ General-purpose experiment trackers (MLflow, Weights & Biases, neptune.ai) are g
 - **Multi-SDK support** — Qiskit, Qiskit Runtime, Braket, Cirq, PennyLane, CUDA-Q
 - **Content-addressable storage** — deduplicated artifacts with SHA-256 digests
 - **Reproducibility fingerprints** — detect changes in program, device, or config
-- **Run comparison** — TVD analysis, structural diff, calibration drift
+- **Run comparison** — TVD analysis, structural diff, calibration drift detection
 - **CI/CD verification** — baselines with configurable noise-aware policies
 - **Portable bundles** — export/import runs as self-contained ZIPs
+- **Web UI** — browse runs, view artifacts, compare experiments
 
 ## Documentation
 
@@ -43,25 +46,31 @@ General-purpose experiment trackers (MLflow, Weights & Biases, neptune.ai) are g
 
 ## Installation
 
-**Requirements:** Python 3.11+
+**Python 3.11+** required.
 
 ```bash
 pip install devqubit
+```
 
-# With SDK adapters
+Install with an SDK adapter:
+
+```bash
 pip install "devqubit[qiskit]"          # Qiskit + Aer
 pip install "devqubit[qiskit-runtime]"  # IBM Quantum Runtime
 pip install "devqubit[braket]"          # Amazon Braket
 pip install "devqubit[cirq]"            # Google Cirq
 pip install "devqubit[pennylane]"       # PennyLane
 pip install "devqubit[cudaq]"           # NVIDIA CUDA-Q
-pip install "devqubit[all]"             # All adapters
-
-# With local web UI
-pip install "devqubit[ui]"
+pip install "devqubit[all]"             # all adapters
 ```
 
-## Quick start
+Optional extras:
+
+```bash
+pip install "devqubit[ui]"              # local web UI
+```
+
+## Quick Start
 
 ### Track an experiment
 
@@ -86,7 +95,7 @@ with track(project="bell-state", run_name="baseline-v1") as run:
 print(f"Run saved: {run.run_id}")
 ```
 
-The adapter automatically captures: circuit (QPY + QASM3), backend config, job metadata, and results.
+The adapter automatically captures the circuit, backend config, job metadata, and results.
 
 ### Compare runs
 
@@ -95,12 +104,10 @@ from devqubit.compare import diff
 
 result = diff("baseline-v1", "experiment-v2", project="bell-state")
 
-print(result.identical)           # False
-print(result.program.match_mode)  # "structural"
-print(result.tvd)                 # 0.023
+print(result.identical)                 # False
+print(result.program.structural_match)  # True — same circuit structure
+print(result.tvd)                       # 0.023
 ```
-
-Or via CLI:
 
 ```bash
 devqubit diff baseline-v1 experiment-v2 --project bell-state
@@ -113,32 +120,37 @@ from devqubit.compare import verify_baseline, VerifyPolicy
 
 result = verify_baseline(
     "nightly-run",
-    project="vqe-hydrogen",
-    policy=VerifyPolicy(tvd_threshold=0.05),
+    project="bell-state",
+    policy=VerifyPolicy(tvd_threshold=0.05, noise_factor=1.2),
 )
 
-assert result.ok, result.reason
+assert result.ok, result.verdict.summary
 ```
 
 ```bash
 # With JUnit output for CI pipelines
-devqubit verify nightly-run --project vqe-hydrogen --junit results.xml
+devqubit verify nightly-run --project bell-state --junit results.xml
 ```
 
 ## CLI
 
 ```bash
-devqubit list                          # List runs
-devqubit show <run> --project myproj   # Run details
-devqubit diff <a> <b> --project myproj # Compare runs
-devqubit ui                            # Web interface
+devqubit list                            # list runs
+devqubit show <run> --project <proj>     # run details
+devqubit diff <a> <b> --project <proj>   # compare runs
+devqubit baseline set <proj> <run>       # set baseline
+devqubit verify <run> --project <proj>   # verify against baseline
+devqubit pack <run> -o bundle.zip        # export bundle
+devqubit ui                              # launch web UI
 ```
 
-See [CLI reference](https://devqubit.readthedocs.io/en/latest/reference/cli.html) for all commands.
+See the [CLI reference](https://devqubit.readthedocs.io/en/latest/reference/cli.html) for all commands.
 
 ## Web UI
 
 ```bash
+pip install "devqubit[ui]"
+
 devqubit ui
 # → http://127.0.0.1:8080
 ```
@@ -149,15 +161,33 @@ devqubit ui
   </a>
   &nbsp;&nbsp;
   <a href="docs/assets/ui_run_view.png">
-    <img src="docs/assets/ui_run_view.png" alt="Run comparison" width="45%"/>
+    <img src="docs/assets/ui_run_view.png" alt="Run detail" width="45%"/>
   </a>
 </p>
 
 Browse runs, view artifacts, compare experiments, and manage baselines.
 
+## Architecture
+
+devqubit is a monorepo with multiple packages:
+
+| Package | Description |
+|---|---|
+| **`devqubit`** | Public Python API (thin facade) |
+| **`devqubit-engine`** | Core logic: tracking, storage, comparison, CLI |
+| **`devqubit-ui`** | Web UI (optional) |
+| **`devqubit-qiskit`** | Qiskit adapter |
+| **`devqubit-qiskit-runtime`** | Qiskit Runtime adapter |
+| **`devqubit-braket`** | Amazon Braket adapter |
+| **`devqubit-cirq`** | Google Cirq adapter |
+| **`devqubit-pennylane`** | PennyLane adapter |
+| **`devqubit-cudaq`** | NVIDIA CUDA-Q adapter |
+
+Users install `devqubit` (plus optional extras). All public API lives in the `devqubit` namespace; engine internals are not part of the public API.
+
 ## Contributing
 
-We welcome contributions of all kinds — bug fixes, docs, new adapters, or feature ideas.
+We welcome contributions — bug fixes, docs, new adapters, or feature ideas.
 
 1. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines
 2. Check [open issues](https://github.com/devqubit-labs/devqubit/issues) or start a [discussion](https://github.com/devqubit-labs/devqubit/discussions)
@@ -171,7 +201,7 @@ uv run pre-commit install
 uv run pytest
 ```
 
-Early project = high impact contributions. Jump in!
+Early project — high impact contributions. Jump in!
 
 ## Community
 

@@ -1,8 +1,11 @@
 """
-Internal Qiskit adapter implementation package for devqubit.
+Qiskit adapter for devqubit.
 
-This package provides integration with Qiskit backends,
-enabling automatic tracking of quantum circuit execution and results.
-It is installed as a dependency of `devqubit` and is not considered
-part of the stable public API. Prefer importing from `devqubit`.
+Provides automatic circuit capture (QPY + OpenQASM 3), backend snapshot,
+and result logging for Qiskit and Aer backends.  Registered as a
+``devqubit.adapters`` entry point and discovered automatically by
+:meth:`Run.wrap`.
+
+This package is an internal implementation detail of ``devqubit[qiskit]``.
+Users should import from :mod:`devqubit`, not from this package directly.
 """

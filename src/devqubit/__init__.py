@@ -2,62 +2,74 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-devqubit: Experiment tracking for quantum computing.
+Local-first experiment tracking for quantum computing.
 
-Quick Start
------------
+``devqubit`` captures circuits, backend state, and configuration so that
+quantum experiments are reproducible, comparable, and easy to share.
+Data is accessible via the Python API, CLI, or Web UI.
+
+Getting Started
+---------------
+Open a tracked run, wrap your backend, and execute as usual.  The SDK
+adapter captures circuits, device snapshots, and results automatically:
+
 >>> from devqubit import track
->>> with track(project="my_experiment") as run:
+>>> with track(project="bell-state", run_name="baseline-v1") as run:
+...     backend = run.wrap(AerSimulator())
+...     job = backend.run(circuit, shots=1000)
+...     run.log_metric("p00", counts.get("00", 0) / 1000)
+
+Manual logging works the same way without a backend wrapper:
+
+>>> with track(project="my-experiment") as run:
 ...     run.log_param("shots", 1000)
 ...     run.log_metric("fidelity", 0.95)
 
-With Backend Wrapping
----------------------
->>> from devqubit import track
->>> with track(project="bell_state") as run:
-...     backend = run.wrap(AerSimulator())
-...     job = backend.run(circuit, shots=1000)
-
-# Or use the module-level convenience function:
->>> from devqubit import track, wrap_backend
->>> with track(project="bell_state") as run:
-...     backend = wrap_backend(run, AerSimulator())
-
-Comparison & Verification
--------------------------
+Comparing and Verifying Runs
+----------------------------
 >>> from devqubit.compare import diff, verify_baseline
->>> result = diff("run_id_a", "run_id_b")
->>> print(result.identical)
+>>> result = diff("baseline-v1", "experiment-v2", project="bell-state")
+>>> print(result.tvd)
+0.023
 
->>> result = verify_baseline("candidate_run_id", project="my_project")
->>> if result.ok:
-...     print("Verification passed!")
+>>> result = verify_baseline("nightly-run", project="bell-state")
+>>> assert result.ok, result.verdict.summary
 
-Run Navigation
---------------
->>> from devqubit.runs import list_runs, search_runs, get_baseline
->>> runs = list_runs(project="my_project", limit=10)
->>> baseline = get_baseline("my_project")
+Navigating Runs
+---------------
+>>> from devqubit.runs import list_runs, get_baseline
+>>> runs = list_runs(project="bell-state", limit=10)
+>>> baseline = get_baseline("bell-state")
 
-Bundling
---------
->>> from devqubit.bundle import pack_run, unpack_bundle, Bundle
+Bundling and Sharing
+--------------------
+>>> from devqubit.bundle import pack_run, Bundle
 >>> pack_run("run_id", "experiment.zip")
->>> with Bundle("experiment.zip") as bundle:
-...     print(bundle.run_id)
+>>> with Bundle("experiment.zip") as b:
+...     print(b.run_id)
 
-Submodules
-----------
-- devqubit.runs: Run navigation and baseline management
-- devqubit.compare: Comparison, verification, and diff utilities
-- devqubit.bundle: Run packaging utilities
-- devqubit.ci: CI/CD integration (JUnit, GitHub annotations)
-- devqubit.config: Configuration management
-- devqubit.uec: UEC snapshot schemas
-- devqubit.storage: Storage backends (advanced)
-- devqubit.adapters: SDK adapter extension API
-- devqubit.errors: Public exception types
-- devqubit.ui: Web UI (optional, requires devqubit[ui])
+Public Submodules
+-----------------
+:mod:`devqubit.runs`
+    Run navigation, search, baseline management, and DataFrame export.
+:mod:`devqubit.compare`
+    Run comparison (``diff``), baseline verification, drift detection.
+:mod:`devqubit.bundle`
+    Portable run packaging (pack / unpack / inspect).
+:mod:`devqubit.ci`
+    CI/CD integration helpers (JUnit reports, GitHub annotations).
+:mod:`devqubit.config`
+    Configuration management.
+:mod:`devqubit.uec`
+    Uniform Execution Contract snapshot schemas.
+:mod:`devqubit.storage`
+    Storage backend access (advanced).
+:mod:`devqubit.adapters`
+    SDK adapter plugin system.
+:mod:`devqubit.errors`
+    Public exception hierarchy.
+:mod:`devqubit.ui`
+    Web UI server (requires ``devqubit[ui]``).
 """
 
 from __future__ import annotations
@@ -103,7 +115,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler for module-level attributes."""
+    """Lazy-import handler for module-level attributes."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -114,5 +126,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes for autocomplete."""
+    """List available public attributes (enables IDE autocomplete)."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

@@ -2,48 +2,42 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Adapter plugin system for SDK integration.
+SDK adapter plugin system.
 
-This module provides the public API for adapter discovery and the
-protocol that adapters must implement.
+Adapters provide SDK-specific integration for automatic circuit capture,
+device snapshots, and result logging.  Each installed adapter package
+(e.g. ``devqubit-qiskit``) registers itself via a Python entry point and
+is discovered automatically when :meth:`Run.wrap` is called.
 
-Available Adapters
-------------------
+Discovery
+---------
 >>> from devqubit.adapters import list_available_adapters
->>> adapters = list_available_adapters()
->>> print("Installed adapters:", adapters)
+>>> list_available_adapters()
+['braket', 'cirq', 'cudaq', 'pennylane', 'qiskit', 'qiskit_runtime']
 
-Creating an Adapter
--------------------
-Adapters are discovered via Python entry points. To create a custom adapter:
+>>> from devqubit.adapters import resolve_adapter
+>>> adapter = resolve_adapter(my_backend)   # auto-detect by executor type
 
-1. Implement the AdapterProtocol interface
-2. Register via entry point in setup.py or pyproject.toml::
+Implementing a Custom Adapter
+-----------------------------
+1. Implement :class:`AdapterProtocol`.
+2. Register via entry point::
 
-    [project.entry-points."devqubit.adapters"]
-    my_sdk = "my_package.adapter:MyAdapter"
+       [project.entry-points."devqubit.adapters"]
+       my_sdk = "my_package.adapter:MyAdapter"
 
-Adapter Protocol
-----------------
 >>> from devqubit.adapters import AdapterProtocol
-
 >>> class MyAdapter:
 ...     name = "my_sdk"
-...
-...     def supports_executor(self, executor) -> bool:
-...         return isinstance(executor, MySdkBackend)
-...
-...     def describe_executor(self, executor) -> dict:
-...         return {"name": executor.name, "type": "simulator"}
-...
-...     def wrap_executor(self, executor, tracker):
-...         return WrappedExecutor(executor, tracker)
+...     def supports_executor(self, executor) -> bool: ...
+...     def describe_executor(self, executor) -> dict: ...
+...     def wrap_executor(self, executor, tracker, **kw): ...
 
-Debugging Adapter Issues
-------------------------
+Debugging
+---------
 >>> from devqubit.adapters import adapter_load_errors
->>> for error in adapter_load_errors():
-...     print(f"Failed to load {error.entry_point}: {error.message}")
+>>> for err in adapter_load_errors():
+...     print(f"{err.entry_point}: {err.message}")
 """
 
 from __future__ import annotations
@@ -93,7 +87,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -104,5 +98,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

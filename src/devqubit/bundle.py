@@ -2,39 +2,36 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Run packaging and sharing utilities.
+Portable run packaging and sharing.
 
-This module provides tools for packaging runs into portable bundles
-that can be shared, archived, or used for offline verification.
+Bundles are self-contained ZIP archives that include a run record, all
+referenced artifacts, and a manifest with SHA-256 integrity digests.
+They can be shared, archived, imported into another workspace, or used
+directly for offline verification.
 
-Packing
--------
+Packing a Run
+-------------
 >>> from devqubit.bundle import pack_run
->>> result = pack_run("run_id", "experiment.zip")
->>> print(f"Packed {result.object_count} objects")
+>>> result = pack_run("baseline-v1", "experiment.zip", project="bell-state")
+>>> print(f"Packed {result.object_count} objects ({result.total_bytes} bytes)")
 
->>> # Or by name within a project
->>> result = pack_run("nightly-v1", "experiment.zip", project="bell_state")
-
-Unpacking
----------
+Unpacking into a Workspace
+--------------------------
 >>> from devqubit.bundle import unpack_bundle
 >>> result = unpack_bundle("experiment.zip")
->>> print(f"Restored {result.object_count} new objects")
+>>> print(f"Imported {result.object_count} new objects")
 
-Reading Bundles
----------------
+Inspecting Without Importing
+----------------------------
 >>> from devqubit.bundle import Bundle
->>> with Bundle("experiment.zip") as bundle:
-...     print(bundle.run_id)
-...     print(bundle.run_record)
+>>> with Bundle("experiment.zip") as b:
+...     print(b.run_id, b.run_record["project"])
 
 Listing Contents
 ----------------
 >>> from devqubit.bundle import list_bundle_contents
->>> contents = list_bundle_contents("experiment.zip")
->>> for item in contents:
-...     print(item)
+>>> for entry in list_bundle_contents("experiment.zip"):
+...     print(entry)
 """
 
 from __future__ import annotations
@@ -74,7 +71,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -85,5 +82,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

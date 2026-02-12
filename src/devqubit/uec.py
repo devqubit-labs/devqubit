@@ -4,26 +4,41 @@
 """
 Uniform Execution Contract (UEC) snapshot schemas.
 
-This module provides standardized types for capturing quantum experiment state
-across all supported SDKs. The UEC defines four canonical snapshot types plus
-a unified envelope container.
+The UEC defines a standardized representation for quantum experiment
+state across all supported SDKs. SDK adapters produce these snapshots
+automatically; this module exposes the types for advanced inspection
+and custom adapter development.
 
-Basic Usage
------------
+.. note::
+
+   You rarely need to create these objects directly. Adapters populate
+   them during ``run.wrap()`` executions.
+
+Types
+-----
+:class:`ExecutionEnvelope`
+    Top-level container holding all four snapshots plus metadata.
+:class:`DeviceSnapshot`
+    Backend identity, topology, and calibration at execution time.
+:class:`ProgramSnapshot`
+    Logical and physical circuit artifacts with structural hashes.
+:class:`ExecutionSnapshot`
+    Submission metadata, shots, job IDs, transpilation info.
+:class:`ResultSnapshot`
+    Normalized measurement results (counts, quasi-probabilities,
+    or expectation values).
+:class:`ValidationResult`
+    Schema validation outcome from :meth:`ExecutionEnvelope.validate_schema`.
+
+Example
+-------
 >>> from devqubit.uec import ExecutionEnvelope
->>> envelope = ExecutionEnvelope(
-...     device=device_snapshot,
-...     program=program_snapshot,
-...     execution=execution_snapshot,
-...     result=result_snapshot,
+>>> envelope = ExecutionEnvelope.create(
+...     producer=producer, device=device,
+...     program=program, execution=execution, result=result,
 ... )
-
-Validation
-----------
->>> from devqubit.uec import ValidationResult
->>> result = envelope.validate_schema()
->>> if result.valid:
-...     print("Schema valid")
+>>> validation = envelope.validate_schema()
+>>> assert validation.ok
 """
 
 from __future__ import annotations
@@ -59,7 +74,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -70,5 +85,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

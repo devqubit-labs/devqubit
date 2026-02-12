@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Public exception types.
+Public exception hierarchy.
 
-This module exposes all public exceptions that may be raised by devqubit
-operations.  Users can catch these to handle specific error conditions.
+All exceptions raised by devqubit inherit from :class:`DevQubitError`,
+allowing a single catch-all handler for library errors.
 
-Exception Hierarchy
--------------------
-All exceptions inherit from :class:`DevQubitError`::
+Hierarchy
+---------
+::
 
     DevQubitError
     ├── StorageError
@@ -23,23 +23,15 @@ All exceptions inherit from :class:`DevQubitError`::
     ├── MissingEnvelopeError
     └── EnvelopeValidationError
 
-Catch-all pattern:
-
+Examples
+--------
 >>> from devqubit.errors import DevQubitError, RunNotFoundError
 >>> try:
 ...     run = load_run("nonexistent")
-... except RunNotFoundError as e:
-...     print(f"Run not found: {e.run_id}")
+... except RunNotFoundError as exc:
+...     print(f"Run not found: {exc.run_id}")
 ... except DevQubitError:
 ...     print("Other devqubit error")
-
-Specific error handling:
-
->>> from devqubit.errors import RunNotFoundError
->>> try:
-...     run = load_run("nonexistent")
-... except RunNotFoundError as e:
-...     print(f"Run not found: {e.run_id}")
 """
 
 from __future__ import annotations
@@ -48,20 +40,20 @@ from typing import TYPE_CHECKING, Any
 
 
 __all__ = [
-    # Base exception
+    # Base
     "DevQubitError",
-    # Storage errors
+    # Storage
     "RegistryError",
     "StorageError",
     "ObjectNotFoundError",
     "RunNotFoundError",
-    # Query errors
+    # Query
     "QueryParseError",
-    # Circuit errors
+    # Circuit
     "CircuitError",
     "LoaderError",
     "SerializerError",
-    # Envelope errors
+    # Envelope
     "MissingEnvelopeError",
     "EnvelopeValidationError",
 ]
@@ -116,7 +108,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -127,5 +119,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

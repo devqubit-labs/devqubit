@@ -2,63 +2,48 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Comparison, verification, and diff utilities.
+Run comparison, verification, and diff utilities.
 
-This module provides the primary API for comparing runs and verifying
-experiments against baselines.
+This module is the primary entry point for comparing quantum experiment
+runs and verifying candidates against baselines in CI/CD pipelines.
 
-Diff
-----
+Comparing Two Runs
+------------------
 >>> from devqubit.compare import diff
->>> result = diff("run_a", "run_b")
->>> print(result.identical)
+>>> result = diff("baseline-v1", "experiment-v2", project="bell-state")
+>>> print(result.identical)       # True if everything matches
+>>> print(result.tvd)             # Total variation distance
+>>> print(result.program.structural_match)
 
->>> # By run name (requires project)
->>> result = diff("baseline-v1", "experiment-v2", project="bell_state")
-
-Verification
-------------
->>> from devqubit.compare import verify_baseline
->>> result = verify_baseline("candidate_run_id", project="my_project")
->>> if result.ok:
-...     print("Verification passed!")
-... else:
-...     print(result.verdict.summary)
-
-Custom Policy
--------------
->>> from devqubit.compare import verify_baseline, VerifyPolicy, ProgramMatchMode
->>> policy = VerifyPolicy(
-...     program_match_mode=ProgramMatchMode.STRUCTURAL,
-...     noise_factor=1.2,
-... )
+Baseline Verification
+---------------------
+>>> from devqubit.compare import verify_baseline, VerifyPolicy
 >>> result = verify_baseline(
-...     "candidate_run_id",
-...     project="my_project",
-...     policy=policy,
+...     "nightly-run",
+...     project="bell-state",
+...     policy=VerifyPolicy(noise_factor=1.2),
 ... )
+>>> assert result.ok, result.verdict.summary
 
 Verdicts (Root-Cause Analysis)
 ------------------------------
->>> from devqubit.compare import Verdict, VerdictCategory
+Failed verifications include a machine-readable verdict:
+
 >>> if not result.ok:
-...     verdict = result.verdict
-...     print(f"Category: {verdict.category}")
-...     print(f"Action: {verdict.action}")
+...     print(result.verdict.category)  # e.g. VerdictCategory.DEVICE_DRIFT
+...     print(result.verdict.action)    # suggested remediation
 
 Drift Detection
 ---------------
->>> from devqubit.compare import diff, DriftThresholds
->>> thresholds = DriftThresholds(t1_us=0.15, t2_us=0.15)
->>> result = diff("run_a", "run_b", thresholds=thresholds)
+>>> from devqubit.compare import DriftThresholds
+>>> result = diff("run_a", "run_b", thresholds=DriftThresholds(t1_us=0.15))
 >>> if result.device_drift and result.device_drift.significant_drift:
-...     print("Significant calibration drift detected!")
+...     print("Significant calibration drift detected")
 
 Formatting
 ----------
 >>> from devqubit.compare import FormatOptions
->>> opts = FormatOptions(max_drifts=3, show_evidence=False)
->>> print(result.format(opts))
+>>> print(result.format(FormatOptions(max_drifts=3, show_evidence=False)))
 """
 
 from __future__ import annotations
@@ -143,85 +128,77 @@ def verify_baseline(
     promote_on_pass: bool = False,
 ) -> "VerifyResult":
     """
-    Verify a candidate run against the stored baseline for a project.
+    Verify a candidate run against the project baseline.
 
-    This is the recommended high-level API for CI/CD verification.
-    It automatically loads the candidate run, baseline, and storage
-    backends from the global configuration.
+    This is the recommended high-level API for CI/CD verification.  It
+    resolves the candidate run, loads the baseline, and delegates to the
+    engine's verification logic.
 
     Parameters
     ----------
-    candidate : str, Path, or RunRecord
-        Candidate to verify. Can be:
-        - A run ID (str)
-        - A run name within the project (str)
-        - A path to a bundle file (Path or str ending in .zip)
-        - A RunRecord instance (already loaded)
+    candidate : str | Path | RunRecord
+        The run to verify.  Accepted forms:
+
+        * **Run ID** — a ULID string (e.g. ``"01HXYZ..."``).
+        * **Run name** — resolved within *project*.
+        * **Bundle path** — a ``.zip`` file path or :class:`~pathlib.Path`.
+        * **RunRecord** — an already-loaded record instance.
     project : str
-        Project name to look up baseline for.
-    policy : VerifyPolicy or dict or None, optional
-        Verification policy configuration. Uses defaults if not provided.
-        Can be a VerifyPolicy instance or a dict with policy options.
-    store : ObjectStoreProtocol or None, optional
-        Object store to use. If None, uses the default from config.
-        Required when candidate is a RunRecord from a different workspace.
-    registry : RegistryProtocol or None, optional
-        Registry to use. If None, uses the default from config.
-    promote_on_pass : bool, default=False
-        If True and verification passes, promote candidate to new baseline.
+        Project whose stored baseline the candidate is verified against.
+    policy : VerifyPolicy | dict | None, optional
+        Verification policy.  Accepts a :class:`VerifyPolicy` instance, a
+        plain ``dict`` of policy options, or *None* for defaults.
+    store : ObjectStoreProtocol | None, optional
+        Object store override.  Defaults to the global configuration.
+    registry : RegistryProtocol | None, optional
+        Registry override.  Defaults to the global configuration.
+    promote_on_pass : bool, default False
+        Promote the candidate to the new baseline when verification passes.
 
     Returns
     -------
     VerifyResult
-        Verification result with ``ok`` status, ``failures``, ``comparison``,
-        and ``verdict`` (root-cause analysis if failed).
+        Result with :attr:`~VerifyResult.ok` status, :attr:`~VerifyResult.failures`,
+        :attr:`~VerifyResult.comparison`, and :attr:`~VerifyResult.verdict`
+        (root-cause analysis when failed).
 
     Raises
     ------
     ValueError
-        If no baseline is set for the project and ``allow_missing_baseline``
-        is False in the policy.
+        If no baseline is set for *project* and ``allow_missing_baseline``
+        is ``False`` in the policy.
     RunNotFoundError
-        If the candidate run does not exist.
+        If the candidate run cannot be found.
 
     Examples
     --------
-    Basic verification:
+    Basic CI gate:
 
-    >>> from devqubit.compare import verify_baseline
-    >>> result = verify_baseline("candidate_run_id", project="my_project")
-    >>> if result.ok:
-    ...     print("Verification passed!")
-    ... else:
-    ...     print(f"Failed: {result.failures}")
-    ...     print(f"Root cause: {result.verdict.summary}")
+    >>> result = verify_baseline("nightly-run", project="bell-state")
+    >>> assert result.ok, result.verdict.summary
 
-    With custom policy:
+    Custom policy with noise tolerance:
 
-    >>> from devqubit.compare import verify_baseline, VerifyPolicy, ProgramMatchMode
+    >>> from devqubit.compare import VerifyPolicy, ProgramMatchMode
     >>> policy = VerifyPolicy(
     ...     program_match_mode=ProgramMatchMode.STRUCTURAL,
     ...     noise_factor=1.2,
     ...     allow_missing_baseline=True,
     ... )
     >>> result = verify_baseline(
-    ...     "candidate_run_id",
-    ...     project="my_project",
-    ...     policy=policy,
-    ...     promote_on_pass=True,
+    ...     "nightly-run", project="bell-state",
+    ...     policy=policy, promote_on_pass=True,
     ... )
 
-    With bundle file:
+    Verify from a bundle file:
 
-    >>> result = verify_baseline("experiment.zip", project="my_project")
+    >>> result = verify_baseline("experiment.zip", project="bell-state")
 
-    CI/CD integration:
+    Combine with JUnit output for CI:
 
-    >>> from devqubit.compare import verify_baseline
     >>> from devqubit.ci import write_junit
-    >>> result = verify_baseline("candidate_run_id", project="my_project")
+    >>> result = verify_baseline("nightly-run", project="bell-state")
     >>> write_junit(result, "results.xml")
-    >>> assert result.ok, f"Verification failed: {result.failures}"
     """
     from devqubit_engine.bundle.reader import Bundle, is_bundle_path
     from devqubit_engine.compare.verify import (
@@ -283,7 +260,7 @@ def verify_baseline(
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -294,5 +271,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

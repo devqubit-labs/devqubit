@@ -4,41 +4,31 @@
 """
 Configuration management.
 
-Basic configuration is available from the main module:
-
->>> from devqubit import Config, get_config, set_config
-
-This submodule provides additional utilities:
-- RedactionConfig: Configure credential redaction
-- reset_config: Clear cached configuration
-- load_config: Force reload from environment
+The most common configuration symbols (``Config``, ``get_config``,
+``set_config``) are re-exported from the top-level :mod:`devqubit`
+package.  This submodule adds advanced utilities for credential
+redaction and explicit config lifecycle control.
 
 Custom Configuration
 --------------------
 >>> from devqubit import Config, set_config
 >>> from pathlib import Path
->>> config = Config(
-...     root_dir=Path("/custom/workspace"),
-...     capture_git=True,
-...     capture_pip=False,
-... )
->>> set_config(config)
+>>> set_config(Config(root_dir=Path("/custom/workspace"), capture_git=True))
 
-Redaction Configuration
------------------------
+Redaction
+---------
 >>> from devqubit.config import RedactionConfig
->>> from devqubit import Config
 >>> config = Config(
 ...     redaction=RedactionConfig(
 ...         enabled=True,
 ...         patterns=["MY_SECRET_.*", "CUSTOM_TOKEN"],
-...     )
+...     ),
 ... )
 
-Reset Configuration
--------------------
+Resetting
+---------
 >>> from devqubit.config import reset_config
->>> reset_config()  # Next get_config() reloads from environment
+>>> reset_config()  # next get_config() reloads from environment
 """
 
 from __future__ import annotations
@@ -78,7 +68,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -89,5 +79,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

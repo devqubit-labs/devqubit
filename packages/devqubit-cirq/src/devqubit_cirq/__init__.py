@@ -1,8 +1,15 @@
-"""
-Internal Cirq adapter implementation package for devqubit.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 devqubit
 
-This package provides integration with Cirq samplers and simulators,
-enabling automatic tracking of quantum circuit execution and results.
-It is installed as a dependency of `devqubit` and is not considered
-part of the stable public API. Prefer importing from `devqubit`.
+"""
+Google Cirq adapter for devqubit.
+
+Provides automatic circuit capture (Cirq JSON + OpenQASM 3), simulator
+snapshots, and result logging for Cirq samplers and simulators.
+Supports ``run``, ``run_sweep``, and ``simulate`` execution modes.
+Registered as a ``devqubit.adapters`` entry point and discovered
+automatically by :meth:`Run.wrap`.
+
+This package is an internal implementation detail of ``devqubit[cirq]``.
+Users should import from :mod:`devqubit`, not from this package directly.
 """

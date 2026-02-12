@@ -2,48 +2,29 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-devqubit Web UI.
+Web UI for devqubit experiment tracking.
 
-A modern web interface for browsing experiment runs, viewing artifacts,
-and comparing results. Built on FastAPI with a React frontend.
+A local web interface for browsing runs, viewing artifacts, comparing
+experiments, and managing baselines.  Built on FastAPI (backend) with a
+React SPA (frontend).
 
-This package provides:
-
-- Run listing and detail views with filtering
-- Artifact viewing and download
-- Run comparison (diff) functionality
-- Project and group management
-- REST API for programmatic access
-
-Quick Start
------------
-Start the development server:
-
+Starting the Server
+-------------------
 >>> from devqubit_ui import run_server
->>> run_server(debug=True)
+>>> run_server(port=8080)
 
-Or create an app for custom deployment:
+Or from the CLI::
 
+    devqubit ui --port 8080
+
+Custom Deployment
+-----------------
 >>> from devqubit_ui import create_app
->>> app = create_app()
+>>> app = create_app()  # ASGI app for uvicorn / gunicorn
 
-Architecture
-------------
-The UI follows a modular architecture:
-
-- ``app.py`` - Application factory and server runner
-- ``routers/api.py`` - JSON API endpoints for the React frontend
-- ``static/`` - Built React SPA (served automatically)
-- ``plugins.py`` - Plugin discovery and loading
-- ``dependencies.py`` - FastAPI dependency injection utilities
-- ``services.py`` - Service layer for business logic
-
-Notes
------
-This package is installed as a dependency of ``devqubit`` and is not
-considered part of the stable public API. The web interface may change
-between versions. For programmatic access, prefer the core ``devqubit``
-API or the JSON endpoints at ``/api/*``.
+This package is an internal implementation detail of ``devqubit[ui]``.
+The web interface and REST API (``/api/*``) may change between versions.
+For programmatic access, prefer the :mod:`devqubit` Python API.
 """
 
 from importlib.metadata import version

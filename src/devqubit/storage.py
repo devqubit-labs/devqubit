@@ -4,43 +4,28 @@
 """
 Storage backend access (advanced).
 
-This module provides direct access to storage backends for advanced use
-cases. Most users should use the high-level API in :mod:`devqubit` and
-:mod:`devqubit.runs` instead.
+Most users should use the high-level APIs in :mod:`devqubit` and
+:mod:`devqubit.runs`. This module is for advanced use cases that
+require direct storage access or custom backend implementations.
 
-Basic Configuration
--------------------
+Factory Functions
+-----------------
 >>> from devqubit.storage import create_store, create_registry
->>> store = create_store()  # Uses global config
+>>> store = create_store()       # uses global config
 >>> registry = create_registry()
 
-Custom Configuration
---------------------
->>> from devqubit import Config
->>> from devqubit.storage import create_store, create_registry
->>> config = Config(root_dir="/custom/path")
->>> store = create_store(config=config)
->>> registry = create_registry(config=config)
+>>> store = create_store("s3://bucket/devqubit/objects")
+>>> registry = create_registry("s3://bucket/devqubit")
 
-Protocols
----------
-For creating custom storage backends, implement these protocols:
+Custom Backends
+---------------
+Implement the protocol interfaces for custom storage:
 
 >>> from devqubit.storage import ObjectStoreProtocol, RegistryProtocol
->>> class MyStore:
-...     def put_bytes(self, data: bytes) -> str: ...
-...     def get_bytes(self, digest: str) -> bytes: ...
-...     # ... etc.
 
-Types
------
+Data Types
+----------
 >>> from devqubit.storage import ArtifactRef, RunSummary, BaselineInfo
->>> ref = ArtifactRef(
-...     kind="qiskit.qpy.circuits",
-...     digest="sha256:abc...",
-...     media_type="application/x-qpy",
-...     role="program",
-... )
 """
 
 from __future__ import annotations
@@ -85,7 +70,7 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -96,5 +81,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

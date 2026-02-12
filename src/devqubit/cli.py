@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 devqubit
 
-"""CLI entry point."""
+"""
+Command-line interface entry point.
+
+This module is registered as a console script (``devqubit``) and
+delegates to the engine's CLI implementation.
+"""
 
 from __future__ import annotations
 
 
 def main() -> None:
-    """Entry point for devqubit CLI."""
+    """Run the ``devqubit`` CLI."""
     from devqubit_engine.cli import main as core_main
 
     core_main()

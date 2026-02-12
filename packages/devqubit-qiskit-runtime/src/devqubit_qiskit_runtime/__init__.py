@@ -1,8 +1,16 @@
-"""
-Internal IBM Qiskit Runtime adapter implementation package for devqubit.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 devqubit
 
-This package provides integration with Qiskit Runtime primitives,
-enabling automatic tracking of quantum circuit execution and results.
-It is installed as a dependency of `devqubit` and is not considered
-part of the stable public API. Prefer importing from `devqubit`.
+"""
+IBM Qiskit Runtime adapter for devqubit.
+
+Provides automatic circuit capture, transpilation management, device
+calibration snapshots, and result logging for Qiskit Runtime V2
+primitives (``SamplerV2``, ``EstimatorV2``).  Registered as a
+``devqubit.adapters`` entry point and discovered automatically by
+:meth:`Run.wrap`.
+
+This package is an internal implementation detail of
+``devqubit[qiskit-runtime]``.  Users should import from :mod:`devqubit`,
+not from this package directly.
 """

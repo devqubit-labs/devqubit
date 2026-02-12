@@ -1,11 +1,16 @@
 # devqubit-braket
 
-Amazon Braket adapter for devqubit. Automatically captures circuits, results, and device information from Braket simulators and QPUs.
+[![PyPI](https://img.shields.io/pypi/v/devqubit-braket)](https://pypi.org/project/devqubit-braket/)
+
+Amazon Braket adapter for [devqubit](https://github.com/devqubit-labs/devqubit) — automatic circuit capture, device property snapshots, and result logging for Braket local simulators and managed QPUs.
+
+> [!IMPORTANT]
+> **This is an internal adapter package.** Install via `pip install "devqubit[braket]"` and use the `devqubit` public API.
 
 ## Installation
 
 ```bash
-pip install devqubit[braket]
+pip install "devqubit[braket]"
 ```
 
 ## Usage
@@ -25,9 +30,18 @@ with track(project="braket-exp") as run:
 
 ## What's Captured
 
-- **Circuits** — OpenQASM 3, Braket IR
-- **Results** — Measurement counts, result types
-- **Device info** — Device ARN, properties, topology
+| Artifact | Kind | Role |
+|---|---|---|
+| OpenQASM 3 | `source.openqasm3` | `program` |
+| Circuit diagram | `braket.circuits.diagram` | `program` |
+| Measurement counts | `result.counts.json` | `result` |
+| Raw result | `result.braket.raw.json` | `result_raw` |
+| Device properties | `device.braket.raw_properties.json` | `device_raw` |
+| Execution envelope | `devqubit.envelope.json` | `envelope` |
+
+## Documentation
+
+See the [Adapters guide](https://devqubit.readthedocs.io/en/latest/guides/adapters.html) for details on wrapping options, batch execution, and performance tuning.
 
 ## License
 

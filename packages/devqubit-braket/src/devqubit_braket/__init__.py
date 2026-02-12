@@ -1,8 +1,15 @@
-"""
-Internal Amazon Braket adapter implementation package for devqubit.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 devqubit
 
-This package provides integration with Braket samplers and simulators,
-enabling automatic tracking of quantum circuit execution and results.
-It is installed as a dependency of `devqubit` and is not considered
-part of the stable public API. Prefer importing from `devqubit`.
+"""
+Amazon Braket adapter for devqubit.
+
+Provides automatic circuit capture (OpenQASM 3), device property
+snapshots, and result logging for Braket local simulators and managed
+QPUs.  Registered as a ``devqubit.adapters`` entry point and discovered
+automatically by :meth:`Run.wrap`.
+
+This package is an internal implementation detail of
+``devqubit[braket]``.  Users should import from :mod:`devqubit`,
+not from this package directly.
 """

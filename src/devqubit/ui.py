@@ -2,34 +2,20 @@
 # SPDX-FileCopyrightText: 2026 devqubit
 
 """
-Web UI for experiment visualization (optional).
+Web UI for experiment visualization.
 
-This module provides the web-based user interface for browsing and
-visualizing devqubit experiments. It requires the optional ``devqubit[ui]``
-extra to be installed.
+Requires the optional ``devqubit[ui]`` extra::
 
-Installation
-------------
-To use the UI, install with the ui extra::
-
-    pip install devqubit[ui]
+    pip install "devqubit[ui]"
 
 Starting the Server
 -------------------
 >>> from devqubit.ui import run_server
 >>> run_server(port=8080)
-Starting devqubit UI at http://localhost:8080
 
 Or from the command line::
 
     devqubit ui --port 8080
-
-Note
-----
-If you see an ImportError when importing from this module, install
-the UI dependencies with::
-
-    pip install devqubit[ui]
 """
 
 from __future__ import annotations
@@ -52,19 +38,17 @@ _LAZY_IMPORTS = {
 
 
 def __getattr__(name: str) -> Any:
-    """
-    Lazy import handler with helpful error messages for optional dependencies.
-    """
+    """Lazy-import handler with a helpful error for missing UI dependencies."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         try:
             module = __import__(module_path, fromlist=[attr_name])
-        except ImportError as e:
+        except ImportError as exc:
             raise ImportError(
-                f"The devqubit UI requires additional dependencies.\n"
-                f"Install with: pip install devqubit[ui]\n"
-                f"Original error: {e}"
-            ) from e
+                "The devqubit UI requires additional dependencies.\n"
+                "Install with: pip install 'devqubit[ui]'\n"
+                f"Original error: {exc}"
+            ) from exc
         value = getattr(module, attr_name)
         globals()[name] = value
         return value
@@ -72,5 +56,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))

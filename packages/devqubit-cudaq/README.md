@@ -1,14 +1,21 @@
 # devqubit-cudaq
 
-CUDA-Q adapter for the devqubit quantum experiment tracking system.
+[![PyPI](https://img.shields.io/pypi/v/devqubit-cudaq)](https://pypi.org/project/devqubit-cudaq/)
+
+NVIDIA CUDA-Q adapter for [devqubit](https://github.com/devqubit-labs/devqubit) — automatic kernel capture, target snapshots, and result logging for CUDA-Q `sample` and `observe` workflows.
+
+> [!IMPORTANT]
+> **This is an internal adapter package.** Install via `pip install "devqubit[cudaq]"` and use the `devqubit` public API.
 
 ## Installation
 
 ```bash
-pip install devqubit[cudaq]
+pip install "devqubit[cudaq]"
 ```
 
 ## Usage
+
+### Sampling
 
 ```python
 import cudaq
@@ -17,21 +24,42 @@ from devqubit import track
 @cudaq.kernel
 def bell():
     q = cudaq.qvector(2)
-    cudaq.h(q[0])
-    cudaq.cx(q[0], q[1])
-    cudaq.mz(q)
+    h(q[0])
+    x.ctrl(q[0], q[1])
+    mz(q)
 
 with track(project="cudaq-experiment") as run:
     executor = run.wrap(cudaq)
     result = executor.sample(bell, shots_count=1000)
-    print(result)
+```
+
+### Observe (Expectation Values)
+
+```python
+from cudaq import spin
+
+hamiltonian = spin.z(0)
+
+with track(project="cudaq-vqe") as run:
+    executor = run.wrap(cudaq)
+    result = executor.observe(bell, hamiltonian)
+    print(result.expectation())
 ```
 
 ## What's Captured
 
-- **Circuits** — Cirq JSON, OpenQASM 3
-- **Results** — Measurement counts, histograms
-- **Simulator info** — Simulator type, configuration
+| Artifact | Kind | Role |
+|---|---|---|
+| Kernel JSON | `cudaq.kernel.json` | `program` |
+| Kernel diagram | `cudaq.kernel.diagram` | `program` |
+| MLIR (Quake) | `cudaq.kernel.mlir` | `program` |
+| QIR | `cudaq.kernel.qir` | `program` |
+| Counts / expectation | `result.cudaq.output.json` | `result` |
+| Execution envelope | `devqubit.envelope.json` | `envelope` |
+
+## Documentation
+
+See the [Adapters guide](https://devqubit.readthedocs.io/en/latest/guides/adapters.html) for details on `observe` workflows, performance tuning, and spin operator capture.
 
 ## License
 

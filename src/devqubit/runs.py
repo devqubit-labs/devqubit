@@ -4,40 +4,29 @@
 """
 Run navigation and baseline management.
 
-This module provides high-level functions for loading, listing, and
-searching runs, as well as managing project baselines. All functions
-use the global configuration automatically.
+High-level functions for loading, listing, searching, and managing
+quantum experiment runs. All functions resolve storage backends from
+the global configuration automatically; pass an explicit ``registry``
+to override.
 
 Loading Runs
 ------------
 >>> from devqubit.runs import load_run
->>> run = load_run("abc123")
+>>> run = load_run("baseline-v1", project="bell-state")
 >>> print(run.project, run.status)
 
-Listing Runs
-------------
->>> from devqubit.runs import list_runs
->>> recent = list_runs(project="my_project", limit=10)
->>> for summary in recent:
-...     print(summary["run_id"], summary["status"])
-
-Searching Runs
---------------
->>> from devqubit.runs import search_runs
->>> high_fidelity = search_runs(
-...     "metric.fidelity > 0.95",
-...     sort_by="metric.fidelity",
-...     limit=10,
-... )
+Listing and Searching
+---------------------
+>>> from devqubit.runs import list_runs, search_runs
+>>> list_runs(project="bell-state", limit=10)
+>>> search_runs("metric.fidelity > 0.95", sort_by="metric.fidelity")
 
 Baseline Management
 -------------------
 >>> from devqubit.runs import get_baseline, set_baseline, clear_baseline
->>> baseline = get_baseline("my_project")
->>> if baseline:
-...     print(f"Baseline: {baseline['run_id']}")
->>> set_baseline("my_project", "run_abc123")
->>> clear_baseline("my_project")
+>>> set_baseline("bell-state", "run_abc123")
+>>> get_baseline("bell-state")
+>>> clear_baseline("bell-state")
 
 DataFrame Export
 ----------------
@@ -96,61 +85,61 @@ _LAZY_IMPORTS = {
 
 
 def _get_registry() -> "RegistryProtocol":
-    """Get registry from global config."""
+    """Return the registry from the global configuration."""
     from devqubit_engine.config import get_config
     from devqubit_engine.storage.factory import create_registry
 
     return create_registry(config=get_config())
 
 
+# ---------------------------------------------------------------------------
+# Run loading
+# ---------------------------------------------------------------------------
+
+
 def load_run(
     run_id_or_name: str,
     *,
     project: str | None = None,
-    registry: "RegistryProtocol | None" = None,
-) -> "RunRecord":
-    """
-    Load a run by ID or name.
+    registry: RegistryProtocol | None = None,
+) -> RunRecord:
+    """Load a run by ID or name.
 
-    When ``project`` is provided, the first argument can be either a run ID
-    or a run name. The function first attempts to load by ID, then falls
-    back to searching by name within the project.
+    The first argument may be either a run ID (ULID) or a human-readable
+    run name.  When *project* is provided, the function first tries to
+    load by ID, then falls back to a name lookup within the project.
 
     Parameters
     ----------
     run_id_or_name : str
         Run identifier (ULID) or run name.
     project : str, optional
-        Project name. Required when loading by name.
+        Project name.  Required when loading by name.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.  Uses global config when *None*.
 
     Returns
     -------
     RunRecord
-        The loaded run record.
 
     Raises
     ------
     RunNotFoundError
-        If the run does not exist.
+        If the run cannot be found.
 
     Examples
     --------
-    >>> from devqubit.runs import load_run
-    >>> # Load by ID
-    >>> run = load_run("01HXYZ...")
-    >>> # Load by name within a project
-    >>> run = load_run("bell-experiment-v2", project="bell_state")
+    >>> load_run("01HXYZ...")
+    >>> load_run("bell-experiment-v2", project="bell-state")
     """
     reg = registry if registry is not None else _get_registry()
 
-    # Try loading by ID first (fast path, backward compatible)
+    # Fast path: try by ID
     record = reg.load_or_none(run_id_or_name)
     if record is not None:
         return record
 
-    # If project provided, try loading by name
+    # Fallback: name lookup within the project
     if project is not None:
         runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
         if runs:
@@ -162,7 +151,6 @@ def load_run(
             f"No run with name {run_id_or_name!r} in project {project!r}"
         )
 
-    # No project provided and ID not found
     from devqubit_engine.storage.errors import RunNotFoundError
 
     raise RunNotFoundError(run_id_or_name)
@@ -172,43 +160,36 @@ def load_run_or_none(
     run_id_or_name: str,
     *,
     project: str | None = None,
-    registry: "RegistryProtocol | None" = None,
-) -> "RunRecord | None":
+    registry: RegistryProtocol | None = None,
+) -> RunRecord | None:
     """
-    Load a run by ID or name, returning None if not found.
+    Load a run by ID or name, returning *None* if not found.
 
     Parameters
     ----------
     run_id_or_name : str
         Run identifier (ULID) or run name.
     project : str, optional
-        Project name. Required when loading by name.
+        Project name.  Required when loading by name.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
     RunRecord or None
-        The run record, or None if not found.
 
     Examples
     --------
-    >>> from devqubit.runs import load_run_or_none
-    >>> run = load_run_or_none("maybe_exists")
+    >>> run = load_run_or_none("maybe-exists", project="bell-state")
     >>> if run is not None:
     ...     print(run.status)
-
-    >>> # Try loading by name
-    >>> run = load_run_or_none("my-experiment", project="bell_state")
     """
     reg = registry if registry is not None else _get_registry()
 
-    # Try loading by ID first
     record = reg.load_or_none(run_id_or_name)
     if record is not None:
         return record
 
-    # If project provided, try loading by name
     if project is not None:
         runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
         if runs:
@@ -221,47 +202,44 @@ def run_exists(
     run_id_or_name: str,
     *,
     project: str | None = None,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> bool:
     """
-    Check if a run exists by ID or name.
+    Check whether a run exists by ID or name.
 
     Parameters
     ----------
     run_id_or_name : str
         Run identifier (ULID) or run name.
     project : str, optional
-        Project name. Required when checking by name.
+        Project name.  Required when checking by name.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
     bool
-        True if the run exists.
 
     Examples
     --------
-    >>> from devqubit.runs import run_exists
-    >>> if run_exists("abc123"):
-    ...     print("Run found!")
-
-    >>> # Check by name
-    >>> if run_exists("my-experiment", project="bell_state"):
-    ...     print("Run found!")
+    >>> if run_exists("nightly-v1", project="bell-state"):
+    ...     print("Run found")
     """
     reg = registry if registry is not None else _get_registry()
 
-    # Try by ID first
     if reg.exists(run_id_or_name):
         return True
 
-    # If project provided, try by name
     if project is not None:
         runs = reg.list_runs(project=project, name=run_id_or_name, limit=1)
         return len(runs) > 0
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Run listing and search
+# ---------------------------------------------------------------------------
 
 
 def list_runs(
@@ -276,13 +254,13 @@ def list_runs(
     group_id: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    registry: "RegistryProtocol | None" = None,
-) -> "list[RunSummary]":
+    registry: RegistryProtocol | None = None,
+) -> list[RunSummary]:
     """
     List runs with optional filtering.
 
-    Returns lightweight run summaries suitable for display and navigation.
-    For full run details, use :func:`load_run`.
+    Returns lightweight summaries ordered by ``created_at`` descending.
+    Use :func:`load_run` to fetch the full record for a given run.
 
     Parameters
     ----------
@@ -291,9 +269,10 @@ def list_runs(
     name : str, optional
         Filter by run name (exact match).
     adapter : str, optional
-        Filter by adapter name (e.g., "qiskit", "pennylane").
+        Filter by adapter (e.g. ``"qiskit"``, ``"pennylane"``).
     status : str, optional
-        Filter by run status ("RUNNING", "FINISHED", "FAILED", "KILLED").
+        Filter by status (``"RUNNING"``, ``"FINISHED"``, ``"FAILED"``,
+        ``"KILLED"``).
     backend_name : str, optional
         Filter by backend name.
     fingerprint : str, optional
@@ -302,31 +281,21 @@ def list_runs(
         Filter by git commit SHA.
     group_id : str, optional
         Filter by group ID.
-    limit : int, default=100
-        Maximum number of results.
-    offset : int, default=0
-        Number of results to skip (for pagination).
+    limit : int, default 100
+        Maximum results to return.
+    offset : int, default 0
+        Number of results to skip (pagination).
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
-    list of RunSummary
-        Matching runs, ordered by created_at descending.
+    list[RunSummary]
 
     Examples
     --------
-    >>> from devqubit.runs import list_runs
-    >>> # List recent runs for a project
-    >>> runs = list_runs(project="bell_state", limit=10)
-    >>> for r in runs:
-    ...     print(f"{r['run_id']}: {r['status']}")
-
-    >>> # List only finished runs
-    >>> finished = list_runs(status="FINISHED", limit=50)
-
-    >>> # Find run by name
-    >>> runs = list_runs(project="bell_state", name="nightly-check")
+    >>> for r in list_runs(project="bell-state", limit=5):
+    ...     print(r["run_id"], r["status"])
     """
     reg = registry if registry is not None else _get_registry()
     return reg.list_runs(
@@ -350,67 +319,50 @@ def search_runs(
     descending: bool = True,
     limit: int = 100,
     offset: int = 0,
-    registry: "RegistryProtocol | None" = None,
-) -> "list[RunRecord]":
+    registry: RegistryProtocol | None = None,
+) -> list[RunRecord]:
     """
     Search runs using a query expression.
 
-    Supports filtering by params, metrics, tags, and top-level fields
-    using a simple query syntax.
+    Supports filtering by parameters, metrics, tags, and top-level fields
+    with a simple expression syntax.
 
     Query Syntax
-    ------------
-    Conditions are joined with AND::
+    ~~~~~~~~~~~~~
+    ::
 
         field op value [and field op value ...]
 
-    Supported fields:
-        - ``params.*``: Experiment parameters
-        - ``metric.*`` or ``metrics.*``: Logged metrics
-        - ``tag.*`` or ``tags.*``: String tags
-        - ``project``, ``adapter``, ``status``, ``backend``, ``fingerprint``
+    **Fields:** ``params.*``, ``metric.*`` / ``metrics.*``,
+    ``tag.*`` / ``tags.*``, ``project``, ``adapter``, ``status``,
+    ``backend``, ``fingerprint``.
 
-    Supported operators:
-        - ``=``, ``!=``: Equality
-        - ``>``, ``>=``, ``<``, ``<=``: Numeric comparison
-        - ``~``: Contains (case-insensitive substring)
-        - ``exists``: Field exists
+    **Operators:** ``=``, ``!=``, ``>``, ``>=``, ``<``, ``<=``,
+    ``~`` (case-insensitive substring), ``exists``.
 
     Parameters
     ----------
     query : str
         Query expression.
     sort_by : str, optional
-        Field to sort by (e.g., "metric.fidelity").
-    descending : bool, default=True
+        Sort field (e.g. ``"metric.fidelity"``).
+    descending : bool, default True
         Sort in descending order.
-    limit : int, default=100
-        Maximum number of results.
-    offset : int, default=0
-        Number of results to skip.
+    limit : int, default 100
+        Maximum results.
+    offset : int, default 0
+        Results to skip.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
-    list of RunRecord
-        Matching run records.
+    list[RunRecord]
 
     Examples
     --------
-    >>> from devqubit.runs import search_runs
-    >>> # Find high-fidelity runs
-    >>> results = search_runs(
-    ...     "metric.fidelity > 0.95",
-    ...     sort_by="metric.fidelity",
-    ...     limit=10,
-    ... )
-
-    >>> # Find runs with specific params
-    >>> results = search_runs("params.shots >= 1000 and status = FINISHED")
-
-    >>> # Find runs by tag
-    >>> results = search_runs("tags.experiment ~ bell")
+    >>> search_runs("metric.fidelity > 0.95", sort_by="metric.fidelity")
+    >>> search_runs("params.shots >= 1000 and status = FINISHED")
     """
     reg = registry if registry is not None else _get_registry()
     return reg.search_runs(
@@ -426,53 +378,54 @@ def count_runs(
     *,
     project: str | None = None,
     status: str | None = None,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> int:
     """
-    Count runs matching filters.
+    Count runs matching the given filters.
 
     Parameters
     ----------
     project : str, optional
-        Filter by project name.
+        Filter by project.
     status : str, optional
-        Filter by run status.
+        Filter by status.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
     int
-        Number of matching runs.
 
     Examples
     --------
-    >>> from devqubit.runs import count_runs
-    >>> total = count_runs(project="my_project")
-    >>> finished = count_runs(project="my_project", status="FINISHED")
-    >>> print(f"{finished}/{total} runs finished")
+    >>> total = count_runs(project="bell-state")
+    >>> finished = count_runs(project="bell-state", status="FINISHED")
     """
     reg = registry if registry is not None else _get_registry()
     return reg.count_runs(project=project, status=status)
 
 
+# ---------------------------------------------------------------------------
+# Project and group navigation
+# ---------------------------------------------------------------------------
+
+
 def list_projects(
     *,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> list[str]:
     """
-    List all unique project names.
+    List all project names.
 
     Returns
     -------
-    list of str
-        Sorted list of project names.
+    list[str]
+        Sorted project names.
 
     Examples
     --------
-    >>> from devqubit.runs import list_projects
-    >>> projects = list_projects()
-    >>> print("Available projects:", projects)
+    >>> list_projects()
+    ['bell-state', 'vqe-hydrogen']
     """
     reg = registry if registry is not None else _get_registry()
     return reg.list_projects()
@@ -483,7 +436,7 @@ def list_groups(
     project: str | None = None,
     limit: int = 100,
     offset: int = 0,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> list[dict[str, Any]]:
     """
     List run groups with optional project filtering.
@@ -491,24 +444,22 @@ def list_groups(
     Parameters
     ----------
     project : str, optional
-        Filter by project name.
-    limit : int, default=100
-        Maximum number of results.
-    offset : int, default=0
-        Number of results to skip.
+        Filter by project.
+    limit : int, default 100
+        Maximum results.
+    offset : int, default 0
+        Results to skip.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
-    list of dict
-        Group summaries with group_id, group_name, and run_count.
+    list[dict]
+        Group summaries with ``group_id``, ``group_name``, ``run_count``.
 
     Examples
     --------
-    >>> from devqubit.runs import list_groups
-    >>> groups = list_groups(project="my_project")
-    >>> for g in groups:
+    >>> for g in list_groups(project="bell-state"):
     ...     print(f"{g['group_name']}: {g['run_count']} runs")
     """
     reg = registry if registry is not None else _get_registry()
@@ -520,8 +471,8 @@ def list_runs_in_group(
     *,
     limit: int = 100,
     offset: int = 0,
-    registry: "RegistryProtocol | None" = None,
-) -> "list[RunSummary]":
+    registry: RegistryProtocol | None = None,
+) -> list[RunSummary]:
     """
     List runs belonging to a specific group.
 
@@ -529,34 +480,36 @@ def list_runs_in_group(
     ----------
     group_id : str
         Group identifier.
-    limit : int, default=100
-        Maximum number of results.
-    offset : int, default=0
-        Number of results to skip.
+    limit : int, default 100
+        Maximum results.
+    offset : int, default 0
+        Results to skip.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
-    list of RunSummary
-        Runs in the group, ordered by created_at descending.
+    list[RunSummary]
 
     Examples
     --------
-    >>> from devqubit.runs import list_runs_in_group
-    >>> runs = list_runs_in_group("group_abc123")
-    >>> for r in runs:
+    >>> for r in list_runs_in_group("sweep_20260115"):
     ...     print(r["run_id"])
     """
     reg = registry if registry is not None else _get_registry()
     return reg.list_runs_in_group(group_id, limit=limit, offset=offset)
 
 
+# ---------------------------------------------------------------------------
+# Baseline management
+# ---------------------------------------------------------------------------
+
+
 def get_baseline(
     project: str,
     *,
-    registry: "RegistryProtocol | None" = None,
-) -> "BaselineInfo | None":
+    registry: RegistryProtocol | None = None,
+) -> BaselineInfo | None:
     """
     Get the baseline run for a project.
 
@@ -565,22 +518,19 @@ def get_baseline(
     project : str
         Project name.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
     BaselineInfo or None
-        Baseline info (project, run_id, set_at), or None if no baseline set.
+        Dict with ``project``, ``run_id``, ``set_at``; or *None* when no
+        baseline is configured.
 
     Examples
     --------
-    >>> from devqubit.runs import get_baseline
-    >>> baseline = get_baseline("my_project")
+    >>> baseline = get_baseline("bell-state")
     >>> if baseline:
-    ...     print(f"Baseline run: {baseline['run_id']}")
-    ...     print(f"Set at: {baseline['set_at']}")
-    ... else:
-    ...     print("No baseline configured")
+    ...     print(baseline["run_id"])
     """
     reg = registry if registry is not None else _get_registry()
     return reg.get_baseline(project)
@@ -590,44 +540,41 @@ def set_baseline(
     project: str,
     run_id: str,
     *,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> None:
     """
     Set the baseline run for a project.
 
-    The baseline is used as the reference point for verification
-    in CI/CD pipelines.
+    The baseline serves as the reference for verification in CI/CD
+    pipelines (see :func:`~devqubit.compare.verify_baseline`).
 
     Parameters
     ----------
     project : str
         Project name.
     run_id : str
-        Run ID to set as baseline.
+        Run ID to promote as baseline.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Raises
     ------
     RunNotFoundError
-        If the specified run does not exist.
+        If *run_id* does not exist.
 
     Examples
     --------
-    >>> from devqubit.runs import set_baseline
-    >>> set_baseline("my_project", "run_abc123")
-    >>> print("Baseline updated!")
+    >>> set_baseline("bell-state", "01HXYZ...")
     """
     reg = registry if registry is not None else _get_registry()
-    # Verify run exists
-    reg.load(run_id)
+    reg.load(run_id)  # verify existence
     reg.set_baseline(project, run_id)
 
 
 def clear_baseline(
     project: str,
     *,
-    registry: "RegistryProtocol | None" = None,
+    registry: RegistryProtocol | None = None,
 ) -> bool:
     """
     Clear the baseline for a project.
@@ -637,23 +584,25 @@ def clear_baseline(
     project : str
         Project name.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
     bool
-        True if a baseline was cleared, False if none existed.
+        *True* if a baseline was cleared, *False* if none was set.
 
     Examples
     --------
-    >>> from devqubit.runs import clear_baseline
-    >>> if clear_baseline("my_project"):
-    ...     print("Baseline cleared")
-    ... else:
-    ...     print("No baseline was set")
+    >>> clear_baseline("bell-state")
+    True
     """
     reg = registry if registry is not None else _get_registry()
     return reg.clear_baseline(project)
+
+
+# ---------------------------------------------------------------------------
+# DataFrame export
+# ---------------------------------------------------------------------------
 
 
 def runs_to_dataframe(
@@ -664,31 +613,31 @@ def runs_to_dataframe(
     since: str | None = None,
     until: str | None = None,
     limit: int = 1000,
-    registry: "RegistryProtocol | None" = None,
-) -> "pd.DataFrame":
+    registry: RegistryProtocol | None = None,
+) -> pd.DataFrame:
     """
-    Load runs into a pandas DataFrame with flat columns.
+    Export runs as a flat pandas DataFrame.
 
-    Standard columns are always present (``run_id``, ``project``, ``status``,
-    …).  Params, metrics, and tags are expanded into ``param.*``,
-    ``metric.*``, ``tag.*`` columns.
+    Standard columns (``run_id``, ``project``, ``status``, ...) are always
+    present.  Parameters, metrics, and tags are expanded into
+    ``param.*``, ``metric.*``, and ``tag.*`` columns respectively.
 
     Parameters
     ----------
     project : str, optional
-        Filter by project name.
+        Filter by project.
     group_id : str, optional
-        Filter by group ID (for sweep/experiment aggregation).
+        Filter by group ID.
     status : str, optional
         Filter by status.
     since : str, optional
-        Only include runs created after this ISO 8601 datetime.
+        Include runs created after this ISO 8601 datetime.
     until : str, optional
-        Only include runs created before this ISO 8601 datetime.
+        Include runs created before this ISO 8601 datetime.
     limit : int, default 1000
-        Maximum number of runs to load.
+        Maximum runs to load.
     registry : RegistryProtocol, optional
-        Custom registry. Uses global config if not provided.
+        Registry override.
 
     Returns
     -------
@@ -697,11 +646,9 @@ def runs_to_dataframe(
 
     Examples
     --------
-    >>> from devqubit.runs import runs_to_dataframe
     >>> df = runs_to_dataframe(project="vqe")
     >>> df[["run_id", "metric.fidelity", "param.shots"]].head()
 
-    >>> # Group aggregation
     >>> df = runs_to_dataframe(group_id="sweep_20260115")
     >>> df.groupby("param.optimization_level")["metric.fidelity"].mean()
     """
@@ -720,7 +667,7 @@ def runs_to_dataframe(
 
 
 def __getattr__(name: str) -> Any:
-    """Lazy import handler."""
+    """Lazy-import handler."""
     if name in _LAZY_IMPORTS:
         module_path, attr_name = _LAZY_IMPORTS[name]
         module = __import__(module_path, fromlist=[attr_name])
@@ -731,5 +678,5 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> list[str]:
-    """List available attributes."""
+    """List available public attributes."""
     return sorted(set(__all__) | set(_LAZY_IMPORTS.keys()))
