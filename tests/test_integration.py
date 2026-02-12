@@ -137,7 +137,7 @@ class TestVerifyBaselineWorkflow:
 
         # Lenient policy - params don't need to match
         lenient = VerifyPolicy(params_must_match=False)
-        result = verify_baseline(
+        _ = verify_baseline(
             candidate_id,
             project="policy_test",
             policy=lenient,
