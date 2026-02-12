@@ -30,7 +30,7 @@ _MAX_METADATA_SIZE = 10 * 1024 * 1024
 _MAX_OBJECT_SIZE = 1024 * 1024 * 1024
 
 
-def _validate_digest(digest: str) -> str | None:
+def validate_digest(digest: str) -> str | None:
     """
     Validate digest format and return hex part.
 
@@ -59,7 +59,7 @@ def _validate_digest(digest: str) -> str | None:
     return hex_part
 
 
-def _digest_to_path(hex_part: str) -> str:
+def digest_to_path(hex_part: str) -> str:
     """Convert hex digest to bundle object path."""
     return f"objects/sha256/{hex_part[:2]}/{hex_part}"
 
@@ -160,11 +160,11 @@ class BundleStore:
         ObjectNotFoundError
             If the object is not present in the bundle.
         """
-        hex_part = _validate_digest(digest)
+        hex_part = validate_digest(digest)
         if hex_part is None:
             raise ValueError(f"Invalid digest format: {digest!r}")
 
-        path = _digest_to_path(hex_part)
+        path = digest_to_path(hex_part)
 
         # Check for zip bomb before reading
         info = self._info_cache.get(path)
@@ -212,11 +212,11 @@ class BundleStore:
             True if the object exists in the bundle.
             Invalid digests return False.
         """
-        hex_part = _validate_digest(digest)
+        hex_part = validate_digest(digest)
         if hex_part is None:
             return False
 
-        path = _digest_to_path(hex_part)
+        path = digest_to_path(hex_part)
         return path in self._names
 
     def get_size(self, digest: str) -> int:
@@ -240,11 +240,11 @@ class BundleStore:
         ObjectNotFoundError
             If the object is not present in the bundle.
         """
-        hex_part = _validate_digest(digest)
+        hex_part = validate_digest(digest)
         if hex_part is None:
             raise ValueError(f"Invalid digest format: {digest!r}")
 
-        path = _digest_to_path(hex_part)
+        path = digest_to_path(hex_part)
         info = self._info_cache.get(path)
 
         if info is None:

@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from devqubit_engine.bundle.reader import digest_to_path, validate_digest
 from devqubit_engine.storage.factory import create_registry, create_store
 from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
 from devqubit_engine.tracking.record import resolve_run_id
@@ -213,13 +214,12 @@ def pack_run(
             if not isinstance(art, dict):
                 continue
             digest = art.get("digest", "")
-            if (
-                isinstance(digest, str)
-                and digest.startswith("sha256:")
-                and digest not in seen
-            ):
-                seen.add(digest)
-                digests.append(digest)
+            hex_part = validate_digest(digest)
+            if hex_part is not None:
+                canonical = f"sha256:{hex_part}"
+                if canonical not in seen:
+                    seen.add(canonical)
+                    digests.append(canonical)
 
         logger.debug(
             "Found %d unique digests in %d artifacts", len(digests), len(artifacts)
@@ -258,8 +258,7 @@ def pack_run(
 
             # Write referenced objects
             for digest in digests:
-                hex_part = digest[len("sha256:") :]
-                obj_path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
+                obj_path = digest_to_path(digest[len("sha256:") :])
 
                 try:
                     data = store.get_bytes(digest)
@@ -430,17 +429,10 @@ def unpack_bundle(
             if not isinstance(art, dict):
                 continue
             digest = art.get("digest", "")
-            if not isinstance(digest, str) or not digest.startswith("sha256:"):
-                continue
-
-            hex_part = digest[7:].strip().lower()
-            if len(hex_part) != 64:
-                logger.warning("Invalid digest length in run record: %r", digest)
-                continue
-            try:
-                int(hex_part, 16)
-            except ValueError:
-                logger.warning("Invalid digest hex in run record: %r", digest)
+            hex_part = validate_digest(digest)
+            if hex_part is None:
+                if digest:
+                    logger.warning("Invalid digest in run record: %r", digest)
                 continue
 
             digest = f"sha256:{hex_part}"
@@ -462,7 +454,7 @@ def unpack_bundle(
                         "Object existence check failed for %s: %s", digest[:24], exc
                     )
 
-            obj_path = f"objects/sha256/{hex_part[:2]}/{hex_part}"
+            obj_path = digest_to_path(hex_part)
 
             try:
                 data = zf.read(obj_path)
