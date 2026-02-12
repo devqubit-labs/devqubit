@@ -213,6 +213,10 @@ class Config:
         Whether to capture git provenance. Default is True.
     validate : bool, optional
         Whether to validate records against schema. Default is True.
+    flush_every_n_steps : int or None, optional
+        Auto-flush metric history every N logged steps. When ``None``
+        (default), auto-flush is disabled and callers must invoke
+        ``Run.flush()`` manually for crash-safety.
     redaction : RedactionConfig, optional
         Configuration for redacting sensitive information.
 
@@ -233,6 +237,7 @@ class Config:
     capture_pip: bool = True
     capture_git: bool = True
     validate: bool = True
+    flush_every_n_steps: int | None = None
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
     def __post_init__(self) -> None:
@@ -294,6 +299,7 @@ class Config:
             "capture_pip": self.capture_pip,
             "capture_git": self.capture_git,
             "validate": self.validate,
+            "flush_every_n_steps": self.flush_every_n_steps,
             "redaction": {
                 "enabled": self.redaction.enabled,
                 "patterns": self.redaction.patterns,
@@ -364,6 +370,8 @@ def load_config() -> Config:
     DEVQUBIT_VALIDATE : str
         Validate run records against JSON schema.
         Default is true.
+    DEVQUBIT_FLUSH_EVERY_N_STEPS : str
+        Auto-flush metric history every N steps. Default is disabled.
     DEVQUBIT_REDACT_DISABLE : str
         Disable credential redaction. Values: "1", "true", "yes", "on".
         Default is false (redaction enabled).
@@ -412,6 +420,9 @@ def load_config() -> Config:
     capture_pip = _parse_bool(os.environ.get("DEVQUBIT_CAPTURE_PIP"), default=True)
     validate = _parse_bool(os.environ.get("DEVQUBIT_VALIDATE"), default=True)
 
+    flush_env = os.environ.get("DEVQUBIT_FLUSH_EVERY_N_STEPS")
+    flush_every_n_steps = int(flush_env) if flush_env else None
+
     config = Config(
         root_dir=root_dir,
         storage_url=os.environ.get("DEVQUBIT_STORAGE_URL", ""),
@@ -419,6 +430,7 @@ def load_config() -> Config:
         capture_pip=capture_pip,
         capture_git=capture_git,
         validate=validate,
+        flush_every_n_steps=flush_every_n_steps,
         redaction=redaction,
     )
 
