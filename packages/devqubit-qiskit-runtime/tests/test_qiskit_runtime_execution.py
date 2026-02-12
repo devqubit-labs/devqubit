@@ -467,15 +467,15 @@ class TestEdgeCases:
                 self.metadata = {"shots": sum(counts.values())}
 
                 class BitArray:
-                    def __init__(ba_self, c):
-                        ba_self._counts = c
+                    def __init__(self, c):
+                        self._counts = c
 
-                    def get_counts(ba_self):
-                        return ba_self._counts
+                    def get_counts(self):
+                        return self._counts
 
                 class DataBin:
-                    def __init__(db_self, c):
-                        db_self.meas = BitArray(c)
+                    def __init__(self, c):
+                        self.meas = BitArray(c)
 
                 self.data = DataBin(counts)
 

@@ -110,7 +110,6 @@ class TestTranspilationOptions:
 
     def test_to_metadata_dict_json_serializable(self):
         """to_metadata_dict returns JSON-serializable values."""
-        import json
 
         opts = TranspilationOptions.from_dict(
             {
