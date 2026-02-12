@@ -275,9 +275,7 @@ def get_all_counts_from_envelope(
     results: list[tuple[int, dict[str, int]]] = []
     skipped_count = 0
 
-    for idx in range(len(envelope.result.items)):
-        item = envelope.result.items[idx]
-
+    for idx, item in enumerate(envelope.result.items):
         if skip_failed and item.success is False:
             skipped_count += 1
             continue
