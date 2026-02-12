@@ -353,7 +353,7 @@ def _extract_connectivity_from_coupling_map(
     try:
         edges = coupling_map.get_edges()
         return [(int(e[0]), int(e[1])) for e in edges]
-    except (AttributeError, TypeError, ValueError) as e:
+    except (AttributeError, RuntimeError, TypeError, ValueError) as e:
         logger.debug("Failed to extract connectivity: %s", e)
         return None
 

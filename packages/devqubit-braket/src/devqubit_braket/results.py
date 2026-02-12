@@ -96,7 +96,7 @@ def extract_measurement_counts(
                 out = _to_counts_dict(v, canonicalize=canonicalize)
                 if out is not None:
                     return out
-        except (AttributeError, TypeError) as e:
+        except (AttributeError, TypeError, RuntimeError) as e:
             logger.debug("Failed in return expression: %s", e)
 
     return None
