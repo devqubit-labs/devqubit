@@ -177,13 +177,7 @@ class TestHistoryReadPath:
 
     def test_iter_metric_points_range(self, store, registry, qml_config):
         """Step range filtering works."""
-        ids = self._create_runs(
-            store,
-            registry,
-            qml_config,
-            n_runs=1,
-            n_steps=100,
-        )
+        ids = self._create_runs(store, registry, qml_config, n_runs=1, n_steps=100)
 
         pts = list(
             iter_metric_points(
@@ -201,13 +195,7 @@ class TestHistoryReadPath:
 
     def test_long_format_multi_run(self, store, registry, qml_config):
         """metric_history_long returns overlay-ready long-format rows."""
-        self._create_runs(
-            store,
-            registry,
-            qml_config,
-            n_runs=3,
-            n_steps=50,
-        )
+        self._create_runs(store, registry, qml_config, n_runs=3, n_steps=50)
 
         rows = metric_history_long(
             registry,
@@ -222,13 +210,7 @@ class TestHistoryReadPath:
 
     def test_long_format_downsampling(self, store, registry, qml_config):
         """max_points caps total returned rows."""
-        self._create_runs(
-            store,
-            registry,
-            qml_config,
-            n_runs=2,
-            n_steps=200,
-        )
+        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=200)
 
         rows = metric_history_long(
             registry,
@@ -242,13 +224,7 @@ class TestHistoryReadPath:
     def test_long_format_to_dataframe(self, store, registry, qml_config):
         """to_dataframe converts rows to pandas successfully."""
         pytest.importorskip("pandas")
-        self._create_runs(
-            store,
-            registry,
-            qml_config,
-            n_runs=2,
-            n_steps=30,
-        )
+        self._create_runs(store, registry, qml_config, n_runs=2, n_steps=30)
 
         rows = metric_history_long(registry, project="qnn", keys=["val/acc"])
         df = to_dataframe(rows)

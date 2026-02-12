@@ -74,7 +74,7 @@ logger = logging.getLogger(__name__)
 # Maximum artifact size in bytes (20 MB default)
 MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
 
-# Internal auto-flush interval. Chosen to balance crash-safety (short
+# Internal auto-flush interval.  Chosen to balance crash-safety (short
 # enough that a kill loses at most a few seconds of data) against I/O
 # overhead (long enough to batch many points per write).
 _FLUSH_INTERVAL_SECONDS: float = 10.0
@@ -84,9 +84,9 @@ class _FlushWorker:
     """
     Daemon thread that periodically flushes run state to the registry.
 
-    Internal sync thread: a background daemon wakes every ``interval``
-    seconds and persists buffered data so the user never has to think
-    about crash-safety or flush timing.
+    Mirrors the approach used by W&B's internal sync thread: a background
+    daemon wakes every ``interval`` seconds and persists buffered data so
+    the user never has to think about crash-safety or flush timing.
 
     Parameters
     ----------
@@ -202,7 +202,7 @@ class Run:
         self._metric_buffer: list[dict[str, Any]] = []
 
         # Background flush worker — started in __enter__, stopped in
-        # _finalize. None until context manager entry.
+        # _finalize.  None until context manager entry.
         self._flush_worker: _FlushWorker | None = None
 
         # Get config and backends
@@ -369,17 +369,14 @@ class Run:
             point = {"value": value_f, "step": step, "timestamp": ts}
 
             with self._lock:
-                # Append to in-record series (schema compat / finalize)
-                if "metric_series" not in self.record["data"]:
-                    self.record["data"]["metric_series"] = {}
-                if key not in self.record["data"]["metric_series"]:
-                    self.record["data"]["metric_series"][key] = []
-                self.record["data"]["metric_series"][key].append(point)
-
-                # Always keep scalar summary up-to-date (last value)
+                # Summary always reflects the latest value — used for
+                # run listings, comparisons, and sorting.
                 self.record["data"]["metrics"][key] = value_f
 
-                # Buffer for incremental flush
+                # Buffer for incremental flush to metric_points table.
+                # NOT stored in record["data"]["metric_series"] during
+                # the run to keep the record lean for periodic flushes.
+                # metric_series is reconstructed at finalize time.
                 self._metric_buffer.append(
                     {"run_id": self._run_id, "key": key, **point}
                 )
@@ -1224,6 +1221,16 @@ class Run:
         with self._lock:
             self.record["fingerprints"] = fingerprints
             self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
+
+            # Reconstruct metric_series from the metric_points table
+            # so the finalized record JSON is complete (backward compat,
+            # export, remote backends). During the run this was kept
+            # out of the record to avoid O(n) JSON rewrites on flush.
+            if hasattr(self._registry, "load_metric_series"):
+                series = self._registry.load_metric_series(self._run_id)
+                if series:
+                    self.record["data"]["metric_series"] = series
+
             run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
 
         # Validate if enabled

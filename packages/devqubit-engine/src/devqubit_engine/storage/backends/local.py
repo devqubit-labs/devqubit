@@ -721,6 +721,41 @@ class LocalRegistry:
                     break
                 yield pt
 
+    def load_metric_series(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        """
+        Load all metric time-series for a run from the ``metric_points`` table.
+
+        Returns the data in the same shape as ``record["data"]["metric_series"]``
+        so callers can drop it straight into the record dict for backward
+        compatibility.
+
+        Parameters
+        ----------
+        run_id : str
+            Run identifier.
+
+        Returns
+        -------
+        dict
+            ``{key: [{"value": float, "step": int, "timestamp": str}, ...]}``
+            ordered by step within each key.  Empty ``{}`` if no rows exist.
+        """
+        sql = (
+            "SELECT key, step, timestamp, value FROM metric_points "
+            "WHERE run_id = ? ORDER BY key, step"
+        )
+        series: dict[str, list[dict[str, Any]]] = {}
+        with self._get_connection() as conn:
+            for row in conn.execute(sql, (run_id,)):
+                series.setdefault(row["key"], []).append(
+                    {
+                        "value": row["value"],
+                        "step": row["step"],
+                        "timestamp": row["timestamp"],
+                    }
+                )
+        return series
+
     # ------------------------------------------------------------------
     # Retry helper
     # ------------------------------------------------------------------

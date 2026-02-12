@@ -37,11 +37,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# -----------------------------------------------------------------------
-# Single-run streaming
-# -----------------------------------------------------------------------
-
-
 def iter_metric_points(
     registry: RegistryProtocol,
     run_id: str,
@@ -99,11 +94,6 @@ def iter_metric_points(
         if end_step is not None and s > end_step:
             break
         yield pt
-
-
-# -----------------------------------------------------------------------
-# Multi-run long-format
-# -----------------------------------------------------------------------
 
 
 def metric_history_long(
@@ -172,7 +162,15 @@ def metric_history_long(
     for rid in run_ids:
         record = registry.load(rid)
         proj_name = record.project
-        series_dict = record.metric_series
+
+        # Prefer metric_points table (fast, works for in-progress runs).
+        # Fall back to record JSON for legacy records.
+        if hasattr(registry, "load_metric_series"):
+            series_dict = registry.load_metric_series(rid)
+            if not series_dict:
+                series_dict = record.metric_series
+        else:
+            series_dict = record.metric_series
 
         for mkey, points in series_dict.items():
             if keys_set and mkey not in keys_set:
@@ -200,11 +198,6 @@ def metric_history_long(
         rows = _downsample_rows(rows, max_points)
 
     return rows
-
-
-# -----------------------------------------------------------------------
-# Optional DataFrame conversion
-# -----------------------------------------------------------------------
 
 
 def to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -236,11 +229,6 @@ def to_dataframe(rows: list[dict[str, Any]]) -> pd.DataFrame:
         ) from None
 
     return pd.DataFrame(rows)
-
-
-# -----------------------------------------------------------------------
-# Internal helpers
-# -----------------------------------------------------------------------
 
 
 def _filter_step_range(
