@@ -369,7 +369,7 @@ class RegistryProtocol(Protocol):
         """
         ...
 
-    def load(self, run_id: str) -> "RunRecord":
+    def load(self, run_id: str) -> RunRecord:
         """
         Load a run record by ID.
 
@@ -390,7 +390,7 @@ class RegistryProtocol(Protocol):
         """
         ...
 
-    def load_or_none(self, run_id: str) -> "RunRecord | None":
+    def load_or_none(self, run_id: str) -> RunRecord | None:
         """
         Load a run record or return None if not found.
 
@@ -499,7 +499,7 @@ class RegistryProtocol(Protocol):
         offset: int = 0,
         sort_by: str | None = None,
         descending: bool = True,
-    ) -> list["RunRecord"]:
+    ) -> list[RunRecord]:
         """
         Search runs using a query expression.
 

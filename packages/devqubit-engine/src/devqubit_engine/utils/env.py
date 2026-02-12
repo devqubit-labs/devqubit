@@ -14,8 +14,10 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import re
 import subprocess
 import sys
+import threading
 from collections.abc import Sequence
 from typing import Any
 
@@ -28,6 +30,7 @@ _GIT_TIMEOUT = 5.0
 
 # Per-process cache for pip freeze output keyed by (pid, executable)
 _pip_cache: dict[tuple[int, str], list[str] | None] = {}
+_pip_cache_lock = threading.Lock()
 
 
 def _pip_freeze() -> list[str] | None:
@@ -51,8 +54,9 @@ def _pip_freeze() -> list[str] | None:
     slow or unresponsive pip installations.
     """
     cache_key = (os.getpid(), sys.executable)
-    if cache_key in _pip_cache:
-        return _pip_cache[cache_key]
+    with _pip_cache_lock:
+        if cache_key in _pip_cache:
+            return _pip_cache[cache_key]
 
     try:
         result = subprocess.run(
@@ -68,7 +72,8 @@ def _pip_freeze() -> list[str] | None:
                 if line.strip() and not line.startswith("#")
             ]
             logger.debug("Captured %d packages from pip freeze", len(packages))
-            _pip_cache[cache_key] = packages
+            with _pip_cache_lock:
+                _pip_cache[cache_key] = packages
             return packages
         else:
             logger.debug("pip freeze failed with return code %d", result.returncode)
@@ -79,7 +84,8 @@ def _pip_freeze() -> list[str] | None:
     except OSError as e:
         logger.debug("pip freeze failed: %s", e)
 
-    _pip_cache[cache_key] = None
+    with _pip_cache_lock:
+        _pip_cache[cache_key] = None
     return None
 
 
@@ -175,9 +181,6 @@ def _sanitize_git_url(url: str | None) -> str | None:
 
     # Handle HTTPS URLs with credentials: https://user:pass@host/...
     # Pattern matches: scheme://[userinfo@]host...
-    import re
-
-    # Match URLs with credentials in userinfo section
     pattern = r"^(https?://)([^@]+@)(.+)$"
     match = re.match(pattern, url)
     if match:
@@ -230,7 +233,7 @@ def capture_git_provenance(cwd: str | None = None) -> dict[str, Any] | None:
         except subprocess.TimeoutExpired:
             logger.debug("git %s timed out", " ".join(args))
         except FileNotFoundError:
-            pass  # git not installed
+            logger.debug("git executable not found when running: %s", " ".join(args))
         except OSError as e:
             logger.debug("git %s failed: %s", " ".join(args), e)
         return None
@@ -361,6 +364,13 @@ def collect_sdk_env_vars(sdk: str, extra_vars: Sequence[str] = ()) -> dict[str, 
         Variable name => value (or redacted placeholder).
         Only variables that are actually set are included.
     """
+    if sdk not in SDK_ENV_VARS:
+        logger.debug(
+            "Requested environment variables for unknown SDK '%s'; "
+            "returning empty mapping. This may indicate a typo or missing SDK registration.",
+            sdk,
+        )
+
     var_names = SDK_ENV_VARS.get(sdk, ())
     if extra_vars:
         seen = set(var_names)
@@ -379,7 +389,12 @@ def collect_sdk_env_vars(sdk: str, extra_vars: Sequence[str] = ()) -> dict[str, 
         from devqubit_engine.config import get_config
 
         return get_config().redaction.redact_env(raw)
-    except Exception:
+    except (ImportError, ModuleNotFoundError, AttributeError) as exc:
+        logger.debug(
+            "Falling back to default RedactionConfig: %s",
+            exc,
+        )
+
         from devqubit_engine.config import RedactionConfig
 
         return RedactionConfig().redact_env(raw)

@@ -567,58 +567,6 @@ devqubit verify nightly-run --project bell-state \
 
 ---
 
-### replay
-
-Re-execute a quantum circuit from a run or bundle on a simulator.
-
-**⚠️ EXPERIMENTAL:** Replay is best-effort and may not be fully reproducible.
-
-```bash
-devqubit replay <run> [OPTIONS]
-```
-
-**Options:**
-
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--project` | `-p` | Project name (required when using run name) |
-| `--backend` | `-b` | Simulator backend name |
-| `--shots` | `-s` | Override shot count |
-| `--seed` | | Random seed for reproducibility (best-effort) |
-| `--save` | | Save replay as new tracked run |
-| `--experimental` | | Acknowledge experimental status (required) |
-| `--list-backends` | | List available simulator backends |
-| `--format` | | Output format: `pretty` or `json` |
-
-**Supported Formats:**
-
-Only native SDK formats are supported to ensure exact program representation:
-- QPY (Qiskit)
-- JAQCD (Braket)
-- Cirq JSON
-- Tape JSON (PennyLane)
-
-**Note:** OpenQASM is NOT supported for replay.
-
-**Examples:**
-
-```bash
-# List available backends
-devqubit replay --list-backends
-
-# Replay on default simulator (requires --experimental)
-devqubit replay experiment.zip --experimental
-
-# Specify backend, shots, and seed
-devqubit replay baseline-v1 --project bell-state --backend aer_simulator --shots 10000 --seed 42 --experimental
-
-# Save and compare with original
-devqubit replay baseline-v1 --project bell-state --experimental --save --project replay-test
-devqubit diff baseline-v1 <replay_run_id> --project bell-state
-```
-
----
-
 ## Bundles
 
 Bundles are portable ZIP archives containing a run and all its artifacts.
@@ -1091,9 +1039,8 @@ devqubit pack baseline-v1 --project bell-state -o experiment.zip
 # Recipient unpacks
 devqubit unpack experiment.zip
 
-# Recipient can view, replay, or compare
+# Recipient can view and compare
 devqubit show 01JD7X...  # use run ID from bundle
-devqubit replay 01JD7X... --backend aer_simulator --experimental
 ```
 
 ### Workspace Maintenance

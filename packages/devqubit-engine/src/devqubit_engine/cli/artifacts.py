@@ -15,7 +15,6 @@ import click
 from devqubit_engine.cli._utils import (
     echo,
     format_artifacts_table,
-    format_counts_table,
     print_json,
     resolve_run,
     root_from_ctx,
@@ -247,69 +246,6 @@ def artifacts_show(
         echo(f"Digest: {art.digest}")
         echo(f"Media type: {art.media_type}")
         echo("\nUse --raw to output binary content.")
-
-
-@artifacts_group.command("counts")
-@click.argument("run_id_or_name")
-@click.option(
-    "--project", "-p", default=None, help="Project name (required when using run name)."
-)
-@click.option("--top", "-k", type=int, default=10, help="Show top K outcomes.")
-@click.option(
-    "--experiment",
-    "-e",
-    type=int,
-    default=None,
-    help="Experiment index for batch jobs.",
-)
-@click.option(
-    "--format",
-    "fmt",
-    type=click.Choice(["table", "json"]),
-    default="table",
-)
-@click.pass_context
-def artifacts_counts(
-    ctx: click.Context,
-    run_id_or_name: str,
-    project: str | None,
-    top: int,
-    experiment: int | None,
-    fmt: str,
-) -> None:
-    """
-    Show measurement counts from a run.
-
-    RUN_ID_OR_NAME can be a run ID or run name. When using run name,
-    --project is required.
-
-    Examples:
-        devqubit artifacts counts abc123
-        devqubit artifacts counts my-experiment --project bell_state
-        devqubit artifacts counts abc123 --top 20 --format json
-    """
-    from devqubit_engine.storage.artifacts.counts import get_counts
-
-    registry, store = _get_storage(ctx)
-    run_record = resolve_run(run_id_or_name, registry, project)
-
-    counts = get_counts(run_record, store, experiment_index=experiment)
-
-    if not counts:
-        raise click.ClickException("No counts found in run.")
-
-    if fmt == "json":
-        print_json(
-            {
-                "total_shots": counts.total_shots,
-                "num_outcomes": counts.num_outcomes,
-                "counts": counts.counts,
-                "probabilities": counts.probabilities,
-            }
-        )
-        return
-
-    echo(format_counts_table(counts, top_k=top))
 
 
 # =============================================================================

@@ -404,7 +404,7 @@ def _extract_program_anchors(
                     )
                 )
             except (KeyError, ValueError):
-                pass
+                logger.debug("Skipping malformed program anchor: %s", anchor)
 
 
 def _build_result(record: RunRecord, store: ObjectStoreProtocol) -> ResultSnapshot:

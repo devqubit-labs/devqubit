@@ -21,7 +21,7 @@ import logging
 import threading
 import traceback
 from dataclasses import dataclass
-from importlib.metadata import entry_points
+from importlib.metadata import EntryPoint, entry_points
 from typing import Any, Callable, Protocol, runtime_checkable
 
 from devqubit_engine.circuit.models import (
@@ -35,6 +35,10 @@ from devqubit_engine.errors import DevQubitError
 
 
 logger = logging.getLogger(__name__)
+
+_GROUP_LOADERS = "devqubit.circuit.loaders"
+_GROUP_SERIALIZERS = "devqubit.circuit.serializers"
+_GROUP_SUMMARIZERS = "devqubit.circuit.summarizers"
 
 
 class CircuitError(DevQubitError):
@@ -165,14 +169,63 @@ class _Registry:
         self._loaded = False
         self._lock = threading.RLock()
 
-    def _get_entry_points(self, group: str) -> list[Any]:
-        """Get entry points for a group, handling API differences."""
+    def _record_error(
+        self,
+        *,
+        ep: EntryPoint,
+        exc: Exception,
+        handler_type: str,
+    ) -> None:
+        """
+        Record handler load error in a consistent way.
+
+        Parameters
+        ----------
+        ep : EntryPoint
+            Entry point that failed to load.
+        exc : Exception
+            Exception that was raised.
+        handler_type : str
+            Human-friendly handler type label (e.g. "loader").
+        """
+        error = HandlerLoadError(
+            entry_point=f"{ep.name}={ep.value}",
+            exc_type=type(exc).__name__,
+            message=str(exc),
+            traceback=traceback.format_exc(),
+        )
+        self._errors.append(error)
+        logger.warning(
+            "Failed to load %s %s: %s", handler_type, ep.name, exc, exc_info=True
+        )
+
+    def _get_entry_points_by_group(self) -> dict[str, list[EntryPoint]]:
+        """
+        Get entry points grouped by relevant groups, handling API differences.
+
+        Returns
+        -------
+        dict
+            Mapping group name -> list of entry points.
+        """
         eps = entry_points()
-        if hasattr(eps, "select"):
-            # Python 3.10+ API
-            return list(eps.select(group=group))
-        # Python 3.9 fallback: entry_points() returns a dict
-        return list(eps.get(group, []))
+
+        # Python 3.10+: EntryPoints has .select()
+        select = getattr(eps, "select", None)
+        if callable(select):
+            return {
+                _GROUP_LOADERS: list(eps.select(group=_GROUP_LOADERS)),
+                _GROUP_SERIALIZERS: list(eps.select(group=_GROUP_SERIALIZERS)),
+                _GROUP_SUMMARIZERS: list(eps.select(group=_GROUP_SUMMARIZERS)),
+            }
+
+        # Python 3.9 fallback: entry_points() returns dict-like mapping
+        # (types vary between implementations, so keep it simple)
+        return {
+            _GROUP_LOADERS: list(eps.get(_GROUP_LOADERS, [])),
+            _GROUP_SERIALIZERS: list(eps.get(_GROUP_SERIALIZERS, [])),
+            _GROUP_SUMMARIZERS: list(eps.get(_GROUP_SUMMARIZERS, [])),
+        }
 
     def _ensure_loaded(self) -> None:
         """Load handlers from entry points if not already loaded."""
@@ -188,32 +241,25 @@ class _Registry:
 
             self._errors.clear()
 
+            groups = self._get_entry_points_by_group()
+
             # Load loaders
-            for ep in self._get_entry_points("devqubit.circuit.loaders"):
+            for ep in groups[_GROUP_LOADERS]:
                 self._load_handler(ep, self._loaders, "loader")
 
             # Load serializers
-            for ep in self._get_entry_points("devqubit.circuit.serializers"):
+            for ep in groups[_GROUP_SERIALIZERS]:
                 self._load_handler(ep, self._serializers, "serializer")
 
             # Load summarizers
-            for ep in self._get_entry_points("devqubit.circuit.summarizers"):
+            for ep in groups[_GROUP_SUMMARIZERS]:
                 try:
                     func = ep.load()
                     sdk = SDK(ep.name)
                     self._summarizers[sdk] = func
                     logger.debug("Loaded summarizer for %s", sdk.value)
                 except Exception as e:
-                    error = HandlerLoadError(
-                        entry_point=f"{ep.name}={ep.value}",
-                        exc_type=type(e).__name__,
-                        message=str(e),
-                        traceback=traceback.format_exc(),
-                    )
-                    self._errors.append(error)
-                    logger.warning(
-                        "Failed to load summarizer %s: %s", ep.name, e, exc_info=True
-                    )
+                    self._record_error(ep=ep, exc=e, handler_type="summarizer")
 
             self._loaded = True
 
@@ -227,23 +273,34 @@ class _Registry:
 
     def _load_handler(
         self,
-        ep: Any,
+        ep: EntryPoint,
         registry: dict[SDK, Any],
         handler_type: str,
     ) -> None:
-        """Load a single handler from an entry point."""
+        """
+        Load a single handler from an entry point.
+
+        Parameters
+        ----------
+        ep : EntryPoint
+            Entry point to load.
+        registry : dict
+            Target registry dict to populate (keyed by SDK).
+        handler_type : str
+            Handler type label ("loader" or "serializer").
+        """
         try:
             handler_cls = ep.load()
             handler = handler_cls()
 
-            if not getattr(handler, "name", None):
+            name = getattr(handler, "name", None)
+            if not name:
                 raise TypeError(f"{handler_type.title()} missing 'name' attribute")
 
             handler_sdk = getattr(handler, "sdk", None)
             if not handler_sdk:
                 raise TypeError(f"{handler_type.title()} missing 'sdk' attribute")
 
-            # Coerce string to SDK enum if needed
             if isinstance(handler_sdk, str):
                 handler_sdk = SDK(handler_sdk)
 
@@ -253,21 +310,10 @@ class _Registry:
                 )
 
             registry[handler_sdk] = handler
-            logger.debug(
-                "Loaded %s for %s: %s", handler_type, handler_sdk.value, handler.name
-            )
+            logger.debug("Loaded %s for %s: %s", handler_type, handler_sdk.value, name)
 
         except Exception as e:
-            error = HandlerLoadError(
-                entry_point=f"{ep.name}={ep.value}",
-                exc_type=type(e).__name__,
-                message=str(e),
-                traceback=traceback.format_exc(),
-            )
-            self._errors.append(error)
-            logger.warning(
-                "Failed to load %s %s: %s", handler_type, ep.name, e, exc_info=True
-            )
+            self._record_error(ep=ep, exc=e, handler_type=handler_type)
 
     def clear(self) -> None:
         """Clear all cached handlers and errors."""
@@ -310,7 +356,8 @@ class _Registry:
         """
         self._ensure_loaded()
 
-        if loader := self._loaders.get(sdk):
+        loader = self._loaders.get(sdk)
+        if loader is not None:
             return loader
 
         available = ", ".join(sorted(s.value for s in self._loaders)) or "(none)"
@@ -340,7 +387,8 @@ class _Registry:
         """
         self._ensure_loaded()
 
-        if serializer := self._serializers.get(sdk):
+        serializer = self._serializers.get(sdk)
+        if serializer is not None:
             return serializer
 
         available = ", ".join(sorted(s.value for s in self._serializers)) or "(none)"
@@ -373,7 +421,14 @@ class _Registry:
             try:
                 if serializer.can_serialize(circuit):
                     return serializer
-            except Exception:
+            except Exception as e:
+                # Do not fail discovery due to a buggy adapter; keep it quiet by default.
+                logger.debug(
+                    "Serializer '%s' can_serialize() raised: %s",
+                    getattr(serializer, "name", "<unknown>"),
+                    e,
+                    exc_info=True,
+                )
                 continue
 
         raise SerializerError(

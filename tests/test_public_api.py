@@ -417,7 +417,6 @@ class TestBundleSubmodule:
         assert hasattr(bundle, "unpack_bundle")
         assert hasattr(bundle, "Bundle")
         assert hasattr(bundle, "list_bundle_contents")
-        assert hasattr(bundle, "replay")
 
 
 class TestCiSubmodule:

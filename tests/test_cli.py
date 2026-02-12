@@ -283,24 +283,6 @@ class TestArtifactsShow:
         assert_err(result)
 
 
-class TestArtifactsCounts:
-    """Tests for `devqubit artifacts counts`."""
-
-    def test_shows_counts(self, invoke: Callable, sample_run: RunRecord) -> None:
-        result = invoke("artifacts", "counts", sample_run.run_id)
-        assert_ok(result)
-        assert "00" in result.output
-        assert "11" in result.output
-        assert "Total shots" in result.output
-
-    def test_json_format(self, invoke: Callable, sample_run: RunRecord) -> None:
-        result = invoke("artifacts", "counts", sample_run.run_id, "--format", "json")
-        assert_ok(result)
-        data = parse_json(result)
-        assert "counts" in data
-        assert data["counts"]["00"] == 500
-
-
 # =============================================================================
 # TAG COMMANDS
 # =============================================================================
@@ -564,29 +546,6 @@ class TestVerify:
         data = parse_json(result)
         assert "ok" in data
         assert "failures" in data
-
-
-class TestReplay:
-    """Tests for `devqubit replay`."""
-
-    def test_list_backends(self, invoke: Callable) -> None:
-        result = invoke("replay", "--list-backends")
-        assert_ok(result)
-
-    def test_list_backends_json(self, invoke: Callable) -> None:
-        result = invoke("replay", "--list-backends", "--format", "json")
-        assert_ok(result)
-        data = parse_json(result)
-        assert isinstance(data, dict)
-
-    def test_requires_experimental(
-        self,
-        invoke: Callable,
-        sample_run: RunRecord,
-    ) -> None:
-        result = invoke("replay", sample_run.run_id)
-        assert_err(result)
-        assert "experimental" in result.output.lower()
 
 
 # =============================================================================

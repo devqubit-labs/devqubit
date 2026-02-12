@@ -39,10 +39,8 @@ class TestGarbageCollection:
         assert stats.referenced_objects >= 1
         # All new objects should be referenced (no orphans created by run)
         assert stats.unreferenced_objects == initial_objects
-        assert (
-            stats.bytes_reclaimable == 0
-            or stats.unreferenced_objects == initial_objects
-        )
+        assert stats.bytes_reclaimable == 0
+        assert stats.unreferenced_objects == initial_objects
 
     def test_gc_finds_orphans(self, store, registry, config):
         """GC finds orphaned objects not referenced by any run."""

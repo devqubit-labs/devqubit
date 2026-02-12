@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import click
-from devqubit_engine.storage.artifacts.counts import CountsInfo
 from devqubit_engine.storage.artifacts.lookup import ArtifactInfo
 from devqubit_engine.storage.types import RegistryProtocol
 from devqubit_engine.tracking.record import RunRecord
@@ -209,39 +208,6 @@ def resolve_run(
         raise click.ClickException(
             f"Run not found: '{run_id_or_name}'. " f"Use --project to look up by name."
         )
-
-
-def format_counts_table(counts: CountsInfo, top_k: int = 10) -> str:
-    """
-    Format measurement counts as ASCII table.
-
-    Parameters
-    ----------
-    counts : CountsInfo
-        Counts information object.
-    top_k : int, default=10
-        Number of top outcomes to display.
-
-    Returns
-    -------
-    str
-        Formatted table string.
-    """
-    lines = [
-        f"Total shots: {counts.total_shots:,}",
-        f"Unique outcomes: {counts.num_outcomes}",
-        "",
-        f"{'Outcome':<20} {'Count':>10} {'Prob':>10}",
-        "-" * 42,
-    ]
-
-    for bitstring, count, prob in counts.top_k(top_k):
-        lines.append(f"{bitstring:<20} {count:>10,} {prob:>10.4f}")
-
-    if counts.num_outcomes > top_k:
-        lines.append(f"... and {counts.num_outcomes - top_k} more outcomes")
-
-    return "\n".join(lines)
 
 
 def format_artifacts_table(artifacts: list[ArtifactInfo]) -> str:

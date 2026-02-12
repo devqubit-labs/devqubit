@@ -58,14 +58,14 @@ from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.errors import EnvelopeValidationError
 from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.common import (
+    generate_ulid,
     is_manual_run_record,
-    sha256_digest,
+    sha256_bytes,
     utc_now_iso,
 )
 from devqubit_engine.utils.env import capture_environment, capture_git_provenance
 from devqubit_engine.utils.qasm3 import coerce_openqasm3_sources
 from devqubit_engine.utils.serialization import json_dumps, to_jsonable
-from ulid import ULID
 
 
 logger = logging.getLogger(__name__)
@@ -139,13 +139,7 @@ class Run:
     ) -> None:
         self._lock = threading.Lock()
 
-        # Generate unique run ID — compatible with both python-ulid and py-ulid
-        # python-ulid: ULID() returns object with __str__ => str(obj) works
-        # py-ulid:     ULID() returns object with .generate() => returns string
-        ulid_gen = ULID()
-        self._run_id = (
-            ulid_gen.generate() if hasattr(ulid_gen, "generate") else str(ulid_gen)
-        )
+        self._run_id = generate_ulid()
         self._project = project
         self._adapter = adapter
         self._run_name = run_name
@@ -465,7 +459,7 @@ class Run:
 
         if limit > 0 and size > limit:
             if truncate:
-                full_digest = sha256_digest(data)
+                full_digest = sha256_bytes(data)
                 data = data[:limit]
                 meta = dict(meta) if meta else {}
                 meta["truncated"] = True
@@ -1015,21 +1009,66 @@ class Run:
 
         self._pending_tracked_jobs.clear()
 
-    def _remove_old_envelope_artifacts(self) -> None:
-        """Remove old envelope artifacts (before logging final envelope)."""
-        with self._lock:
-            # Find indices of envelope artifacts to remove
-            indices_to_remove = []
-            for idx, artifact in enumerate(self._artifacts):
-                if (
-                    artifact.role == "envelope"
-                    and artifact.kind == "devqubit.envelope.json"
-                ):
-                    indices_to_remove.append(idx)
+    def _persist_enriched_envelopes(
+        self,
+        envelopes: list[ExecutionEnvelope],
+    ) -> None:
+        """
+        Write enriched envelopes to the object store and update artifact refs.
 
-            # Remove in reverse order to preserve indices
-            for idx in reversed(indices_to_remove):
-                self._artifacts.pop(idx)
+        For adapter runs (envelopes loaded from existing artifacts), the
+        corresponding artifact references are replaced in-place, avoiding a
+        delete/re-add cycle.  For manual runs (synthesized envelopes with no
+        prior artifact), new references are appended.
+
+        Parameters
+        ----------
+        envelopes : list of ExecutionEnvelope
+            Enriched envelopes ready to persist.
+        """
+        # Serialize all envelopes and write to object store
+        new_refs: list[ArtifactRef] = []
+        for envelope in envelopes:
+            data = json_dumps(
+                envelope.to_dict(),
+                normalize_floats=True,
+            ).encode("utf-8")
+            digest = self._store.put_bytes(data)
+            ref = ArtifactRef(
+                kind="devqubit.envelope.json",
+                digest=digest,
+                media_type="application/json",
+                role="envelope",
+                meta={"name": "execution_envelope"},
+            )
+            new_refs.append(ref)
+
+        with self._lock:
+            # Collect indices of existing envelope artifacts
+            old_indices = [
+                idx
+                for idx, a in enumerate(self._artifacts)
+                if a.role == "envelope" and a.kind == "devqubit.envelope.json"
+            ]
+
+            # Replace existing refs in-place where possible
+            for i, ref in enumerate(new_refs):
+                if i < len(old_indices):
+                    self._artifacts[old_indices[i]] = ref
+                else:
+                    self._artifacts.append(ref)
+
+            # Remove leftover old refs if there were more old than new
+            if len(old_indices) > len(new_refs):
+                extra = old_indices[len(new_refs) :]
+                for idx in reversed(extra):
+                    self._artifacts.pop(idx)
+
+        for ref in new_refs:
+            logger.debug(
+                "Persisted enriched envelope: digest=%s...",
+                ref.digest[:24],
+            )
 
     def _finalize(self, success: bool = True) -> None:
         """
@@ -1039,7 +1078,7 @@ class Run:
         1. Build or load envelope(s) (single source of truth)
         2. Compute fingerprints from all envelopes
         3. Enrich all envelopes with tracker namespace + fingerprints
-        4. Log final envelopes (replacing old ones)
+        4. Persist enriched envelopes (in-place artifact ref update)
         5. Save to registry
 
         Parameters
@@ -1067,17 +1106,8 @@ class Run:
             # Enrich all envelopes with tracker namespace + fingerprints
             self._enrich_envelopes(envelopes, fingerprints)
 
-            # Remove old envelope artifacts
-            self._remove_old_envelope_artifacts()
-
-            # Log all enriched envelopes
-            for envelope in envelopes:
-                self.log_json(
-                    name="execution_envelope",
-                    obj=envelope.to_dict(),
-                    role="envelope",
-                    kind="devqubit.envelope.json",
-                )
+            # Write enriched envelopes, updating artifact refs in-place
+            self._persist_enriched_envelopes(envelopes)
 
         # Update record with fingerprints
         with self._lock:

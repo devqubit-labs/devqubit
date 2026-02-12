@@ -7,6 +7,16 @@ Circuit data models.
 Provides core models for circuit serialization, loading, and gate classification.
 The classification framework is SDK-agnostic; actual gate definitions are
 provided by adapter packages.
+
+SDK Registration
+----------------
+Adding a new SDK requires **only** two steps in this module:
+
+1. Add an entry to :class:`SDK` and :class:`CircuitFormat` enums.
+2. Add a single :class:`SDKDescriptor` row to :data:`SDK_REGISTRY`.
+
+All downstream modules (extractors, summary, etc.) derive their SDK-specific
+lookup tables from ``SDK_REGISTRY`` automatically.
 """
 
 from __future__ import annotations
@@ -14,6 +24,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Callable
+
+
+# =============================================================================
+# Enums
+# =============================================================================
 
 
 class SDK(str, Enum):
@@ -47,14 +62,8 @@ class CircuitFormat(str, Enum):
 
     @property
     def is_native(self) -> bool:
-        """Check if format is SDK-native."""
-        return self in (
-            self.QPY,
-            self.JAQCD,
-            self.CIRQ_JSON,
-            self.TAPE_JSON,
-            self.CUDAQ_JSON,
-        )
+        """Check if format is SDK-native (registered in SDK_REGISTRY)."""
+        return self in _FORMAT_TO_SDK
 
     @property
     def sdk(self) -> SDK:
@@ -62,14 +71,103 @@ class CircuitFormat(str, Enum):
         return _FORMAT_TO_SDK.get(self, SDK.UNKNOWN)
 
 
-# Mapping from native formats to their SDKs
+# =============================================================================
+# SDK Registry
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class SDKDescriptor:
+    """
+    Metadata for a supported SDK.
+
+    Each descriptor captures everything the engine needs to detect,
+    extract, and load circuits for a given SDK.  All per-SDK lookup
+    tables in ``extractors``, ``summary``, etc. are derived from
+    :data:`SDK_REGISTRY` at import time.
+
+    Parameters
+    ----------
+    sdk : SDK
+        Enum member identifying the SDK.
+    native_format : CircuitFormat
+        Default native serialization format.
+    kind_pattern : str
+        Substring to match in artifact ``kind`` strings
+        (case-insensitive).  Used for both RunRecord scanning and
+        envelope ref resolution.
+    adapter_pattern : str
+        Substring to match in ``record.adapter`` for SDK detection.
+    module_pattern : str
+        Substring to match in ``type(circuit).__module__`` for
+        auto-detecting SDK from a live circuit object.
+    is_binary : bool
+        ``True`` if the native format is binary (e.g. QPY);
+        ``False`` if it is UTF-8 text (e.g. JSON).
+    """
+
+    sdk: SDK
+    native_format: CircuitFormat
+    kind_pattern: str
+    adapter_pattern: str
+    module_pattern: str
+    is_binary: bool = False
+
+
+# Central registry of all supported SDKs.
+SDK_REGISTRY: tuple[SDKDescriptor, ...] = (
+    SDKDescriptor(
+        sdk=SDK.QISKIT,
+        native_format=CircuitFormat.QPY,
+        kind_pattern="qpy",
+        adapter_pattern="qiskit",
+        module_pattern="qiskit",
+        is_binary=True,
+    ),
+    SDKDescriptor(
+        sdk=SDK.BRAKET,
+        native_format=CircuitFormat.JAQCD,
+        kind_pattern="jaqcd",
+        adapter_pattern="braket",
+        module_pattern="braket",
+    ),
+    SDKDescriptor(
+        sdk=SDK.CIRQ,
+        native_format=CircuitFormat.CIRQ_JSON,
+        kind_pattern="cirq",
+        adapter_pattern="cirq",
+        module_pattern="cirq",
+    ),
+    SDKDescriptor(
+        sdk=SDK.PENNYLANE,
+        native_format=CircuitFormat.TAPE_JSON,
+        kind_pattern="tape",
+        adapter_pattern="pennylane",
+        module_pattern="pennylane",
+    ),
+    SDKDescriptor(
+        sdk=SDK.CUDAQ,
+        native_format=CircuitFormat.CUDAQ_JSON,
+        kind_pattern="cudaq",
+        adapter_pattern="cudaq",
+        module_pattern="cudaq",
+    ),
+)
+
+
+# =============================================================================
+# Derived lookup tables
+# =============================================================================
+
+#: Native format => SDK mapping (used by ``CircuitFormat.sdk`` property).
 _FORMAT_TO_SDK: dict[CircuitFormat, SDK] = {
-    CircuitFormat.QPY: SDK.QISKIT,
-    CircuitFormat.JAQCD: SDK.BRAKET,
-    CircuitFormat.CIRQ_JSON: SDK.CIRQ,
-    CircuitFormat.TAPE_JSON: SDK.PENNYLANE,
-    CircuitFormat.CUDAQ_JSON: SDK.CUDAQ,
+    d.native_format: d.sdk for d in SDK_REGISTRY
 }
+
+
+# =============================================================================
+# Data containers
+# =============================================================================
 
 
 @dataclass
@@ -144,6 +242,11 @@ class LoadedCircuit:
     index: int = 0
 
 
+# =============================================================================
+# Gate classification
+# =============================================================================
+
+
 class GateCategory(Enum):
     """Gate categories for classification."""
 
@@ -211,12 +314,10 @@ class GateClassifier:
             Statistics with keys: gate_count_1q, gate_count_2q,
             gate_count_multi, gate_count_measure, is_clifford.
         """
-        stats: dict[str, int | bool | None] = {
-            "gate_count_1q": 0,
-            "gate_count_2q": 0,
-            "gate_count_multi": 0,
-            "gate_count_measure": 0,
-        }
+        gate_count_1q = 0
+        gate_count_2q = 0
+        gate_count_multi = 0
+        gate_count_measure = 0
         is_clifford = True
         has_gates = False
 
@@ -226,22 +327,27 @@ class GateClassifier:
 
             match info.category:
                 case GateCategory.SINGLE_QUBIT:
-                    stats["gate_count_1q"] += count  # type: ignore[operator]
+                    gate_count_1q += count
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.TWO_QUBIT:
-                    stats["gate_count_2q"] += count  # type: ignore[operator]
+                    gate_count_2q += count
                     if not info.is_clifford:
                         is_clifford = False
                 case GateCategory.MULTI_QUBIT:
-                    stats["gate_count_multi"] += count  # type: ignore[operator]
+                    gate_count_multi += count
                     is_clifford = False
                 case GateCategory.MEASURE:
-                    stats["gate_count_measure"] += count  # type: ignore[operator]
+                    gate_count_measure += count
                 case GateCategory.BARRIER:
                     pass
                 case _:
                     is_clifford = False
 
-        stats["is_clifford"] = is_clifford if has_gates else None
-        return stats
+        return {
+            "gate_count_1q": gate_count_1q,
+            "gate_count_2q": gate_count_2q,
+            "gate_count_multi": gate_count_multi,
+            "gate_count_measure": gate_count_measure,
+            "is_clifford": is_clifford if has_gates else None,
+        }

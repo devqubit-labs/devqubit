@@ -15,7 +15,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
+from devqubit_engine.circuit.models import (
+    SDK,
+    SDK_REGISTRY,
+    CircuitData,
+    CircuitFormat,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -309,26 +314,14 @@ def _detect_sdk_from_circuit(circuit: Any) -> SDK:
     """
     module = type(circuit).__module__
 
-    sdk_patterns = (
-        ("qiskit", SDK.QISKIT),
-        ("braket", SDK.BRAKET),
-        ("cirq", SDK.CIRQ),
-        ("pennylane", SDK.PENNYLANE),
-    )
-
-    for prefix, sdk in sdk_patterns:
-        if prefix in module:
-            return sdk
+    for desc in SDK_REGISTRY:
+        if desc.module_pattern in module:
+            return desc.sdk
 
     raise ValueError(
         f"Cannot detect SDK for circuit type '{type(circuit).__name__}' "
         f"from module '{module}'"
     )
-
-
-# =============================================================================
-# Diff functions
-# =============================================================================
 
 
 # Fields to compare: (attr_name, label, show_percentage)

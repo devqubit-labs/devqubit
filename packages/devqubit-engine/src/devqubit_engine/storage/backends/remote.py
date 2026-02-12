@@ -959,7 +959,9 @@ class RemoteRegistry(RegistryProtocol):
             except (ValueError, KeyError) as e:
                 logger.warning("Invalid artifact in run %s: %s", run_id, e)
 
-        return RunRecord(record=record, artifacts=artifacts)
+        rec = RunRecord(record=record, artifacts=artifacts)
+        rec.mark_finalized()
+        return rec
 
     def load_or_none(self, run_id: str) -> RunRecord | None:
         """
@@ -1119,7 +1121,7 @@ class RemoteRegistry(RegistryProtocol):
         offset: int = 0,
         sort_by: str | None = None,
         descending: bool = True,
-    ) -> list["RunRecord"]:
+    ) -> list[RunRecord]:
         """
         Search runs using a query expression.
 
@@ -1168,7 +1170,9 @@ class RemoteRegistry(RegistryProtocol):
                     artifacts.append(ArtifactRef.from_dict(art_dict))
                 except (ValueError, KeyError) as e:
                     logger.warning("Invalid artifact in search results: %s", e)
-            results.append(RunRecord(record=record, artifacts=artifacts))
+            rec = RunRecord(record=record, artifacts=artifacts)
+            rec.mark_finalized()
+            results.append(rec)
 
         return results
 

@@ -88,7 +88,7 @@ def encode_value(value: Any) -> str:
     if value is None:
         return "__unbound__"
     if isinstance(value, bool):
-        return f"b:{str(value).lower()}"
+        return f"b:{value}".lower()
     if isinstance(value, int):
         return f"i:{value}"
     if isinstance(value, float):

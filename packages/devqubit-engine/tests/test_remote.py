@@ -37,19 +37,10 @@ from devqubit_engine.tracking.record import RunRecord
 from responses import matchers
 
 
-# =============================================================================
-# Constants for Tests
-# =============================================================================
-
 TEST_SERVER = "https://tracking.example.com"
 TEST_TOKEN = "dqt_test_token_12345"
 TEST_WORKSPACE = "test-workspace"
 TEST_API_BASE = f"{TEST_SERVER}/api/v1"
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -154,11 +145,6 @@ def sample_digest(sample_data: bytes) -> str:
     return f"sha256:{hashlib.sha256(sample_data).hexdigest()}"
 
 
-# =============================================================================
-# RemoteClientConfig Tests
-# =============================================================================
-
-
 class TestRemoteClientConfig:
     """Tests for RemoteClientConfig validation and construction."""
 
@@ -224,11 +210,6 @@ class TestRemoteClientConfig:
             )
 
             assert config.server_url == TEST_SERVER
-
-
-# =============================================================================
-# RemoteClient Tests
-# =============================================================================
 
 
 class TestRemoteClient:
@@ -306,11 +287,6 @@ class TestRemoteClient:
 
         with pytest.raises(StorageError, match="Connection error"):
             remote_client._request("GET", "/test")
-
-
-# =============================================================================
-# RemoteStore Tests
-# =============================================================================
 
 
 class TestRemoteStore:
@@ -505,11 +481,6 @@ class TestRemoteStore:
         """Invalid length raises ValueError."""
         with pytest.raises(ValueError, match="Invalid digest length"):
             remote_store._validate_digest("sha256:" + "a" * 32)
-
-
-# =============================================================================
-# RemoteRegistry Tests
-# =============================================================================
 
 
 class TestRemoteRegistry:
@@ -822,11 +793,6 @@ class TestRemoteRegistry:
         assert remote_registry.clear_baseline("my_proj") is True
 
 
-# =============================================================================
-# Integration-like Tests
-# =============================================================================
-
-
 class TestRemoteStoreAndRegistryIntegration:
     """Tests verifying store and registry work together."""
 
@@ -899,11 +865,6 @@ class TestRemoteStoreAndRegistryIntegration:
 
         assert len(loaded.artifacts) == 1
         assert loaded.artifacts[0].kind == "result.json"
-
-
-# =============================================================================
-# Error Handling Tests
-# =============================================================================
 
 
 class TestErrorHandling:

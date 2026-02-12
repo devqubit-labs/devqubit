@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import math
 from contextlib import contextmanager
+from dataclasses import dataclass
 from numbers import Real
 from pathlib import Path
 from typing import Any, Iterator, Literal
@@ -80,8 +81,23 @@ _TVD_TOLERANCE = 1e-12
 
 
 def _num_equal(a: Any, b: Any, tolerance: float) -> bool:
-    """Compare two values with numeric tolerance."""
+    """
+    Compare two values with numeric tolerance.
 
+    Parameters
+    ----------
+    a : Any
+        First value.
+    b : Any
+        Second value.
+    tolerance : float
+        Numeric tolerance for floating-point comparison.
+
+    Returns
+    -------
+    bool
+        True if values are considered equal.
+    """
     if isinstance(a, bool) or isinstance(b, bool):
         return a == b
 
@@ -110,6 +126,15 @@ def _diff_dict(
     """
     Compute difference between two dictionaries.
 
+    Parameters
+    ----------
+    dict_a : dict
+        First dictionary.
+    dict_b : dict
+        Second dictionary.
+    tolerance : float, default=1e-9
+        Numeric tolerance for value comparison.
+
     Returns
     -------
     dict
@@ -136,6 +161,99 @@ def _diff_dict(
     }
 
 
+# =============================================================================
+# Program comparison
+# =============================================================================
+
+
+@dataclass(frozen=True, slots=True)
+class _ProgramView:
+    """
+    Read-only view of comparison-relevant fields from an envelope's program.
+
+    Parameters
+    ----------
+    digests : list of str
+        Sorted unique artifact digests (logical + physical).
+    structural_hash : str or None
+        Structural hash from program snapshot.
+    parametric_hash : str or None
+        Parametric hash from program snapshot.
+    exec_structural_hash : str or None
+        Executed structural hash (physical circuit).
+    exec_parametric_hash : str or None
+        Executed parametric hash (physical circuit).
+    is_manual : bool
+        Whether this envelope is a manual run.
+    """
+
+    digests: list[str]
+    structural_hash: str | None
+    parametric_hash: str | None
+    exec_structural_hash: str | None
+    exec_parametric_hash: str | None
+    is_manual: bool
+
+    @classmethod
+    def from_envelope(cls, envelope: ExecutionEnvelope) -> _ProgramView:
+        """
+        Extract a program view from an envelope.
+
+        Parameters
+        ----------
+        envelope : ExecutionEnvelope
+            Source envelope.
+
+        Returns
+        -------
+        _ProgramView
+            Extracted program view.
+        """
+        digests: list[str] = []
+        structural_hash: str | None = None
+        parametric_hash: str | None = None
+        exec_structural_hash: str | None = None
+        exec_parametric_hash: str | None = None
+
+        if envelope.program:
+            logical_digests = [a.ref.digest for a in envelope.program.logical if a.ref]
+            physical_digests = [
+                a.ref.digest for a in envelope.program.physical if a.ref
+            ]
+            digests = sorted(set(logical_digests + physical_digests))
+            structural_hash = envelope.program.structural_hash
+            parametric_hash = envelope.program.parametric_hash
+            exec_structural_hash = envelope.program.executed_structural_hash
+            exec_parametric_hash = envelope.program.executed_parametric_hash
+
+        return cls(
+            digests=digests,
+            structural_hash=structural_hash,
+            parametric_hash=parametric_hash,
+            exec_structural_hash=exec_structural_hash,
+            exec_parametric_hash=exec_parametric_hash,
+            is_manual=bool(envelope.metadata.get("manual_run", False)),
+        )
+
+
+def _both_present_and_equal(a: str | None, b: str | None) -> bool:
+    """Return True if both values are non-None and equal.
+
+    Parameters
+    ----------
+    a : str or None
+        First value.
+    b : str or None
+        Second value.
+
+    Returns
+    -------
+    bool
+        True only if both are truthy and equal.
+    """
+    return bool(a) and bool(b) and a == b
+
+
 def _compare_programs(
     envelope_a: ExecutionEnvelope,
     envelope_b: ExecutionEnvelope,
@@ -145,91 +263,57 @@ def _compare_programs(
 
     Uses envelope program refs for exact matching and structural/parametric
     hashes for semantic matching.
+
+    Parameters
+    ----------
+    envelope_a : ExecutionEnvelope
+        Baseline envelope.
+    envelope_b : ExecutionEnvelope
+        Candidate envelope.
+
+    Returns
+    -------
+    ProgramComparison
+        Detailed comparison of program artifacts and hashes.
     """
-    # Exact match: compare artifact digests from envelope refs
-    digests_a: list[str] = []
-    digests_b: list[str] = []
+    va = _ProgramView.from_envelope(envelope_a)
+    vb = _ProgramView.from_envelope(envelope_b)
 
-    if envelope_a.program:
-        logical_digests_a = [a.ref.digest for a in envelope_a.program.logical if a.ref]
-        physical_digests_a = [
-            a.ref.digest for a in envelope_a.program.physical if a.ref
-        ]
-        digests_a = sorted(set(logical_digests_a + physical_digests_a))
+    has_programs = bool(va.digests) or bool(vb.digests)
+    exact_match = va.digests == vb.digests
 
-    if envelope_b.program:
-        logical_digests_b = [a.ref.digest for a in envelope_b.program.logical if a.ref]
-        physical_digests_b = [
-            a.ref.digest for a in envelope_b.program.physical if a.ref
-        ]
-        digests_b = sorted(set(logical_digests_b + physical_digests_b))
-
-    # Check if we have any program artifacts to compare
-    has_programs = bool(digests_a) or bool(digests_b)
-
-    # Exact match: digests are the same
-    exact_match = digests_a == digests_b
-
-    # Extract hashes from envelope program snapshot
-    hash_a: str | None = None
-    hash_b: str | None = None
-    param_hash_a: str | None = None
-    param_hash_b: str | None = None
-    exec_struct_hash_a: str | None = None
-    exec_struct_hash_b: str | None = None
-    exec_param_hash_a: str | None = None
-    exec_param_hash_b: str | None = None
+    # Hash availability: programs exist, and hashes present for non-manual runs
     hash_available = has_programs
-
-    if envelope_a.program:
-        hash_a = envelope_a.program.structural_hash
-        param_hash_a = envelope_a.program.parametric_hash
-        exec_struct_hash_a = envelope_a.program.executed_structural_hash
-        exec_param_hash_a = envelope_a.program.executed_parametric_hash
-
-    if envelope_b.program:
-        hash_b = envelope_b.program.structural_hash
-        param_hash_b = envelope_b.program.parametric_hash
-        exec_struct_hash_b = envelope_b.program.executed_structural_hash
-        exec_param_hash_b = envelope_b.program.executed_parametric_hash
-
-    # Check if hashes are available (manual runs won't have them)
-    is_manual_a = envelope_a.metadata.get("manual_run", False)
-    is_manual_b = envelope_b.metadata.get("manual_run", False)
-
-    if is_manual_a or is_manual_b:
-        if not hash_a or not hash_b:
-            hash_available = False
+    if (va.is_manual or vb.is_manual) and (
+        not va.structural_hash or not vb.structural_hash
+    ):
+        hash_available = False
 
     # Structural match: same circuit structure (ignores parameter values)
     structural_match = exact_match
-    if hash_a and hash_b:
-        structural_match = hash_a == hash_b
+    if va.structural_hash and vb.structural_hash:
+        structural_match = va.structural_hash == vb.structural_hash
 
     # Parametric match: same structure AND same parameter values
-    parametric_match = False
-    if param_hash_a and param_hash_b:
-        parametric_match = param_hash_a == param_hash_b
-    elif exact_match:
-        parametric_match = True
+    parametric_match = (
+        _both_present_and_equal(va.parametric_hash, vb.parametric_hash) or exact_match
+    )
 
     # Executed hashes match (for physical circuits)
-    executed_structural_match = False
-    executed_parametric_match = False
-
-    if exec_struct_hash_a and exec_struct_hash_b:
-        executed_structural_match = exec_struct_hash_a == exec_struct_hash_b
-
-    if exec_param_hash_a and exec_param_hash_b:
-        executed_parametric_match = exec_param_hash_a == exec_param_hash_b
+    executed_structural_match = _both_present_and_equal(
+        va.exec_structural_hash, vb.exec_structural_hash
+    )
+    executed_parametric_match = _both_present_and_equal(
+        va.exec_parametric_hash, vb.exec_parametric_hash
+    )
 
     if structural_match and not parametric_match:
         logger.debug(
             "Programs match in structure but differ in params "
             "(structural_hash=%s, parametric_hash_a=%s, parametric_hash_b=%s)",
-            hash_a,
-            param_hash_a,
-            param_hash_b,
+            va.structural_hash,
+            va.parametric_hash,
+            vb.parametric_hash,
         )
 
     return ProgramComparison(
@@ -237,20 +321,25 @@ def _compare_programs(
         exact_match=exact_match,
         structural_match=structural_match,
         parametric_match=parametric_match,
-        digests_a=digests_a,
-        digests_b=digests_b,
-        circuit_hash_a=hash_a,
-        circuit_hash_b=hash_b,
-        parametric_hash_a=param_hash_a,
-        parametric_hash_b=param_hash_b,
-        executed_structural_hash_a=exec_struct_hash_a,
-        executed_structural_hash_b=exec_struct_hash_b,
-        executed_parametric_hash_a=exec_param_hash_a,
-        executed_parametric_hash_b=exec_param_hash_b,
+        digests_a=va.digests,
+        digests_b=vb.digests,
+        circuit_hash_a=va.structural_hash,
+        circuit_hash_b=vb.structural_hash,
+        parametric_hash_a=va.parametric_hash,
+        parametric_hash_b=vb.parametric_hash,
+        executed_structural_hash_a=va.exec_structural_hash,
+        executed_structural_hash_b=vb.exec_structural_hash,
+        executed_parametric_hash_a=va.exec_parametric_hash,
+        executed_parametric_hash_b=vb.exec_parametric_hash,
         executed_structural_match=executed_structural_match,
         executed_parametric_match=executed_parametric_match,
         hash_available=hash_available,
     )
+
+
+# =============================================================================
+# TVD computation helpers
+# =============================================================================
 
 
 def _compute_tvd_for_item_pair(
@@ -264,6 +353,21 @@ def _compute_tvd_for_item_pair(
 ) -> tuple[float, NoiseContext | None]:
     """
     Compute TVD and optional noise context for a pair of counts.
+
+    Parameters
+    ----------
+    counts_a : dict
+        Baseline measurement counts.
+    counts_b : dict
+        Candidate measurement counts.
+    include_noise_context : bool
+        Whether to compute noise context.
+    noise_alpha : float
+        Quantile level for noise threshold.
+    noise_n_boot : int
+        Number of bootstrap iterations.
+    noise_seed : int
+        Random seed for reproducibility.
 
     Returns
     -------
@@ -299,7 +403,28 @@ def _compute_tvd_single_item(
     noise_n_boot: int,
     noise_seed: int,
 ) -> None:
-    """Compute TVD for a single item index."""
+    """
+    Compute TVD for a single item index.
+
+    Parameters
+    ----------
+    result : ComparisonResult
+        Result object to populate (modified in-place).
+    envelope_a : ExecutionEnvelope
+        Baseline envelope.
+    envelope_b : ExecutionEnvelope
+        Candidate envelope.
+    item_index : int
+        Index of result item to compare.
+    include_noise_context : bool
+        Whether to compute noise context.
+    noise_alpha : float
+        Quantile level for noise threshold.
+    noise_n_boot : int
+        Number of bootstrap iterations.
+    noise_seed : int
+        Random seed for reproducibility.
+    """
     result.counts_a = get_counts_from_envelope(envelope_a, item_index)
     result.counts_b = get_counts_from_envelope(envelope_b, item_index)
 
@@ -329,6 +454,23 @@ def _compute_tvd_all_items(
     Compute TVD across all items using worst-case (max TVD) approach.
 
     Keeps counts_a/b consistent with the item that produced max TVD.
+
+    Parameters
+    ----------
+    result : ComparisonResult
+        Result object to populate (modified in-place).
+    envelope_a : ExecutionEnvelope
+        Baseline envelope.
+    envelope_b : ExecutionEnvelope
+        Candidate envelope.
+    include_noise_context : bool
+        Whether to compute noise context.
+    noise_alpha : float
+        Quantile level for noise threshold.
+    noise_n_boot : int
+        Number of bootstrap iterations.
+    noise_seed : int
+        Random seed for reproducibility.
     """
     all_counts_a = get_all_counts_from_envelope(envelope_a)
     all_counts_b = get_all_counts_from_envelope(envelope_b)
@@ -391,6 +533,42 @@ def _compute_tvd_all_items(
 # =============================================================================
 
 
+def _match_metadata(
+    val_a: str | None,
+    val_b: str | None,
+    label: str,
+    warnings: list[str],
+) -> bool | None:
+    """
+    Compare optional metadata values, emitting a warning on partial data.
+
+    Parameters
+    ----------
+    val_a : str or None
+        Baseline value.
+    val_b : str or None
+        Candidate value.
+    label : str
+        Human-readable label for warning messages.
+    warnings : list of str
+        Warning accumulator (appended in-place).
+
+    Returns
+    -------
+    bool or None
+        True if both present and equal, False if mismatch or partial,
+        None if both absent.
+    """
+    if val_a and val_b:
+        return val_a == val_b
+    if val_a or val_b:
+        warnings.append(
+            f"{label} metadata incomplete: baseline={val_a!r}, " f"candidate={val_b!r}"
+        )
+        return False
+    return None
+
+
 def diff_contexts(
     ctx_a: RunContext,
     ctx_b: RunContext,
@@ -403,8 +581,7 @@ def diff_contexts(
     noise_n_boot: int = 1000,
     noise_seed: int = 12345,
 ) -> ComparisonResult:
-    """
-    Compare two run contexts comprehensively.
+    """Compare two run contexts comprehensively.
 
     This is the core comparison function operating entirely on envelope data.
     All metadata (params, metrics, project, fingerprint) is extracted from
@@ -462,26 +639,8 @@ def diff_contexts(
     )
 
     # Metadata comparison
-    project_match: bool | None = None
-    backend_match: bool | None = None
-
-    if project_a and project_b:
-        project_match = project_a == project_b
-    elif project_a or project_b:
-        project_match = False
-        result.warnings.append(
-            f"Project metadata incomplete: baseline={project_a!r}, "
-            f"candidate={project_b!r}"
-        )
-
-    if backend_a and backend_b:
-        backend_match = backend_a == backend_b
-    elif backend_a or backend_b:
-        backend_match = False
-        result.warnings.append(
-            f"Backend metadata incomplete: baseline={backend_a!r}, "
-            f"candidate={backend_b!r}"
-        )
+    project_match = _match_metadata(project_a, project_b, "Project", result.warnings)
+    backend_match = _match_metadata(backend_a, backend_b, "Backend", result.warnings)
 
     result.metadata = {
         "project_match": project_match if project_match is not None else True,
@@ -629,8 +788,7 @@ def diff_runs(
     noise_n_boot: int = 1000,
     noise_seed: int = 12345,
 ) -> ComparisonResult:
-    """
-    Compare two run records comprehensively.
+    """Compare two run records comprehensively.
 
     Resolves ExecutionEnvelope for each run and delegates to diff_contexts
     for envelope-only comparison.
@@ -690,7 +848,13 @@ def diff_runs(
 
 
 class _BundleContext:
-    """Context manager for loading run records from bundles."""
+    """Context manager for loading run records from bundles.
+
+    Parameters
+    ----------
+    path : Path
+        Path to the bundle zip file.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -709,6 +873,7 @@ class _BundleContext:
             if isinstance(a, dict)
         ]
         self._record = RunRecord(record=record_dict, artifacts=artifacts)
+        self._record.mark_finalized()
 
         return self._record, self._bundle.store
 
@@ -720,8 +885,7 @@ class _BundleContext:
 
 @contextmanager
 def load_from_bundle(path: Path) -> Iterator[tuple[RunRecord, ObjectStoreProtocol]]:
-    """
-    Load run record and store from a bundle file.
+    """Load run record and store from a bundle file.
 
     Parameters
     ----------
@@ -733,11 +897,8 @@ def load_from_bundle(path: Path) -> Iterator[tuple[RunRecord, ObjectStoreProtoco
     tuple
         (RunRecord, ObjectStoreProtocol) from the bundle.
     """
-    ctx = _BundleContext(path)
-    try:
-        yield ctx.__enter__()
-    finally:
-        ctx.__exit__(None, None, None)
+    with _BundleContext(path) as result:
+        yield result
 
 
 # =============================================================================
@@ -760,8 +921,7 @@ def diff(
     noise_n_boot: int = 1000,
     noise_seed: int = 12345,
 ) -> ComparisonResult:
-    """
-    Compare two runs or bundles by reference.
+    """Compare two runs or bundles by reference.
 
     Accepts run IDs, run names (with project), or bundle file paths
     and loads the appropriate records and stores automatically.
@@ -804,48 +964,55 @@ def diff(
     _store: ObjectStoreProtocol | None = store
     _cfg: Config | None = None
 
-    def get_cfg() -> Config:
+    def ensure_cfg() -> Config:
         nonlocal _cfg
         if _cfg is None:
             _cfg = get_config()
         return _cfg
 
-    def get_registry_() -> RegistryProtocol:
+    def ensure_registry() -> RegistryProtocol:
         nonlocal _registry
         if _registry is None:
-            _registry = create_registry(config=get_cfg())
+            _registry = create_registry(config=ensure_cfg())
         return _registry
 
-    def get_store_() -> ObjectStoreProtocol:
+    def ensure_store() -> ObjectStoreProtocol:
         nonlocal _store
         if _store is None:
-            _store = create_store(config=get_cfg())
+            _store = create_store(config=ensure_cfg())
         return _store
 
-    try:
-        # Load run A
-        if is_bundle_path(ref_a):
-            logger.debug("Loading baseline from bundle: %s", ref_a)
-            ctx_a = _BundleContext(Path(ref_a))
-            bundle_contexts.append(ctx_a)
-            run_a, store_a = ctx_a.__enter__()
-        else:
-            run_id_a = resolve_run_id(str(ref_a), project, get_registry_())
-            logger.debug("Loading baseline from registry: %s", run_id_a)
-            run_a = get_registry_().load(run_id_a)
-            store_a = get_store_()
+    def _load_ref(
+        ref: str | Path,
+        label: str,
+    ) -> tuple[RunRecord, ObjectStoreProtocol]:
+        """Load run record from bundle path or registry.
 
-        # Load run B
-        if is_bundle_path(ref_b):
-            logger.debug("Loading candidate from bundle: %s", ref_b)
-            ctx_b = _BundleContext(Path(ref_b))
-            bundle_contexts.append(ctx_b)
-            run_b, store_b = ctx_b.__enter__()
-        else:
-            run_id_b = resolve_run_id(str(ref_b), project, get_registry_())
-            logger.debug("Loading candidate from registry: %s", run_id_b)
-            run_b = get_registry_().load(run_id_b)
-            store_b = get_store_()
+        Parameters
+        ----------
+        ref : str or Path
+            Run ID, run name, or bundle path.
+        label : str
+            Human-readable label for log messages.
+
+        Returns
+        -------
+        tuple
+            (RunRecord, ObjectStoreProtocol) for the run.
+        """
+        if is_bundle_path(ref):
+            logger.debug("Loading %s from bundle: %s", label, ref)
+            ctx = _BundleContext(Path(ref))
+            bundle_contexts.append(ctx)
+            return ctx.__enter__()
+
+        run_id = resolve_run_id(str(ref), project, ensure_registry())
+        logger.debug("Loading %s from registry: %s", label, run_id)
+        return ensure_registry().load(run_id), ensure_store()
+
+    try:
+        run_a, store_a = _load_ref(ref_a, "baseline")
+        run_b, store_b = _load_ref(ref_b, "candidate")
 
         return diff_runs(
             run_a,
@@ -864,5 +1031,5 @@ def diff(
         for ctx in bundle_contexts:
             try:
                 ctx.__exit__(None, None, None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to close bundle context: %s", exc)

@@ -211,8 +211,8 @@ def gc_plan(
             stats.unreferenced_objects += 1
             try:
                 stats.bytes_reclaimable += store.get_size(digest)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed to get size for %s: %s", digest[:24], exc)
 
     logger.info(
         "GC plan: %d referenced, %d orphaned, %d bytes reclaimable (scanned %d runs, %d objects)",
@@ -473,7 +473,9 @@ def prune_runs(
                     if run_time >= cutoff:
                         continue  # Run is not old enough
                 except (ValueError, TypeError):
-                    pass
+                    logger.debug(
+                        "Failed to parse created_at for run %s: %s", run_id, created_at
+                    )
 
             if run_id:
                 to_prune.append(run_id)

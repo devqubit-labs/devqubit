@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +23,20 @@ from devqubit_engine.uec.models.calibration import (
 )
 from devqubit_engine.uec.models.device import DeviceSnapshot
 from devqubit_engine.uec.models.execution import ProducerInfo
+
+
+# =============================================================================
+# Environment
+# =============================================================================
+
+
+@pytest.fixture
+def clean_env(monkeypatch):
+    """Remove all DEVQUBIT_* env vars so config tests start from a clean slate."""
+    for key in list(os.environ):
+        if key.startswith("DEVQUBIT_"):
+            monkeypatch.delenv(key, raising=False)
+    return monkeypatch
 
 
 # =============================================================================
@@ -110,6 +125,7 @@ def run_factory() -> Callable[..., RunRecord]:
         group_id: str | None = None,
         group_name: str | None = None,
         parent_run_id: str | None = None,
+        ended_at: str | None = None,
     ) -> RunRecord:
         record: dict[str, Any] = {
             "schema": "devqubit.run/0.1",
@@ -136,6 +152,8 @@ def run_factory() -> Callable[..., RunRecord]:
 
         if run_name:
             record["info"]["run_name"] = run_name
+        if ended_at:
+            record["info"]["ended_at"] = ended_at
         if group_id:
             record["group_id"] = group_id
         if group_name:

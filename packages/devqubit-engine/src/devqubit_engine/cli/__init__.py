@@ -18,7 +18,7 @@ runs
 artifacts
     Browse artifacts; manage tags.
 compare
-    Diff runs, verify against baselines, replay experiments.
+    Diff runs, verify against baselines.
 bundle
     Pack, unpack, and inspect bundles.
 admin

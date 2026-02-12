@@ -157,7 +157,7 @@ def to_jsonable(
                 return _normalize_float(item, float_precision)
             return item
         except (TypeError, ValueError):
-            pass
+            logger.debug("Failed to convert numpy scalar via .item(): %r", type(obj))
 
     # NumPy arrays and array-like objects
     if hasattr(obj, "tolist") and callable(obj.tolist):
@@ -169,7 +169,7 @@ def to_jsonable(
                 float_precision=float_precision,
             )
         except (TypeError, ValueError):
-            pass
+            logger.debug("Failed to convert via .tolist(): %r", type(obj))
 
     # Dictionaries - recurse with depth limit
     if isinstance(obj, dict):
@@ -222,7 +222,7 @@ def to_jsonable(
                 float_precision=float_precision,
             )
         except (TypeError, ValueError):
-            pass
+            logger.debug("Failed to convert dataclass via asdict(): %r", type(obj))
 
     # Try common serialization methods (Pydantic v2, Pydantic v1, custom)
     for method_name in ("model_dump", "dict", "to_dict"):
@@ -236,6 +236,9 @@ def to_jsonable(
                     float_precision=float_precision,
                 )
             except Exception:
+                logger.debug(
+                    "Serialization via .%s() failed for %r", method_name, type(obj)
+                )
                 continue
 
     # Try __dict__ for generic objects
@@ -248,7 +251,7 @@ def to_jsonable(
                 float_precision=float_precision,
             )
         except Exception:
-            pass
+            logger.debug("Failed to serialize via __dict__ for %r", type(obj))
 
     # Last resort: repr (truncated)
     return {"__repr__": repr(obj)[:500]}
@@ -296,7 +299,8 @@ def json_dumps(
     float_precision : int, default=15
         Significant digits for float normalization.
     indent : int or None, optional
-        Indentation. Default is 2 unless compact=True.
+        JSON indentation level. Default is None (single-line output).
+        Ignored when compact=True.
     """
     if compact:
         normalize_floats = True
