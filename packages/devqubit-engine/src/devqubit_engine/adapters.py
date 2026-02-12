@@ -278,7 +278,7 @@ def load_adapters(*, force_reload: bool = False) -> list[AdapterProtocol]:
                     )
 
                 loaded.append(adapter)
-                logger.info("Loaded adapter: %s", name)
+                logger.debug("Loaded adapter: %s", name)
 
             except Exception as e:
                 err = _make_load_error(ep, e)
