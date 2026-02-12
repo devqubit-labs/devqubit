@@ -7,9 +7,6 @@ UEC accessor functions.
 This module provides read-only functions for extracting data from
 ExecutionEnvelope. These are the canonical accessors that should be
 used by compare/diff/verify operations.
-
-The functions implement UEC-first strategy with appropriate fallbacks
-for synthesized (manual) envelopes.
 """
 
 from __future__ import annotations
@@ -125,10 +122,7 @@ def resolve_counts(
     canonicalize: bool = True,
 ) -> dict[str, int] | None:
     """
-    Extract counts with UEC-first strategy.
-
-    This is the canonical function for getting counts in compare operations.
-    Falls back to Run counts artifact only for synthesized (manual) envelopes.
+    Extract counts from a run's envelope.
 
     Parameters
     ----------
@@ -148,54 +142,34 @@ def resolve_counts(
     dict or None
         Counts as {bitstring: count}, or None if not available.
     """
-    from devqubit_engine.storage.artifacts.counts import get_counts
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
 
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
-    # Try to get counts from envelope (UEC-first)
-    if envelope.result.items and item_index < len(envelope.result.items):
-        item = envelope.result.items[item_index]
-        if item.counts:
-            raw_counts = item.counts.get("counts")
-            if isinstance(raw_counts, dict):
-                if canonicalize:
-                    format_info = item.counts.get("format", {})
-                    bit_order = format_info.get("bit_order", "cbit0_right")
-                    transformed = format_info.get("transformed", False)
-                    canonical = canonicalize_bitstrings(
-                        raw_counts,
-                        bit_order=bit_order,
-                        transformed=transformed,
-                    )
-                    return {k: int(v) for k, v in canonical.items()}
-                else:
-                    return {str(k): int(v) for k, v in raw_counts.items()}
-
-    # Fallback: Run counts artifact - ONLY for synthesized envelopes
-    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
-
-    if not is_synthesized:
-        logger.debug(
-            "Adapter envelope for run %s has no counts in result items[%d]",
-            record.run_id,
-            item_index,
-        )
+    if not envelope.result.items or item_index >= len(envelope.result.items):
         return None
 
-    # Manual/synthesized envelope - fallback allowed
-    counts_info = get_counts(record, store)
-    if counts_info is None:
+    item = envelope.result.items[item_index]
+    if not item.counts:
+        return None
+
+    raw_counts = item.counts.get("counts")
+    if not isinstance(raw_counts, dict):
         return None
 
     if canonicalize:
-        return canonicalize_bitstrings(
-            counts_info.counts,
-            bit_order="cbit0_right",
-            transformed=False,
+        format_info = item.counts.get("format", {})
+        bit_order = format_info.get("bit_order", "cbit0_right")
+        transformed = format_info.get("transformed", False)
+        canonical = canonicalize_bitstrings(
+            raw_counts,
+            bit_order=bit_order,
+            transformed=transformed,
         )
-    return counts_info.counts
+        return {k: int(v) for k, v in canonical.items()}
+
+    return {str(k): int(v) for k, v in raw_counts.items()}
 
 
 def resolve_device_snapshot(
@@ -204,11 +178,7 @@ def resolve_device_snapshot(
     envelope: ExecutionEnvelope | None = None,
 ) -> DeviceSnapshot | None:
     """
-    Load device snapshot with UEC-first strategy.
-
-    This is the canonical function for getting device snapshot in compare
-    operations. Falls back to Run record metadata only for synthesized
-    (manual) envelopes.
+    Extract device snapshot from a run's envelope.
 
     Parameters
     ----------
@@ -225,27 +195,11 @@ def resolve_device_snapshot(
         Device snapshot if available.
     """
     from devqubit_engine.uec.api.resolve import resolve_envelope as _resolve_envelope
-    from devqubit_engine.uec.api.synthesize import build_device_from_record
 
     if envelope is None:
         envelope = _resolve_envelope(record, store)
 
-    # Get device from envelope (UEC-first)
-    if envelope.device is not None:
-        return envelope.device
-
-    # Fallback: construct from record - ONLY for synthesized envelopes
-    is_synthesized = envelope.metadata.get("synthesized_from_run", False)
-
-    if not is_synthesized:
-        logger.debug(
-            "Adapter envelope for run %s has no device snapshot",
-            record.run_id,
-        )
-        return None
-
-    # Manual/synthesized envelope - use shared builder from synthesize module
-    return build_device_from_record(record)
+    return envelope.device
 
 
 def resolve_circuit_summary(

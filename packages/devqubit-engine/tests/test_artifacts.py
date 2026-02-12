@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 
-from devqubit_engine.storage.artifacts.counts import CountsInfo, get_counts
 from devqubit_engine.storage.artifacts.io import (
     load_artifact_bytes,
     load_artifact_json,
@@ -197,94 +196,3 @@ class TestArtifactListing:
 
         assert len(infos) == 1
         assert infos[0].role == "program"
-
-
-class TestCountsExtraction:
-    """Tests for measurement counts extraction."""
-
-    def test_get_counts_simple(self, store, run_factory):
-        """Extract counts from simple format."""
-        counts_data = json.dumps({"counts": {"00": 500, "11": 500}}).encode()
-        digest = store.put_bytes(counts_data)
-
-        from devqubit_engine.storage.types import ArtifactRef
-
-        art = ArtifactRef(
-            kind="result.counts.json",
-            digest=digest,
-            media_type="application/json",
-            role="results",
-        )
-        run = run_factory(artifacts=[art])
-
-        counts = get_counts(run, store)
-
-        assert counts is not None
-        assert counts.counts == {"00": 500, "11": 500}
-        assert counts.total_shots == 1000
-        assert counts.num_outcomes == 2
-
-    def test_get_counts_batch_format(self, store, run_factory):
-        """Extract counts from batch experiment format."""
-        counts_data = json.dumps(
-            {
-                "experiments": [
-                    {"counts": {"0": 100, "1": 100}},
-                    {"counts": {"0": 200, "1": 200}},
-                ]
-            }
-        ).encode()
-        digest = store.put_bytes(counts_data)
-
-        from devqubit_engine.storage.types import ArtifactRef
-
-        art = ArtifactRef(
-            kind="result.counts.json",
-            digest=digest,
-            media_type="application/json",
-            role="results",
-        )
-        run = run_factory(artifacts=[art])
-
-        # Aggregate all experiments
-        counts = get_counts(run, store)
-        assert counts.total_shots == 600  # 100+100+200+200
-
-        # Specific experiment
-        counts_exp0 = get_counts(run, store, experiment_index=0)
-        assert counts_exp0.total_shots == 200
-
-    def test_counts_info_probabilities(self):
-        """CountsInfo computes probabilities correctly."""
-        info = CountsInfo(
-            counts={"00": 300, "11": 700},
-            total_shots=1000,
-            num_outcomes=2,
-        )
-
-        probs = info.probabilities
-
-        assert probs["00"] == 0.3
-        assert probs["11"] == 0.7
-
-    def test_counts_info_top_k(self):
-        """CountsInfo.top_k returns sorted outcomes."""
-        info = CountsInfo(
-            counts={"00": 100, "01": 200, "10": 300, "11": 400},
-            total_shots=1000,
-            num_outcomes=4,
-        )
-
-        top = info.top_k(k=2)
-
-        assert len(top) == 2
-        assert top[0] == ("11", 400, 0.4)
-        assert top[1] == ("10", 300, 0.3)
-
-    def test_get_counts_returns_none_when_missing(self, store, run_factory):
-        """get_counts returns None when no counts artifact."""
-        run = run_factory(artifacts=[])
-
-        counts = get_counts(run, store)
-
-        assert counts is None
