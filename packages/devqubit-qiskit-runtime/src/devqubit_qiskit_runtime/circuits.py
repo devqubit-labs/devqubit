@@ -73,8 +73,8 @@ def _compute_params_digest(parameter_values: list[Any] | None) -> str | None:
                 encoded = [encode_value(v) for v in flat]
                 parts.append(f"pub{pub_idx}:[{','.join(encoded)}]")
                 continue
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to encode parameter values: %s", e)
 
         # Handle list/tuple of values
         if isinstance(pv, (list, tuple)):
@@ -82,8 +82,8 @@ def _compute_params_digest(parameter_values: list[Any] | None) -> str | None:
                 encoded = [encode_value(v) for v in pv]
                 parts.append(f"pub{pub_idx}:[{','.join(encoded)}]")
                 continue
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to encode parameter values: %s", e)
 
         # Handle dict-like parameter bindings
         if isinstance(pv, dict):
@@ -91,8 +91,8 @@ def _compute_params_digest(parameter_values: list[Any] | None) -> str | None:
                 encoded = [f"{k}={encode_value(v)}" for k, v in sorted(pv.items())]
                 parts.append(f"pub{pub_idx}:{{{','.join(encoded)}}}")
                 continue
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to encode parameter values: %s", e)
 
         # Fallback: string representation
         parts.append(f"pub{pub_idx}:{str(pv)[:200]}")
@@ -429,7 +429,8 @@ def circuits_to_text(circuits: list[Any]) -> str:
                 parts.append(diagram.single_string())
             else:
                 parts.append(str(diagram))
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to draw circuit diagram: %s", e)
             parts.append(str(circuit))
 
     return "\n".join(parts)

@@ -29,13 +29,14 @@ from devqubit_qiskit_runtime.utils import get_backend_obj
 from qiskit.circuit import QuantumCircuit
 
 
+logger = logging.getLogger(__name__)
+
+
 try:
     from qiskit.transpiler import generate_preset_pass_manager
-except Exception:
+except ImportError as e:
+    logger.debug("Optional qiskit import unavailable: %s", e)
     from qiskit.transpiler.preset_passmanagers import generate_preset_pass_manager
-
-
-logger = logging.getLogger(__name__)
 
 
 _OPTION_ALIASES: dict[str, str] = {
@@ -386,7 +387,8 @@ def apply_layout_to_observables(observables: Any, layout: Any) -> Any:
     if callable(fn):
         try:
             return fn(layout)
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Unexpected error: %s", e)
             return observables
 
     return observables
@@ -405,7 +407,8 @@ def _try_ibm_is_isa_circuit(circuit: QuantumCircuit, target: Any) -> bool | None
     """
     try:
         from qiskit_ibm_runtime.utils.validations import is_isa_circuit
-    except Exception:
+    except ImportError as e:
+        logger.debug("Optional qiskit import unavailable: %s", e)
         return None
 
     try:

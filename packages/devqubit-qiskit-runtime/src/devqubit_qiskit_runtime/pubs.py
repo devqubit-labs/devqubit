@@ -15,10 +15,14 @@ observables.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from typing import Any
 
 from qiskit.circuit import QuantumCircuit
+
+
+logger = logging.getLogger(__name__)
 
 
 def is_v2_pub_tuple(obj: Any) -> bool:
@@ -248,8 +252,8 @@ def _count_observables(obs: Any) -> int | None:
     if hasattr(obs, "__len__"):
         try:
             return len(obs)
-        except Exception:
-            pass
+        except TypeError as e:
+            logger.debug("Failed to count observables: %s", e)
 
     # Single observable
     return 1
@@ -329,8 +333,8 @@ def extract_pubs_structure(
                 num_obs = _count_observables(pub.observables)
                 if num_obs is not None:
                     info["num_observables"] = num_obs
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to count observables: %s", e)
 
         # Parameter values
         if hasattr(pub, "parameter_values"):
@@ -342,8 +346,8 @@ def extract_pubs_structure(
                         info["parameter_shape"] = list(pv.shape)
                     elif hasattr(pv, "__len__"):
                         info["num_parameter_sets"] = len(pv)
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Failed to get parameter_values: %s", e)
 
         # Check for parameters in tuple PUBs
         if is_v2_pub_tuple(pub) and "has_parameters" not in info:
@@ -405,8 +409,8 @@ def extract_parameter_values_from_pubs(
         if hasattr(pub, "parameter_values"):
             try:
                 pv = pub.parameter_values
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Failed to get parameter_values: %s", e)
 
         # Dict-style pub
         elif isinstance(pub, dict):

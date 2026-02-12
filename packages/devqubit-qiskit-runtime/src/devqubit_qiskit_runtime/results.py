@@ -11,8 +11,9 @@ the devqubit Uniform Execution Contract (UEC).
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from devqubit_engine.uec.models.result import (
     CountsFormat,
@@ -24,10 +25,6 @@ from devqubit_engine.uec.models.result import (
 from devqubit_engine.utils.serialization import to_jsonable
 
 
-if TYPE_CHECKING:
-    pass
-
-
 # Qiskit uses little-endian (cbit[0] on right) = UEC canonical
 _SAMPLER_COUNTS_FORMAT = CountsFormat(
     source_sdk="qiskit-ibm-runtime",
@@ -35,6 +32,9 @@ _SAMPLER_COUNTS_FORMAT = CountsFormat(
     bit_order="cbit0_right",
     transformed=False,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def is_bitarray_like(x: Any) -> bool:
@@ -87,7 +87,8 @@ def extract_bitarrays_from_databin(databin: Any) -> list[tuple[str, Any]]:
             continue
         try:
             val = getattr(databin, name)
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to access databin attribute: %s", e)
             continue
         # Skip methods/functions — BitArray objects are not callable
         if callable(val):
@@ -122,7 +123,8 @@ def counts_from_bitarrays(bitarrays: list[tuple[str, Any]]) -> dict[str, int] | 
             try:
                 c = ba.get_counts()
                 return {str(k): int(v) for k, v in dict(c).items()}
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to get counts: %s", e)
                 return None
         return None
 
@@ -135,7 +137,8 @@ def counts_from_bitarrays(bitarrays: list[tuple[str, Any]]) -> dict[str, int] | 
             break
         try:
             bitstrings_per_reg.append([str(s) for s in list(getter())])
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get bitstrings: %s", e)
             bitstrings_per_reg = []
             break
 
@@ -156,7 +159,8 @@ def counts_from_bitarrays(bitarrays: list[tuple[str, Any]]) -> dict[str, int] | 
         try:
             c = ba0.get_counts()
             return {str(k): int(v) for k, v in dict(c).items()}
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get counts: %s", e)
             return None
 
     return None
@@ -186,7 +190,8 @@ def extract_sampler_results(result: Any) -> dict[str, Any] | None:
 
     try:
         pubs = list(result)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to iterate result pubs: %s", e)
         return None
 
     for i, pubres in enumerate(pubs):
@@ -206,8 +211,8 @@ def extract_sampler_results(result: Any) -> dict[str, Any] | None:
                         }
                     )
                     continue
-            except Exception:
-                pass
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to get counts: %s", e)
 
         # Fallback to extracting from databin
         databin = getattr(pubres, "data", None)
@@ -319,7 +324,8 @@ def extract_estimator_results(result: Any) -> dict[str, Any] | None:
 
     try:
         pubs = list(result)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to iterate result pubs: %s", e)
         return None
 
     for i, pubres in enumerate(pubs):
@@ -332,24 +338,24 @@ def extract_estimator_results(result: Any) -> dict[str, Any] | None:
             if evs is not None:
                 try:
                     exp_entry["expectation_values"] = to_jsonable(evs)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to serialize expectation values: %s", e)
 
             # Standard deviations
             stds = getattr(databin, "stds", None)
             if stds is not None:
                 try:
                     exp_entry["standard_deviations"] = to_jsonable(stds)
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to serialize standard deviations: %s", e)
 
         # Top-level metadata
         metadata = getattr(pubres, "metadata", None)
         if metadata is not None:
             try:
                 exp_entry["metadata"] = to_jsonable(metadata)
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to serialize metadata: %s", e)
 
         if len(exp_entry) > 1:  # Has more than just index
             exps.append(exp_entry)

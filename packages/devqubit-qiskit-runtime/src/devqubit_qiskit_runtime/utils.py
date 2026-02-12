@@ -55,8 +55,8 @@ def collect_sdk_versions() -> dict[str, str]:
         try:
             mod = __import__(import_name)
             versions[pkg_name] = getattr(mod, "__version__", "unknown")
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.debug("Optional import unavailable: %s", e)
 
     _sdk_versions = versions
     return _sdk_versions
@@ -76,7 +76,8 @@ def get_adapter_version() -> str:
         from importlib.metadata import version
 
         return version("devqubit-qiskit-runtime")
-    except Exception:
+    except ImportError as e:
+        logger.debug("Optional qiskit import unavailable: %s", e)
         return "unknown"
 
 
@@ -116,8 +117,8 @@ def get_backend_obj(primitive: Any) -> Any | None:
         if callable(backend):
             try:
                 return backend()
-            except Exception:
-                pass
+            except (TypeError, ValueError) as e:
+                logger.debug("Unexpected error: %s", e)
         else:
             return backend
 
@@ -137,8 +138,8 @@ def get_backend_obj(primitive: Any) -> Any | None:
         if callable(mode_backend):
             try:
                 return mode_backend()
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Failed to call mode backend accessor: %s", e)
         if mode_backend is not None:
             return mode_backend
 
@@ -267,5 +268,6 @@ def extract_job_id(job: Any) -> str | None:
         if jid is None:
             return None
         return str(jid() if callable(jid) else jid)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get job_id: %s", e)
         return None

@@ -227,7 +227,8 @@ class TrackedRuntimeJob:
         try:
             try:
                 result_payload = to_jsonable(result)
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to serialize to JSON: %s", e)
                 result_payload = {"repr": repr(result)[:2000]}
 
             raw_result_ref = self.tracker.log_json(
@@ -545,8 +546,8 @@ class TrackedRuntimePrimitive:
                     index=0,
                 )
             )
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to create circuit artifact: %s", e)
 
         # Serialize QASM3 for each circuit
         for i, circuit in enumerate(circuits):
@@ -578,7 +579,8 @@ class TrackedRuntimePrimitive:
                                 index=i,
                             )
                         )
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to serialize QASM: %s", e)
                 continue
 
         # Log circuit diagrams
@@ -600,8 +602,8 @@ class TrackedRuntimePrimitive:
                     index=0,
                 )
             )
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Unexpected error: %s", e)
 
         return artifacts
 
@@ -828,8 +830,8 @@ class TrackedRuntimePrimitive:
                             index=0,
                         )
                     )
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to create circuit artifact: %s", e)
 
             if structural_hash:
                 self._logged_circuit_hashes.add(structural_hash)

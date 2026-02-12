@@ -156,16 +156,16 @@ def _build_frontend_config(primitive: Any) -> FrontendConfig:
                 try:
                     val = getattr(opts, attr)
                     config[attr] = int(val) if val is not None else None
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("Failed to convert option value: %s", e)
 
         # Extract nested options
         for nested in ("resilience", "execution", "twirling"):
             if hasattr(opts, nested):
                 try:
                     config[f"options_{nested}"] = to_jsonable(getattr(opts, nested))
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("Failed to serialize nested options: %s", e)
 
     return FrontendConfig(
         name=primitive_class,
@@ -212,8 +212,8 @@ def _extract_backend_id(primitive: Any) -> str | None:
                 bid = bid()
             if bid:
                 return str(bid)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get session attribute: %s", e)
 
     # Try instance ID
     try:
@@ -221,8 +221,8 @@ def _extract_backend_id(primitive: Any) -> str | None:
             inst = backend.instance
             if inst:
                 return str(inst)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get session attribute: %s", e)
 
     return None
 
@@ -266,11 +266,12 @@ def _extract_options(primitive: Any) -> dict[str, Any]:
             try:
                 raw_val = getattr(opts, nested_attr)
                 props[f"options_{nested_attr}"] = to_jsonable(raw_val)
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to serialize to JSON: %s", e)
                 try:
                     props[f"options_{nested_attr}"] = repr(raw_val)[:500]
-                except Exception:
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to repr nested options: %s", e)
 
     # Extract common scalar options
     for scalar_attr in ("optimization_level", "default_shots"):
@@ -278,8 +279,8 @@ def _extract_options(primitive: Any) -> dict[str, Any]:
             try:
                 val = getattr(opts, scalar_attr)
                 props[scalar_attr] = int(val) if val is not None else None
-            except Exception:
-                pass
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to convert option value: %s", e)
 
     return props
 
@@ -312,12 +313,13 @@ def _extract_session_info(primitive: Any) -> dict[str, Any] | None:
             try:
                 val = getattr(session, sattr)
                 session_info[sattr] = to_jsonable(val() if callable(val) else val)
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to get session attribute: %s", e)
                 try:
                     val = getattr(session, sattr)
                     session_info[sattr] = repr(val() if callable(val) else val)[:200]
-                except Exception:
-                    pass
+                except (AttributeError, TypeError, ValueError) as e:
+                    logger.debug("Failed to get session attribute: %s", e)
 
     return session_info if session_info else None
 
@@ -356,8 +358,8 @@ def _extract_mode_info(primitive: Any) -> dict[str, Any] | None:
                 if val:
                     mode_info["id"] = str(val)
                     break
-            except Exception:
-                pass
+            except (AttributeError, TypeError) as e:
+                logger.debug("Failed to get execution mode id: %s", e)
 
     # Max time
     if hasattr(mode, "max_time"):
@@ -366,8 +368,8 @@ def _extract_mode_info(primitive: Any) -> dict[str, Any] | None:
             if callable(mt):
                 mt = mt()
             mode_info["max_time"] = mt
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get mode max_time: %s", e)
 
     return mode_info if len(mode_info) > 1 else None
 
@@ -570,7 +572,8 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
 
     try:
         backend = get_backend_obj(executor)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get backend object: %s", e)
         backend = None
 
     if backend is None:
@@ -578,7 +581,8 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
 
     try:
         backend_name = get_backend_name(executor)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get backend name: %s", e)
         backend_name = "unknown"
 
     backend_name_lower = backend_name.lower()
@@ -589,12 +593,14 @@ def resolve_runtime_backend(executor: Any) -> dict[str, Any] | None:
 
     try:
         backend_id = _extract_backend_id(executor)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to extract backend_id: %s", e)
         backend_id = None
 
     try:
         primitive_type = get_primitive_type(executor)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get primitive type: %s", e)
         primitive_type = "unknown"
 
     return {

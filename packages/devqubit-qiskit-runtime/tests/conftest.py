@@ -209,18 +209,18 @@ class MockSamplerPubResult:
 
     def _create_databin(self):
         class BitArray:
-            def __init__(ba_self, counts):
-                ba_self._counts = counts
+            def __init__(self, counts):
+                self._counts = counts
 
-            def get_counts(ba_self):
-                return ba_self._counts
+            def get_counts(self):
+                return self._counts
 
-            def get_bitstrings(ba_self):
-                return [bs for bs, c in ba_self._counts.items() for _ in range(c)]
+            def get_bitstrings(self):
+                return [bs for bs, c in self._counts.items() for _ in range(c)]
 
         class DataBin:
-            def __init__(db_self, counts):
-                db_self.meas = BitArray(counts)
+            def __init__(self, counts):
+                self.meas = BitArray(counts)
 
         return DataBin(self._counts)
 
@@ -239,9 +239,9 @@ class MockEstimatorPubResult:
         self._stds = np.array(stds) if stds is not None else np.zeros_like(self._evs)
 
         class DataBin:
-            def __init__(db_self, evs, stds):
-                db_self.evs = evs
-                db_self.stds = stds
+            def __init__(self, evs, stds):
+                self.evs = evs
+                self.stds = stds
 
         self.data = DataBin(self._evs, self._stds)
         self.metadata = {}
