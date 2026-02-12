@@ -133,8 +133,8 @@ def _get_program_set_metadata(program_set: Any) -> dict[str, Any]:
             val = getattr(program_set, attr, None)
             if val is not None:
                 meta[attr] = int(val)
-        except Exception:
-            pass
+        except (ValueError, TypeError) as e:
+            logger.debug("Failed to extract meta[attr]: %s", e)
 
     return meta
 

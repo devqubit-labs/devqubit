@@ -10,6 +10,7 @@ for Amazon Braket circuits.
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from typing import Any
 
@@ -24,6 +25,9 @@ from devqubit_engine.circuit.models import (
 )
 from devqubit_engine.circuit.registry import LoaderError, SerializerError
 from devqubit_engine.circuit.summary import CircuitSummary
+
+
+logger = logging.getLogger(__name__)
 
 
 # Gate classification table for Braket gates
@@ -271,7 +275,7 @@ def circuit_to_text(circuit: Any, index: int = 0) -> str:
     """
     try:
         return f"[{index}]\n{circuit}"
-    except Exception:
+    except (TypeError, ValueError):
         return f"[{index}]\n(circuit diagram unavailable)"
 
 

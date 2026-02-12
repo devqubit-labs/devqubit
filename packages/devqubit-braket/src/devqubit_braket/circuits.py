@@ -340,8 +340,8 @@ def _get_num_qubits(circuit: Any) -> int:
     if qc is not None:
         try:
             return int(qc)
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to parse int: %s", e)
 
     max_idx = -1
     instrs = getattr(circuit, "instructions", None)
@@ -356,8 +356,8 @@ def _get_num_qubits(circuit: Any) -> int:
                             max_idx = max(max_idx, int(idx))
                         else:
                             max_idx = max(max_idx, int(q))
-                except (TypeError, ValueError):
-                    pass
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to extract max idx: %s", e)
 
     return max_idx + 1 if max_idx >= 0 else 0
 

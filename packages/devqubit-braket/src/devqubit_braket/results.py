@@ -18,9 +18,13 @@ to the canonical format for cross-SDK comparison.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from devqubit_braket.utils import canonicalize_counts
+
+
+logger = logging.getLogger(__name__)
 
 
 def _to_counts_dict(
@@ -51,7 +55,7 @@ def _to_counts_dict(
         if canonicalize:
             result = canonicalize_counts(result)
         return result
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 
@@ -92,8 +96,8 @@ def extract_measurement_counts(
                 out = _to_counts_dict(v, canonicalize=canonicalize)
                 if out is not None:
                     return out
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed in return expression: %s", e)
 
     return None
 
@@ -149,7 +153,7 @@ def extract_counts_payload(
     # Single-result fallback
     try:
         counts = extract_measurement_counts(result, canonicalize=canonicalize)
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         counts = None
 
     if counts is None:
@@ -214,5 +218,5 @@ def _extract_program_set_experiments(
 
         return experiments if experiments else None
 
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         return None

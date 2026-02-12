@@ -139,16 +139,16 @@ def _extract_measured_qubits(result: Any) -> list[int] | None:
         mq = getattr(result, "measured_qubits", None)
         if mq is not None:
             return [int(q) for q in mq]
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to parse int: %s", e)
 
     # Try measurement_counts_indices (some result types)
     try:
         mci = getattr(result, "measurement_counts_indices", None)
         if mci is not None:
             return [int(q) for q in mci]
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to parse int: %s", e)
 
     return None
 
@@ -620,7 +620,7 @@ def finalize_envelope(
     if result is not None:
         try:
             result_payload = to_jsonable(result)
-        except Exception:
+        except (TypeError, ValueError):
             result_payload = {"repr": repr(result)[:2000]}
 
         try:

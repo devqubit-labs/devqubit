@@ -10,7 +10,11 @@ used across the adapter components.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -70,7 +74,7 @@ def get_adapter_version() -> str:
         from importlib.metadata import version
 
         _adapter_version = version("devqubit-braket")
-    except Exception:
+    except ImportError:
         _adapter_version = "unknown"
     return _adapter_version
 
@@ -164,15 +168,15 @@ def get_backend_name(device: Any) -> str:
             if hasattr(device, key):
                 v = getattr(device, key)
                 return str(v() if callable(v) else v)
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed in return expression: %s", e)
 
     try:
         if hasattr(device, "arn"):
             arn = getattr(device, "arn")
             return str(arn() if callable(arn) else arn)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed in return expression: %s", e)
 
     return device.__class__.__name__
 
@@ -196,7 +200,8 @@ def extract_task_id(task: Any) -> str | None:
             if hasattr(task, key):
                 v = getattr(task, key)
                 return str(v() if callable(v) else v)
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to extract task.%s: %s", key, e)
             continue
     return None
 
@@ -253,7 +258,7 @@ def get_nested(obj: Any, path: tuple[str, ...]) -> Any:
                 cur = cur.get(key)
             else:
                 cur = getattr(cur, key, None)
-        except Exception:
+        except (KeyError, AttributeError, TypeError):
             return None
     return cur
 
@@ -287,5 +292,5 @@ def obj_to_dict(x: Any) -> dict[str, Any] | None:
             return to_jsonable(x.to_dict())
         # Fallback: attempt generic conversion
         return to_jsonable(x)
-    except Exception:
+    except (TypeError, ValueError, AttributeError):
         return None
