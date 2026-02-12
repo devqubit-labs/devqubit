@@ -74,7 +74,8 @@ def materialize_circuits(circuits: Any) -> tuple[list[Any], bool]:
 
     try:
         return list(circuits), False
-    except TypeError:
+    except TypeError as e:
+        logger.debug("Suppressed error: %s", e)
         return [circuits], True
 
 
@@ -243,7 +244,8 @@ def _extract_condition(
                 "target": str(target),
                 "value": int(value),
             }
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to serialize condition: %s", e)
         return {"type": "present"}
 
 
@@ -484,7 +486,8 @@ def circuits_to_text(circuits: list[Any]) -> str:
                 parts.append(diagram.single_string())
             else:
                 parts.append(str(diagram))
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to draw circuit diagram: %s", e)
             parts.append(str(circuit))
 
     return "\n".join(parts)
@@ -563,7 +566,8 @@ def serialize_and_log_circuits(
                     "index": i,
                 }
             )
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.debug("Failed to serialize circuit QASM: %s", e)
             continue
 
     if oq3_items:
@@ -602,7 +606,7 @@ def serialize_and_log_circuits(
                 index=0,
             )
         )
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to create diagram artifact: %s", e)
 
     return artifacts

@@ -500,8 +500,8 @@ def _create_minimal_device_snapshot(
     num_qubits = None
     try:
         num_qubits = backend.num_qubits
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get backend num_qubits: %s", e)
 
     if error_msg:
         logger.warning(

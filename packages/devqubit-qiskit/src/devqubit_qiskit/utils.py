@@ -10,14 +10,13 @@ utilities used across the adapter components.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import qiskit
 
 
-# =============================================================================
-# Version Utilities
-# =============================================================================
+logger = logging.getLogger(__name__)
 
 
 def qiskit_version() -> str:
@@ -45,13 +44,9 @@ def get_adapter_version() -> str:
         from importlib.metadata import version
 
         return version("devqubit-qiskit")
-    except Exception:
+    except ImportError as e:
+        logger.debug("Package version lookup failed: %s", e)
         return "unknown"
-
-
-# =============================================================================
-# Backend Utilities
-# =============================================================================
 
 
 def get_backend_name(backend: Any) -> str:
@@ -79,8 +74,8 @@ def get_backend_name(backend: Any) -> str:
             name = name_attr
         if name:
             return str(name)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Attribute access failed: %s", e)
     return backend.__class__.__name__
 
 
@@ -105,13 +100,9 @@ def extract_job_id(job: Any) -> str | None:
         if callable(job_id_attr):
             return str(job_id_attr())
         return str(job_id_attr)
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get job_id: %s", e)
         return None
-
-
-# =============================================================================
-# Type Conversion Utilities
-# =============================================================================
 
 
 def to_float(x: Any) -> float | None:
@@ -134,14 +125,15 @@ def to_float(x: Any) -> float | None:
         return None
     try:
         return float(x)
-    except Exception:
-        pass
+    except (TypeError, ValueError) as e:
+        logger.debug("Float conversion failed: %s", e)
     try:
         s = str(x).strip()
         if not s:
             return None
         return float(s)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Float conversion failed: %s", e)
         return None
 
 
@@ -163,10 +155,12 @@ def to_int(x: Any) -> int | None:
         return None
     try:
         return int(x)
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Int conversion failed: %s", e)
         try:
             return int(str(x).strip())
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Int conversion failed: %s", e)
             return None
 
 
@@ -194,10 +188,6 @@ def as_int_tuple(seq: Any) -> tuple[int, ...] | None:
         out.append(iv)
     return tuple(out)
 
-
-# =============================================================================
-# Unit Conversion Utilities
-# =============================================================================
 
 # Time to microseconds conversion factors
 _TIME_TO_US: dict[str, float] = {

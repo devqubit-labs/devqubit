@@ -134,8 +134,8 @@ class TrackedJob:
         if pending_jobs is not None:
             try:
                 pending_jobs.remove(self)
-            except ValueError:
-                pass
+            except ValueError as e:
+                logger.debug("Suppressed error: %s", e)
         self._registered_as_pending = False
 
     def result(self, *args: Any, **kwargs: Any) -> Any:

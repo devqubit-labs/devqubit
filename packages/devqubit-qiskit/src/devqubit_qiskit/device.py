@@ -269,8 +269,8 @@ def _detect_backend_type(backend: Any) -> str:
         opts = getattr(backend, "options", None)
         if opts is not None and hasattr(opts, "simulator") and bool(opts.simulator):
             return "simulator"
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to check simulator flag: %s", e)
 
     simulator_indicators = (
         "sim",
@@ -315,8 +315,8 @@ def _extract_from_target(
         if hasattr(target, "num_qubits") and target.num_qubits is not None:
             num_qubits = int(target.num_qubits)
             raw["num_qubits"] = num_qubits
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get num_qubits: %s", e)
 
     # Connectivity via Target.build_coupling_map()
     try:
@@ -327,8 +327,8 @@ def _extract_from_target(
             connectivity = _extract_connectivity_from_coupling_map(coupling_map)
             if connectivity:
                 raw["connectivity"] = connectivity
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to build coupling map: %s", e)
 
     # Native operation names
     try:
@@ -338,8 +338,8 @@ def _extract_from_target(
             native_gates = sorted(
                 op for op in ops if op not in ("measure", "reset", "delay")
             )
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get operation_names: %s", e)
 
     return num_qubits, connectivity, native_gates, raw
 
@@ -353,7 +353,8 @@ def _extract_connectivity_from_coupling_map(
     try:
         edges = coupling_map.get_edges()
         return [(int(e[0]), int(e[1])) for e in edges]
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to extract connectivity: %s", e)
         return None
 
 
@@ -362,8 +363,8 @@ def _get_num_qubits_fallback(backend: Any) -> int | None:
     try:
         if hasattr(backend, "num_qubits") and backend.num_qubits is not None:
             return int(backend.num_qubits)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get backend num_qubits: %s", e)
     return None
 
 
@@ -373,8 +374,8 @@ def _get_native_gates_fallback(backend: Any) -> list[str] | None:
         if hasattr(backend, "operation_names"):
             ops = list(backend.operation_names)
             return sorted(op for op in ops if op not in ("measure", "reset", "delay"))
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get operation_names: %s", e)
     return None
 
 
@@ -386,8 +387,8 @@ def _get_sdk_versions() -> dict[str, str]:
         import qiskit_aer
 
         sdk_versions["qiskit_aer"] = getattr(qiskit_aer, "__version__", "unknown")
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     try:
         import qiskit_ibm_runtime
@@ -395,8 +396,8 @@ def _get_sdk_versions() -> dict[str, str]:
         sdk_versions["qiskit_ibm_runtime"] = getattr(
             qiskit_ibm_runtime, "__version__", "unknown"
         )
-    except ImportError:
-        pass
+    except ImportError as e:
+        logger.debug("Optional import unavailable: %s", e)
 
     return sdk_versions
 
@@ -418,7 +419,8 @@ def _extract_calibration(
 
     try:
         props_dict = props.to_dict() if hasattr(props, "to_dict") else {}
-    except Exception:
+    except (TypeError, ValueError, AttributeError) as e:
+        logger.debug("Failed to convert properties to dict: %s", e)
         props_dict = {}
 
     last_update_date = getattr(props, "last_update_date", None)
@@ -448,12 +450,13 @@ def _call_backend_properties(backend: Any, *, refresh: bool) -> Any | None:
 
     try:
         return backend.properties(refresh=refresh)
-    except TypeError:
-        pass
+    except TypeError as e:
+        logger.debug("Suppressed error: %s", e)
 
     try:
         return backend.properties()
-    except Exception:
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get backend properties: %s", e)
         return None
 
 
@@ -494,9 +497,11 @@ def _extract_calibration_from_target(
                             duration_ns=duration_ns,
                         )
                     )
-                except Exception:
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to extract gate metric: %s", e)
                     continue
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("Failed to extract gate metric: %s", e)
         return None
 
     if not gates_out:
@@ -520,7 +525,8 @@ def _parse_calibration_timestamp(props: dict[str, Any]) -> str:
             if isinstance(val, datetime):
                 try:
                     return val.isoformat()
-                except Exception:
+                except (TypeError, ValueError) as e:
+                    logger.debug("Failed to format datetime: %s", e)
                     return str(val)
             s = str(val).strip()
             if s:
@@ -665,7 +671,8 @@ def _derive_1q_gate_errors(
             try:
                 ge = float(median(oneq_errors[q.qubit]))
                 updated.append(replace(q, gate_error_1q=ge))
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to compute median gate error: %s", e)
                 updated.append(q)
         else:
             updated.append(q)

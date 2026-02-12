@@ -170,7 +170,8 @@ def serialize_qasm3(circuits: Any) -> list[CircuitData]:
                         metadata={"circuit_name": qc_name},
                     )
                 )
-        except Exception:
+        except (AttributeError, KeyError, TypeError, ValueError) as e:
+            logger.debug("Failed to serialize QASM: %s", e)
             continue
 
     return results
@@ -388,7 +389,8 @@ class QiskitCircuitLoader:
         # Try qiskit.qasm3.loads (Qiskit 1.0+)
         try:
             from qiskit.qasm3 import loads
-        except ImportError:
+        except ImportError as e:
+            logger.debug("Optional import unavailable: %s", e)
             loads = None
 
         if loads is not None:
@@ -485,7 +487,8 @@ class QiskitCircuitSerializer:
             from qiskit import QuantumCircuit
 
             return isinstance(circuit, QuantumCircuit)
-        except ImportError:
+        except ImportError as e:
+            logger.debug("Optional import unavailable: %s", e)
             return False
 
     def serialize(

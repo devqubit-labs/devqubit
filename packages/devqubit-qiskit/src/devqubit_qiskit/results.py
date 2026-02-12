@@ -65,8 +65,8 @@ def detect_result_type(result: Any) -> ResultType:
                 data = results_list[0].data
                 if hasattr(data, "statevector"):
                     return ResultType.STATEVECTOR
-        except Exception:
-            pass
+        except (AttributeError, IndexError, TypeError) as e:
+            logger.debug("Failed to detect result type: %s", e)
 
     # Check for measurement counts — method presence, fall back to result structure
     if hasattr(result, "get_counts") and callable(getattr(result, "get_counts", None)):
@@ -135,8 +135,8 @@ def _get_num_experiments(result: Any) -> int | None:
     try:
         if hasattr(result, "results") and result.results is not None:
             return len(result.results)
-    except Exception:
-        pass
+    except (AttributeError, TypeError) as e:
+        logger.debug("Failed to get num_experiments: %s", e)
     return None
 
 
@@ -168,11 +168,12 @@ def _extract_experiment_by_index(result: Any, idx: int) -> dict[str, Any] | None
                 name = getattr(result.results[idx].header, "name", None)
                 if name:
                     exp_data["name"] = str(name)
-        except Exception:
-            pass
+        except (AttributeError, IndexError, TypeError) as e:
+            logger.debug("Failed to get experiment name: %s", e)
 
         return exp_data
-    except Exception:
+    except (AttributeError, IndexError, TypeError) as e:
+        logger.debug("Failed to get experiment name: %s", e)
         return None
 
 
@@ -227,7 +228,8 @@ def _safe_getattr(obj: Any, attr: str, converter: type | None = None) -> Any | N
         if converter is not None:
             return converter(val)
         return val
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to extract result field: %s", e)
         return None
 
 
@@ -283,8 +285,8 @@ def extract_quasi_distributions(result: Any) -> list[dict[str, float]] | None:
                     )
             if quasi_dists:
                 return quasi_dists
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to extract quasi-distributions: %s", e)
 
     return None
 
@@ -322,8 +324,8 @@ def extract_expectation_values(
             else:
                 std_errors = [None] * len(values)
             return list(zip(values, std_errors))
-    except Exception:
-        pass
+    except (AttributeError, KeyError, TypeError, ValueError) as e:
+        logger.debug("Failed to extract estimator values: %s", e)
 
     return None
 
