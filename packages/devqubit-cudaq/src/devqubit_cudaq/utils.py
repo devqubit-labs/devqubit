@@ -64,7 +64,7 @@ def get_adapter_version() -> str:
         from importlib.metadata import version
 
         _adapter_version = version("devqubit-cudaq")
-    except Exception:
+    except ImportError:
         _adapter_version = "unknown"
     return _adapter_version
 
@@ -94,8 +94,8 @@ def collect_sdk_versions() -> dict[str, str]:
         try:
             mod = __import__(import_name)
             versions[pkg] = getattr(mod, "__version__", "unknown")
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.debug("Optional import unavailable: %s", e)
 
     _sdk_versions = versions
     return dict(_sdk_versions)
@@ -178,7 +178,8 @@ def _safe_call(obj: Any, method_name: str, *, default: Any = None) -> Any:
         return default
     try:
         return fn() if callable(fn) else fn
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("safe_call_attr failed: %s", e)
         return default
 
 
@@ -208,8 +209,8 @@ def get_target_info() -> TargetInfo:
         try:
             nq = target.num_qpus
             num_qpus = nq() if callable(nq) else int(nq)
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get num_qpus: %s", e)
 
         is_remote = _safe_call(target, "is_remote", default=None)
         is_remote_sim = _safe_call(target, "is_remote_simulator", default=None)
@@ -343,8 +344,8 @@ def get_kernel_num_qubits(kernel: Any) -> int | None:
     if nq is not None:
         try:
             return int(nq() if callable(nq) else nq)
-        except Exception:
-            pass
+        except (TypeError, ValueError) as e:
+            logger.debug("Int conversion failed: %s", e)
     return None
 
 
@@ -388,8 +389,8 @@ def collect_gpu_snapshot() -> dict[str, Any]:
         num_gpus_fn = getattr(cudaq, "num_available_gpus", None)
         if num_gpus_fn is not None:
             gpu_info["num_available_gpus"] = int(num_gpus_fn())
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as e:
+        logger.debug("Failed to get GPU info: %s", e)
 
     return gpu_info
 

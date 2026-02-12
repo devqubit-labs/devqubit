@@ -296,14 +296,16 @@ def _to_jsonable(value: Any) -> Any:
                     "shape": list(shape),
                     "sha256": _sha256_tag_bytes(tobytes()),
                 }
-            except Exception:
+            except (AttributeError, OSError, TypeError, ValueError) as e:
+                logger.debug("Failed to serialize array arg: %s", e)
                 pass  # Fall through to str() or repr() below.
 
     # CUDA-Q types: str() is more stable than repr()
     if "cudaq" in mod:
         try:
             return str(value)
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to str() cudaq value: %s", e)
             pass  # Fall through to repr() below.
 
     # Last resort: repr, scrub hex addresses for cross-process stability

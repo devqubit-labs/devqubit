@@ -185,19 +185,22 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
     if hasattr(sample_obj, "get_total_shots"):
         try:
             shots = int(sample_obj.get_total_shots())
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get total_shots: %s", e)
             shots = None
 
     counts: dict[str, int] | None = None
     if hasattr(sample_obj, "items"):
         try:
             counts = {str(k): int(v) for k, v in sample_obj.items()}
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to extract counts via .items(): %s", e)
             counts = None
     if counts is None:
         try:
             counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to extract counts via dict(): %s", e)
             counts = None
 
     if counts is not None:
@@ -205,7 +208,8 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
         if shots is None:
             try:
                 shots = int(sum(counts.values()))
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to sum counts for shots: %s", e)
                 shots = None
 
     if shots is not None:
@@ -216,13 +220,15 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
             names = list(sample_obj.register_names)
             if names:
                 out["register_names"] = [str(n) for n in names]
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to extract register_names: %s", e)
             pass  # Best-effort: register_names extraction is non-fatal.
 
     if hasattr(sample_obj, "most_probable"):
         try:
             out["most_probable"] = str(sample_obj.most_probable())
-        except Exception:
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.debug("Failed to get most_probable: %s", e)
             pass  # Best-effort: most_probable not critical.
 
     if hasattr(sample_obj, "get_register_counts") and out.get("register_names"):
@@ -232,7 +238,8 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
                 r = sample_obj.get_register_counts(reg)
                 if r is not None and hasattr(r, "items"):
                     reg_counts[str(reg)] = {str(k): int(v) for k, v in r.items()}
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to get register_counts: %s", e)
                 continue
         if reg_counts:
             out["register_counts"] = reg_counts
@@ -268,19 +275,22 @@ def _extract_observe_counts_raw(sample_obj: Any) -> dict[str, Any]:
     if hasattr(sample_obj, "get_total_shots"):
         try:
             shots = int(sample_obj.get_total_shots())
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get total_shots: %s", e)
             shots = None
 
     counts: dict[str, int] | None = None
     if hasattr(sample_obj, "items"):
         try:
             counts = {str(k): int(v) for k, v in sample_obj.items()}
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to extract counts via .items(): %s", e)
             counts = None
     if counts is None:
         try:
             counts = {str(k): int(v) for k, v in dict(sample_obj).items()}
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to extract counts via dict(): %s", e)
             counts = None
 
     if counts is not None:
@@ -288,7 +298,8 @@ def _extract_observe_counts_raw(sample_obj: Any) -> dict[str, Any]:
         if shots is None:
             try:
                 shots = int(sum(counts.values()))
-            except Exception:
+            except (TypeError, ValueError) as e:
+                logger.debug("Failed to sum counts for shots: %s", e)
                 shots = None
 
     if shots is not None:
@@ -340,12 +351,14 @@ def _extract_observe_raw(
     if shots is not None and hasattr(observe_obj, "counts"):
         try:
             sr = observe_obj.counts()
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to get observe counts: %s", e)
             sr = None
         if sr is not None:
             try:
                 out["counts_obj"] = _extract_observe_counts_raw(sr)
-            except Exception:
+            except (AttributeError, TypeError, ValueError) as e:
+                logger.debug("Failed to extract observe counts: %s", e)
                 pass  # Best-effort: observe counts extraction is optional.
 
     return out
@@ -404,12 +417,14 @@ def result_to_raw_artifact(
     # Unknown result type — scrubbed str/repr fallback
     try:
         s = _scrub_memory_addresses(str(result))
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("str(result) conversion failed: %s", e)
         s = "<unavailable>"
 
     try:
         r = _scrub_memory_addresses(repr(result))
-    except Exception:
+    except (TypeError, ValueError) as e:
+        logger.debug("repr(result) conversion failed: %s", e)
         r = "<unavailable>"
 
     return {"type": type(result).__name__, "str": s, "repr": r}
@@ -448,7 +463,8 @@ def _extract_counts_and_meta(
     if hasattr(sample_obj, "get_total_shots"):
         try:
             meta["shots"] = int(sample_obj.get_total_shots())
-        except Exception:
+        except (TypeError, ValueError) as e:
+            logger.debug("Failed to get total_shots: %s", e)
             pass  # Best-effort: total_shots not critical.
 
     if not skip_registers and hasattr(sample_obj, "register_names"):
@@ -456,7 +472,8 @@ def _extract_counts_and_meta(
             names = list(sample_obj.register_names)
             if names:
                 meta["register_names"] = names
-        except Exception:
+        except (AttributeError, TypeError) as e:
+            logger.debug("Failed to extract register_names: %s", e)
             pass  # Best-effort: register_names not critical.
 
     try:

@@ -677,8 +677,8 @@ class TrackedCudaqExecutor:
                     payload = f"{content}:{repr(args)}"
                     h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
                     return structural, h
-            except Exception:
-                # Best-effort: fall back to name-based hashing below.
+            except (OSError, TypeError, ValueError) as e:
+                logger.debug("Source-based kernel hashing failed: %s", e)
                 pass
 
             payload = f"{get_kernel_name(kernel)}:{repr(args)}"
@@ -880,7 +880,8 @@ class CudaqAdapter:
         """Describe the CUDA-Q execution environment."""
         try:
             target_info = get_target_info()
-        except Exception:
+        except (AttributeError, ImportError, TypeError) as e:
+            logger.debug("Failed to get target info: %s", e)
             return {
                 "name": "cudaq",
                 "type": "module",
