@@ -1027,6 +1027,66 @@ class RemoteRegistry(RegistryProtocol):
         logger.debug("Deleted run: %s", run_id)
         return True
 
+    def save_metric_points(self, points: list[dict[str, Any]]) -> None:
+        """Batch-insert metric time-series points via the remote API."""
+        if not points:
+            return
+        # Group by run_id (typically one, but be safe)
+        by_run: dict[str, list[dict[str, Any]]] = {}
+        for p in points:
+            by_run.setdefault(p["run_id"], []).append(p)
+
+        for run_id, batch in by_run.items():
+            response = self._client._request(
+                "POST",
+                f"/runs/{run_id}/metric_points",
+                json={"points": batch},
+            )
+            self._client._raise_for_status(
+                response, f"Failed to save metric points for {run_id}"
+            )
+
+    def iter_metric_points(
+        self,
+        run_id: str,
+        key: str,
+        *,
+        start_step: int | None = None,
+        end_step: int | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield metric points for a single key from the remote API."""
+        params: dict[str, Any] = {"key": key}
+        if start_step is not None:
+            params["start_step"] = start_step
+        if end_step is not None:
+            params["end_step"] = end_step
+
+        response = self._client._request(
+            "GET",
+            f"/runs/{run_id}/metric_points",
+            params=params,
+        )
+        self._client._raise_for_status(
+            response, f"Failed to load metric points for {run_id}"
+        )
+        for pt in response.json().get("points", []):
+            yield {
+                "step": pt["step"],
+                "timestamp": pt["timestamp"],
+                "value": pt["value"],
+            }
+
+    def load_metric_series(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Load all metric time-series for a run from the remote API."""
+        response = self._client._request(
+            "GET",
+            f"/runs/{run_id}/metric_series",
+        )
+        self._client._raise_for_status(
+            response, f"Failed to load metric series for {run_id}"
+        )
+        return response.json().get("series", {})
+
     def list_runs(
         self,
         *,

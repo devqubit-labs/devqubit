@@ -664,10 +664,6 @@ class LocalRegistry:
         """
         Yield metric points for a single key from the ``metric_points`` table.
 
-        Falls back to the run record JSON when the table has no rows for
-        the given (run_id, key) — e.g. for runs persisted before the
-        ``metric_points`` migration.
-
         Parameters
         ----------
         run_id : str

@@ -328,6 +328,16 @@ CREATE TABLE IF NOT EXISTS index_meta (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS metric_points (
+    run_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    step INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (run_id, key, step)
+);
+CREATE INDEX IF NOT EXISTS idx_mp_run_key ON metric_points(run_id, key, step);
 """
 
 
@@ -773,9 +783,77 @@ class GCSRegistry:
         # Remove from local index
         with self._get_index_connection() as conn:
             conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM metric_points WHERE run_id = ?", (run_id,))
 
         logger.debug("Deleted run from GCS: %s", run_id)
         return True
+
+    def save_metric_points(self, points: list[dict[str, Any]]) -> None:
+        """Batch-insert metric time-series points into the local index."""
+        if not points:
+            return
+        rows = [
+            (p["run_id"], p["key"], p["step"], p["timestamp"], p["value"])
+            for p in points
+        ]
+        with self._get_index_connection() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO metric_points
+                    (run_id, key, step, timestamp, value)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def iter_metric_points(
+        self,
+        run_id: str,
+        key: str,
+        *,
+        start_step: int | None = None,
+        end_step: int | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """Yield metric points for a single key, ordered by step."""
+        clauses = ["run_id = ?", "key = ?"]
+        params: list[Any] = [run_id, key]
+        if start_step is not None:
+            clauses.append("step >= ?")
+            params.append(start_step)
+        if end_step is not None:
+            clauses.append("step <= ?")
+            params.append(end_step)
+
+        sql = (
+            "SELECT step, timestamp, value FROM metric_points WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY step"
+        )
+        with self._get_index_connection() as conn:
+            for row in conn.execute(sql, params):
+                yield {
+                    "step": row["step"],
+                    "timestamp": row["timestamp"],
+                    "value": row["value"],
+                }
+
+    def load_metric_series(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        """Load all metric time-series for a run from the local index."""
+        sql = (
+            "SELECT key, step, timestamp, value FROM metric_points "
+            "WHERE run_id = ? ORDER BY key, step"
+        )
+        series: dict[str, list[dict[str, Any]]] = {}
+        with self._get_index_connection() as conn:
+            for row in conn.execute(sql, (run_id,)):
+                series.setdefault(row["key"], []).append(
+                    {
+                        "value": row["value"],
+                        "step": row["step"],
+                        "timestamp": row["timestamp"],
+                    }
+                )
+        return series
 
     def _iter_run_ids_from_gcs(self) -> Iterator[str]:
         """
