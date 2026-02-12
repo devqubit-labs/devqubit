@@ -33,7 +33,7 @@ Comparing and Verifying Runs
 0.023
 
 >>> result = verify_baseline("nightly-run", project="bell-state")
->>> assert result.ok, result.verdict.summary
+>>> assert result.ok
 
 Navigating Runs
 ---------------

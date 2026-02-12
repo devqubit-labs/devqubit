@@ -193,7 +193,7 @@ Use fingerprints to detect what changed between runs — same `program` fingerpr
 
 **diff** compares two runs across multiple dimensions: parameter/metric changes, program match (digest/structural/parametric), device drift (calibration deltas), and result distribution distance (TVD with optional bootstrap noise context).
 
-**verify** checks a candidate run against a baseline with a policy: required equality constraints (params/program), TVD thresholds (hard limit or noise-calibrated), and produces a human-readable verdict with root-cause analysis.
+**verify** checks a candidate run against a baseline with a policy: required equality constraints (params/program), and TVD thresholds (hard limit or noise-calibrated)
 
 ```python
 from devqubit.compare import diff, verify_baseline
@@ -204,5 +204,5 @@ print(result.tvd, result.program.structural_match)
 
 # CI verification
 result = verify_baseline("candidate", project="bell")
-assert result.ok, result.verdict.summary
+assert result.ok
 ```

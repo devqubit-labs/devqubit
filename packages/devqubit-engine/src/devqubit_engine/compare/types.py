@@ -38,34 +38,6 @@ class ProgramMatchMode(str, Enum):
     EITHER = "either"
 
 
-class VerdictCategory(str, Enum):
-    """
-    Root-cause categories for verification regression.
-
-    Attributes
-    ----------
-    PROGRAM_CHANGED : str
-        The quantum program (circuit) has changed.
-    COMPILER_CHANGED : str
-        Same circuit compiled differently (depth/2Q gates changed).
-    DEVICE_DRIFT : str
-        Device calibration has drifted significantly.
-    SHOT_NOISE : str
-        Difference is consistent with statistical sampling noise.
-    MIXED : str
-        Multiple contributing factors detected.
-    UNKNOWN : str
-        No clear root cause identified.
-    """
-
-    PROGRAM_CHANGED = "PROGRAM_CHANGED"
-    COMPILER_CHANGED = "COMPILER_CHANGED"
-    DEVICE_DRIFT = "DEVICE_DRIFT"
-    SHOT_NOISE = "SHOT_NOISE"
-    MIXED = "MIXED"
-    UNKNOWN = "UNKNOWN"
-
-
 class ProgramMatchStatus(str, Enum):
     """
     Detailed program match status.
@@ -106,8 +78,6 @@ class FormatOptions:
         Maximum parameter changes to display. Default is 10.
     max_metric_changes : int
         Maximum metric changes to display. Default is 10.
-    show_evidence : bool
-        Show detailed evidence in verdicts. Default is True.
     width : int
         Line width for text output. Default is 70.
     """
@@ -116,5 +86,4 @@ class FormatOptions:
     max_circuit_changes: int = 10
     max_param_changes: int = 10
     max_metric_changes: int = 10
-    show_evidence: bool = True
     width: int = 70

@@ -205,7 +205,6 @@ class ResultFormatter:
         lines += self._verify_status_section(result)
         lines += self._verify_failures_section(result)
         lines += self._verify_results_section(result)
-        lines += self._verify_verdict_section(result)
         lines += self._verify_footer_section(result)
 
         return self.r.render(lines)
@@ -550,28 +549,6 @@ class ResultFormatter:
             lines += self.r.kv("Expected noise:", f"{nc.expected_noise:.6f}")
             lines += self.r.kv("Noise ratio:", f"{nc.noise_ratio:.2f}x")
             lines += self.r.kv("Assessment:", nc.interpretation())
-
-        return lines
-
-    def _verify_verdict_section(self, result: VerifyResult) -> list[str]:
-        """Build root cause analysis section."""
-        if result.ok or not result.verdict:
-            return []
-
-        v = result.verdict
-        lines = self.r.section("ROOT CAUSE ANALYSIS")
-
-        lines += self.r.kv("Category:", v.category.value)
-        lines += self.r.kv("Summary:", v.summary)
-
-        if v.action:
-            lines += self.r.kv("Action:", v.action)
-
-        if v.contributing_factors:
-            factors = ", ".join(v.contributing_factors[:3])
-            if len(v.contributing_factors) > 3:
-                factors += f" (+{len(v.contributing_factors) - 3} more)"
-            lines += self.r.kv("Factors:", factors)
 
         return lines
 

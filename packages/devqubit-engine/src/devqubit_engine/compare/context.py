@@ -6,10 +6,10 @@ Execution context and envelope extraction utilities.
 
 This module provides the RunContext abstraction and helper functions for
 extracting data from ExecutionEnvelopes. These are the building blocks
-for comparison, verification, and verdict operations.
+for comparison and verification operations.
 
 The extraction functions are part of the public API and are used by
-both the diff and verdict modules.
+the diff module.
 """
 
 from __future__ import annotations

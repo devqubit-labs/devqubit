@@ -23,15 +23,7 @@ Baseline Verification
 ...     project="bell-state",
 ...     policy=VerifyPolicy(noise_factor=1.2),
 ... )
->>> assert result.ok, result.verdict.summary
-
-Verdicts (Root-Cause Analysis)
-------------------------------
-Failed verifications include a machine-readable verdict:
-
->>> if not result.ok:
-...     print(result.verdict.category)  # e.g. VerdictCategory.DEVICE_DRIFT
-...     print(result.verdict.action)    # suggested remediation
+>>> assert result.ok
 
 Drift Detection
 ---------------
@@ -62,9 +54,6 @@ __all__ = [
     # Policy configuration
     "VerifyPolicy",
     "ProgramMatchMode",
-    # Verdict types
-    "Verdict",
-    "VerdictCategory",
     # Drift analysis
     "DriftResult",
     "DriftThresholds",
@@ -86,8 +75,6 @@ if TYPE_CHECKING:
         MetricDrift,
         ProgramComparison,
         ProgramMatchMode,
-        Verdict,
-        VerdictCategory,
         VerifyResult,
     )
     from devqubit_engine.compare.verify import VerifyPolicy
@@ -104,9 +91,6 @@ _LAZY_IMPORTS = {
     # Policy
     "VerifyPolicy": ("devqubit_engine.compare.verify", "VerifyPolicy"),
     "ProgramMatchMode": ("devqubit_engine.compare.results", "ProgramMatchMode"),
-    # Verdicts
-    "Verdict": ("devqubit_engine.compare.results", "Verdict"),
-    "VerdictCategory": ("devqubit_engine.compare.results", "VerdictCategory"),
     # Drift
     "DriftResult": ("devqubit_engine.compare.results", "DriftResult"),
     "DriftThresholds": ("devqubit_engine.compare.drift", "DriftThresholds"),
@@ -159,8 +143,7 @@ def verify_baseline(
     -------
     VerifyResult
         Result with :attr:`~VerifyResult.ok` status, :attr:`~VerifyResult.failures`,
-        :attr:`~VerifyResult.comparison`, and :attr:`~VerifyResult.verdict`
-        (root-cause analysis when failed).
+        and :attr:`~VerifyResult.comparison`.
 
     Raises
     ------
@@ -175,7 +158,7 @@ def verify_baseline(
     Basic CI gate:
 
     >>> result = verify_baseline("nightly-run", project="bell-state")
-    >>> assert result.ok, result.verdict.summary
+    >>> assert result.ok
 
     Custom policy with noise tolerance:
 

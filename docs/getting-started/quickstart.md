@@ -128,7 +128,6 @@ result = verify_baseline(
 
 if not result.ok:
     print(result.failures)
-    print(result.verdict.summary)  # e.g., "Device drift: T1 degraded 15%"
 ```
 
 ## Web UI

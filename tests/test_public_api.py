@@ -291,13 +291,6 @@ class TestCompareSubmodule:
         assert hasattr(ProgramMatchMode, "EXACT")
         assert hasattr(ProgramMatchMode, "STRUCTURAL")
 
-    def test_verdict_types(self) -> None:
-        """Verdict types are available."""
-        from devqubit import compare
-
-        assert hasattr(compare, "Verdict")
-        assert hasattr(compare, "VerdictCategory")
-
     def test_drift_types(self) -> None:
         """Drift analysis types are available."""
         from devqubit import compare

@@ -19,7 +19,6 @@ from devqubit_engine.compare.types import (
     FormatOptions,
     ProgramMatchMode,
     ProgramMatchStatus,
-    VerdictCategory,
 )
 
 
@@ -150,50 +149,6 @@ class DriftResult:
             return "DriftResult(no_data)"
         status = "significant" if self.significant_drift else "within_threshold"
         return f"DriftResult({status}, {len(self.metrics)} metrics)"
-
-
-# =============================================================================
-# Verdict
-# =============================================================================
-
-
-@dataclass
-class Verdict:
-    """
-    Regression verdict with root-cause analysis.
-
-    Attributes
-    ----------
-    category : VerdictCategory
-        Primary suspected cause.
-    summary : str
-        One-liner explanation.
-    evidence : dict
-        Supporting data and numbers.
-    action : str
-        Suggested next step.
-    contributing_factors : list of str
-        All detected factors.
-    """
-
-    category: VerdictCategory
-    summary: str
-    evidence: dict[str, Any] = field(default_factory=dict)
-    action: str = ""
-    contributing_factors: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "category": self.category.value,
-            "summary": self.summary,
-            "evidence": self.evidence,
-            "action": self.action,
-            "contributing_factors": self.contributing_factors,
-        }
-
-    def __repr__(self) -> str:
-        return f"Verdict({self.category.value})"
 
 
 # =============================================================================
@@ -555,8 +510,6 @@ class VerifyResult:
         Candidate run ID.
     duration_ms : float
         Verification time in milliseconds.
-    verdict : Verdict or None
-        Root-cause verdict when verification fails.
     """
 
     ok: bool
@@ -565,7 +518,6 @@ class VerifyResult:
     baseline_run_id: str | None = None
     candidate_run_id: str | None = None
     duration_ms: float = 0.0
-    verdict: Verdict | None = None
 
     def __str__(self) -> str:
         return self.format()
@@ -616,6 +568,4 @@ class VerifyResult:
         }
         if self.comparison:
             d["comparison"] = self.comparison.to_dict()
-        if self.verdict:
-            d["verdict"] = self.verdict.to_dict()
         return d

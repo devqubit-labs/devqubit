@@ -121,10 +121,10 @@ from devqubit.compare import verify_baseline, VerifyPolicy
 result = verify_baseline(
     "nightly-run",
     project="bell-state",
-    policy=VerifyPolicy(tvd_threshold=0.05, noise_factor=1.2),
+    policy=VerifyPolicy(tvd_max=0.05, noise_factor=1.2),
 )
 
-assert result.ok, result.verdict.summary
+assert result.ok
 ```
 
 ```bash

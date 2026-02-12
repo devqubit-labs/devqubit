@@ -172,7 +172,6 @@ result = verify_baseline(
 print(f"Passed: {result.ok}")
 if not result.ok:
     print(result.failures)
-    print(result.verdict.summary)
 ```
 
 ## VerifyPolicy

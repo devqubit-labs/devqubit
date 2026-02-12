@@ -24,7 +24,6 @@ from devqubit_engine.compare.context import RunContext
 from devqubit_engine.compare.diff import diff_contexts
 from devqubit_engine.compare.results import VerifyResult
 from devqubit_engine.compare.types import ProgramMatchMode
-from devqubit_engine.compare.verdict import build_verdict_contexts
 from devqubit_engine.storage.types import ObjectStoreProtocol
 from devqubit_engine.tracking.record import RunRecord
 from devqubit_engine.uec.api.resolve import resolve_envelope
@@ -303,7 +302,7 @@ def verify_contexts(
     Returns
     -------
     VerifyResult
-        Verification result with ok status, failures, comparison, and verdict.
+        Verification result with ok status, failures, and comparison.
 
     Notes
     -----
@@ -419,15 +418,6 @@ def verify_contexts(
                 "(analytic mode or missing results artifact)"
             )
 
-    # Build verdict if failures
-    verdict = None
-    if failures:
-        verdict = build_verdict_contexts(
-            result=comparison,
-            ctx_a=ctx_baseline,
-            ctx_b=ctx_candidate,
-        )
-
     duration_ms = (time.perf_counter() - start) * 1000
 
     result = VerifyResult(
@@ -437,7 +427,6 @@ def verify_contexts(
         baseline_run_id=ctx_baseline.run_id,
         candidate_run_id=ctx_candidate.run_id,
         duration_ms=duration_ms,
-        verdict=verdict,
     )
 
     logger.info(
