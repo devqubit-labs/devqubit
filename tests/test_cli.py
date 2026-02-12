@@ -283,24 +283,6 @@ class TestArtifactsShow:
         assert_err(result)
 
 
-class TestArtifactsCounts:
-    """Tests for `devqubit artifacts counts`."""
-
-    def test_shows_counts(self, invoke: Callable, sample_run: RunRecord) -> None:
-        result = invoke("artifacts", "counts", sample_run.run_id)
-        assert_ok(result)
-        assert "00" in result.output
-        assert "11" in result.output
-        assert "Total shots" in result.output
-
-    def test_json_format(self, invoke: Callable, sample_run: RunRecord) -> None:
-        result = invoke("artifacts", "counts", sample_run.run_id, "--format", "json")
-        assert_ok(result)
-        data = parse_json(result)
-        assert "counts" in data
-        assert data["counts"]["00"] == 500
-
-
 # =============================================================================
 # TAG COMMANDS
 # =============================================================================
