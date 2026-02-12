@@ -7,6 +7,9 @@ Circuit extraction from run records.
 This module provides functions for extracting circuit data from run
 records stored in devqubit. It handles SDK detection, artifact discovery,
 and format conversion.
+
+All SDK-specific pattern matching is derived from
+:data:`devqubit_engine.circuit.models.SDK_REGISTRY`.
 """
 
 from __future__ import annotations
@@ -15,7 +18,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from devqubit_engine.circuit.models import SDK, CircuitData, CircuitFormat
+from devqubit_engine.circuit.models import SDK, SDK_REGISTRY, CircuitData, CircuitFormat
 from devqubit_engine.storage.artifacts.io import load_artifact_bytes
 from devqubit_engine.storage.artifacts.lookup import find_artifact
 from devqubit_engine.storage.types import ArtifactRef, ObjectStoreProtocol
@@ -28,25 +31,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Format detection patterns for RunRecord scanning:
-# (kind_pattern, CircuitFormat, SDK, is_binary)
-# Note: These patterns use substring matching (pattern in kind.lower())
-_FORMAT_PATTERNS: tuple[tuple[str, CircuitFormat, SDK, bool], ...] = (
-    ("qpy", CircuitFormat.QPY, SDK.QISKIT, True),
-    ("jaqcd", CircuitFormat.JAQCD, SDK.BRAKET, False),
-    ("cirq", CircuitFormat.CIRQ_JSON, SDK.CIRQ, False),
-    ("tape", CircuitFormat.TAPE_JSON, SDK.PENNYLANE, False),
-    ("cudaq", CircuitFormat.CUDAQ_JSON, SDK.CUDAQ, False),
-)
 
-# Default format preference order for envelope extraction
-# Native formats first (carry SDK info), then interchange formats
-_DEFAULT_PREFER_FORMATS: tuple[str, ...] = (
-    "qpy",  # Qiskit native (binary)
-    "jaqcd",  # Braket native
-    "cirq",  # Cirq native
-    "tape",  # PennyLane native (matches "tape", "tapes")
-    "cudaq",  # CUDA-Q native
+# Default format preference order for envelope extraction.
+# Native formats first (carry SDK info), then interchange formats.
+_DEFAULT_PREFER_FORMATS: tuple[str, ...] = tuple(
+    d.kind_pattern for d in SDK_REGISTRY
+) + (
     "openqasm3",  # Interchange
     "openqasm",  # Interchange (generic)
     "qasm",  # Interchange (legacy)
@@ -100,8 +90,6 @@ def detect_sdk(record: RunRecord) -> SDK:
     """
     Detect SDK from a run record.
 
-    Uses the adapter name as the primary indicator.
-
     Parameters
     ----------
     record : RunRecord
@@ -114,17 +102,9 @@ def detect_sdk(record: RunRecord) -> SDK:
     """
     adapter = (record.adapter or "").lower()
 
-    sdk_patterns = (
-        ("qiskit", SDK.QISKIT),
-        ("braket", SDK.BRAKET),
-        ("cirq", SDK.CIRQ),
-        ("pennylane", SDK.PENNYLANE),
-        ("cudaq", SDK.CUDAQ),
-    )
-
-    for pattern, sdk in sdk_patterns:
-        if pattern in adapter:
-            return sdk
+    for desc in SDK_REGISTRY:
+        if desc.adapter_pattern in adapter:
+            return desc.sdk
 
     logger.debug("Could not detect SDK from record (adapter=%r)", record.adapter)
     return SDK.UNKNOWN
@@ -246,7 +226,10 @@ def _try_load_envelope(
     except Exception as e:
         # Intentional: envelope loading should not break circuit extraction path.
         logger.debug(
-            "Failed to load envelope for run %s: %s", record.run_id, e, exc_info=True
+            "Failed to load envelope for run %s: %s",
+            record.run_id,
+            e,
+            exc_info=True,
         )
         return None
 
@@ -256,6 +239,10 @@ def _try_native_formats(
 ) -> CircuitData | None:
     """
     Try loading circuit from native SDK format artifacts.
+
+    Iterates :data:`SDK_REGISTRY` descriptors. If *sdk* is known,
+    only the matching descriptor is tried; otherwise all are tried
+    in registry order.
 
     Parameters
     ----------
@@ -271,11 +258,15 @@ def _try_native_formats(
     CircuitData or None
         Circuit if found, otherwise None.
     """
-    for kind_pattern, fmt, fmt_sdk, is_binary in _FORMAT_PATTERNS:
-        if sdk != SDK.UNKNOWN and fmt_sdk != sdk:
+    for desc in SDK_REGISTRY:
+        if sdk != SDK.UNKNOWN and desc.sdk != sdk:
             continue
 
-        artifact = find_artifact(record, role="program", kind_contains=kind_pattern)
+        artifact = find_artifact(
+            record,
+            role="program",
+            kind_contains=desc.kind_pattern,
+        )
         if not artifact:
             continue
 
@@ -283,17 +274,29 @@ def _try_native_formats(
         if data is None:
             continue
 
-        logger.debug("Found native format artifact: %s (%s)", artifact.kind, fmt.value)
+        logger.debug(
+            "Found native format artifact: %s (%s)",
+            artifact.kind,
+            desc.native_format.value,
+        )
 
-        if is_binary:
-            return CircuitData(data=data, format=fmt, sdk=fmt_sdk)
+        if desc.is_binary:
+            return CircuitData(
+                data=data,
+                format=desc.native_format,
+                sdk=desc.sdk,
+            )
 
         text = _decode_utf8(data)
         if text is None:
             logger.debug("Failed to decode native artifact as UTF-8: %s", artifact.kind)
             continue
 
-        return CircuitData(data=text, format=fmt, sdk=fmt_sdk)
+        return CircuitData(
+            data=text,
+            format=desc.native_format,
+            sdk=desc.sdk,
+        )
 
     return None
 
@@ -419,6 +422,9 @@ def _load_circuit_from_ref(
     """
     Load circuit data from a single artifact ref based on kind.
 
+    Native format matching is driven by :data:`SDK_REGISTRY`
+    descriptors. Interchange formats (OpenQASM) use *sdk_hint*.
+
     Parameters
     ----------
     ref : ArtifactRef
@@ -434,68 +440,49 @@ def _load_circuit_from_ref(
     -------
     CircuitData or None
         Loaded circuit data, or None if loading fails.
-
-    Notes
-    -----
-    Pattern matching for native formats (SDK determined by format):
-    - "qpy" => Qiskit QPY (binary)
-    - "jaqcd" => Braket JAQCD (JSON)
-    - "cirq" => Cirq JSON
-    - "tape" => PennyLane tape JSON (matches "tape", "tapes")
-    - "cudaq" => CUDA-Q enriched JSON
-
-    Interchange formats use sdk_hint:
-    - "openqasm3", "qasm3" => OpenQASM 3
-    - "openqasm", "qasm" => OpenQASM (auto-detect version)
     """
     try:
         data = store.get_bytes(ref.digest)
     except Exception as e:
         logger.debug(
-            "Failed to load artifact %s: %s", ref.digest[:24], e, exc_info=True
+            "Failed to load artifact %s: %s",
+            ref.digest[:24],
+            e,
+            exc_info=True,
         )
         return None
 
-    # Binary native (fast path)
-    if "qpy" in kind_lower:
-        return CircuitData(data=data, format=CircuitFormat.QPY, sdk=SDK.QISKIT)
+    # --- Native formats ---
 
-    # Everything else should be decodable as UTF-8 text
+    for desc in SDK_REGISTRY:
+        if desc.kind_pattern not in kind_lower:
+            continue
+
+        if desc.is_binary:
+            return CircuitData(
+                data=data,
+                format=desc.native_format,
+                sdk=desc.sdk,
+            )
+
+        text = _decode_utf8(data)
+        if text is None:
+            logger.debug("Non-UTF8 data for text format kind: %s", kind_lower)
+            return None
+
+        return CircuitData(
+            data=text,
+            format=desc.native_format,
+            sdk=desc.sdk,
+        )
+
+    # --- Interchange formats ---
+
     text = _decode_utf8(data)
     if text is None:
         logger.debug("Unknown binary/non-UTF8 format for kind: %s", kind_lower)
         return None
 
-    # Native JSON formats (SDK determined by kind)
-    if "jaqcd" in kind_lower:
-        return CircuitData(
-            data=text,
-            format=CircuitFormat.JAQCD,
-            sdk=SDK.BRAKET,
-        )
-
-    if "tape" in kind_lower:
-        return CircuitData(
-            data=text,
-            format=CircuitFormat.TAPE_JSON,
-            sdk=SDK.PENNYLANE,
-        )
-
-    if "cirq" in kind_lower:
-        return CircuitData(
-            data=text,
-            format=CircuitFormat.CIRQ_JSON,
-            sdk=SDK.CIRQ,
-        )
-
-    if "cudaq" in kind_lower:
-        return CircuitData(
-            data=text,
-            format=CircuitFormat.CUDAQ_JSON,
-            sdk=SDK.CUDAQ,
-        )
-
-    # Interchange formats
     if "openqasm3" in kind_lower or "qasm3" in kind_lower:
         return CircuitData(
             data=text,
@@ -548,11 +535,19 @@ def _load_fallback_ref(
 
     text = _decode_utf8(data)
     if text is not None:
-        # Keep legacy behavior: unknown text => assume OpenQASM3 (cannot reliably infer from kind here).
-        return CircuitData(data=text, format=CircuitFormat.OPENQASM3, sdk=sdk_hint)
+        # Keep legacy behavior: unknown text => assume OpenQASM3
+        return CircuitData(
+            data=text,
+            format=CircuitFormat.OPENQASM3,
+            sdk=sdk_hint,
+        )
 
     # Binary fallback - assume QPY (Qiskit native)
-    return CircuitData(data=data, format=CircuitFormat.QPY, sdk=SDK.QISKIT)
+    return CircuitData(
+        data=data,
+        format=CircuitFormat.QPY,
+        sdk=SDK.QISKIT,
+    )
 
 
 def _extract_sdk_from_envelope(envelope: ExecutionEnvelope) -> SDK:
