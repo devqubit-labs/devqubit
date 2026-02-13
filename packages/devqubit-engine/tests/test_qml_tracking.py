@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 
+import devqubit_engine.tracking.run as run_mod
 import pytest
 from devqubit_engine.tracking.history import (
     iter_metric_points,
@@ -14,7 +15,9 @@ from devqubit_engine.tracking.history import (
     to_dataframe,
 )
 from devqubit_engine.tracking.record import RunRecord
-from devqubit_engine.tracking.run import track
+
+
+track = run_mod.track
 
 
 class TestSummaryUpdate:
@@ -92,6 +95,8 @@ class TestFlush:
 
     def test_flush_on_failed_run(self, store, registry, qml_config):
         """Data flushed before a crash survives in the registry."""
+        rid = ""  # assigned inside context; used after pytest.raises catches
+
         with pytest.raises(RuntimeError):
             with track(
                 project="crash",
@@ -114,8 +119,6 @@ class TestFlush:
     def test_background_flush(self, store, registry, qml_config, monkeypatch):
         """Background worker persists data without user intervention."""
         import time
-
-        import devqubit_engine.tracking.run as run_mod
 
         # Speed up for testing: 0.5s instead of default 10s
         monkeypatch.setattr(run_mod, "_FLUSH_INTERVAL_SECONDS", 0.5)
