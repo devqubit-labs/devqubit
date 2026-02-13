@@ -134,7 +134,10 @@ def create_app(
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
         @app.get("/{full_path:path}", response_class=HTMLResponse)
-        async def serve_spa(request: Request, full_path: str):
+        async def serve_spa(
+            request: Request,
+            full_path: str,
+        ) -> HTMLResponse | FileResponse:
             """Serve React SPA for all non-API routes."""
             if full_path.startswith("api/"):
                 return HTMLResponse(status_code=404, content="Not found")

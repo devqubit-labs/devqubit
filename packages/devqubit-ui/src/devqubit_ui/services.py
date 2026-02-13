@@ -14,9 +14,19 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from devqubit_engine.storage.types import ObjectStoreProtocol, RegistryProtocol
+from devqubit_engine.storage.types import (
+    ArtifactRef,
+    BaselineInfo,
+    ObjectStoreProtocol,
+    RegistryProtocol,
+    RunSummary,
+)
+
+
+if TYPE_CHECKING:
+    from devqubit_engine.tracking.record import RunRecord
 
 
 logger = logging.getLogger(__name__)
@@ -33,7 +43,7 @@ _UNSAFE_FILENAME_CHARS = re.compile(r"[^a-zA-Z0-9._-]")
 # ---------------------------------------------------------------------------
 
 
-def serialize_record(record: Any) -> dict[str, Any]:
+def serialize_record(record: RunRecord) -> dict[str, Any]:
     """
     Full run record for detail views.
 
@@ -65,7 +75,7 @@ def serialize_record(record: Any) -> dict[str, Any]:
     }
 
 
-def serialize_record_summary(record: Any) -> dict[str, Any]:
+def serialize_record_summary(record: RunRecord) -> dict[str, Any]:
     """Compact run summary for lists, diffs, and search results."""
     ended_at = getattr(record, "ended_at", None)
     if ended_at is None and hasattr(record, "record"):
@@ -82,7 +92,7 @@ def serialize_record_summary(record: Any) -> dict[str, Any]:
     }
 
 
-def extract_record_data(record: Any) -> dict[str, Any]:
+def extract_record_data(record: RunRecord | dict[str, Any]) -> dict[str, Any]:
     """
     Extract the raw data dictionary from a run record.
 
@@ -180,7 +190,7 @@ class RunService:
         records = self._registry.search_runs(query, limit=limit)
         return [serialize_record_summary(r) for r in records]
 
-    def get_run(self, run_id: str) -> Any:
+    def get_run(self, run_id: str) -> RunRecord:
         """
         Load a run by ID.
 
@@ -201,7 +211,7 @@ class RunService:
         logger.info("Setting baseline for project %s: %s", project, run_id)
         self._registry.set_baseline(project, run_id)
 
-    def get_baseline(self, project: str) -> dict[str, Any] | None:
+    def get_baseline(self, project: str) -> BaselineInfo | None:
         """Get the baseline run for *project*."""
         return self._registry.get_baseline(project)
 
@@ -232,7 +242,11 @@ class ArtifactService:
         self._store = store
         self._max_preview_size = max_preview_size
 
-    def get_artifact_metadata(self, run_id: str, idx: int) -> tuple[Any, Any]:
+    def get_artifact_metadata(
+        self,
+        run_id: str,
+        idx: int,
+    ) -> tuple[RunRecord, ArtifactRef]:
         """Return ``(record, artifact)`` or raise ``KeyError``/``IndexError``."""
         try:
             record = self._registry.load(run_id)
@@ -334,13 +348,13 @@ class GroupService:
     def __init__(self, registry: RegistryProtocol) -> None:
         self._registry = registry
 
-    def list_groups(self, project: str | None = None) -> list[Any]:
+    def list_groups(self, project: str | None = None) -> list[dict[str, Any]]:
         kwargs: dict[str, Any] = {}
         if project:
             kwargs["project"] = project
         return self._registry.list_groups(**kwargs)
 
-    def get_group_runs(self, group_id: str) -> list[Any]:
+    def get_group_runs(self, group_id: str) -> list[RunSummary]:
         return self._registry.list_runs_in_group(group_id)
 
 
@@ -355,7 +369,11 @@ class DiffService:
         self._registry = registry
         self._store = store
 
-    def compare_runs(self, run_id_a: str, run_id_b: str) -> tuple[Any, Any, dict]:
+    def compare_runs(
+        self,
+        run_id_a: str,
+        run_id_b: str,
+    ) -> tuple[RunRecord, RunRecord, dict[str, Any]]:
         """
         Compare two runs.
 
