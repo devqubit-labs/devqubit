@@ -150,6 +150,19 @@ if result.noise_context:
 | 0.05–0.10 | Borderline; consider increasing shots |
 | < 0.05 | Likely exceeds sampling noise |
 
+### Batch mode (`item_index="all"`)
+
+For batch experiments, TVD is the **max** across all item pairs (worst-case). Items are matched by their `item_index`, not by list position, so skipped or reordered items are handled correctly.
+
+The noise threshold is calibrated for the max-TVD statistic via bootstrap of `max(TVD_i)` under H0, which controls the family-wise error rate without Bonferroni approximations.
+
+```python
+result = diff("a", "b", project="batch-exp", item_index="all")
+print(result.tvd_aggregation)  # "max"
+print(result.tvd_batch_size)   # Number of item pairs compared
+print(result.tvd_item_index)   # item_index of the worst pair
+```
+
 ## Baseline Verification
 
 Verify a candidate run against the project's baseline:
