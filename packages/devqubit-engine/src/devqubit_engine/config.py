@@ -213,6 +213,8 @@ class Config:
         Whether to capture git provenance. Default is True.
     validate : bool, optional
         Whether to validate records against schema. Default is True.
+    max_artifact_bytes : int, optional
+        Maximum allowed artifact size in bytes. Default is 20 MB.
     redaction : RedactionConfig, optional
         Configuration for redacting sensitive information.
 
@@ -233,6 +235,7 @@ class Config:
     capture_pip: bool = True
     capture_git: bool = True
     validate: bool = True
+    max_artifact_bytes: int = 20 * 1024 * 1024  # 20 MB
     redaction: RedactionConfig = field(default_factory=RedactionConfig)
 
     def __post_init__(self) -> None:
@@ -294,6 +297,7 @@ class Config:
             "capture_pip": self.capture_pip,
             "capture_git": self.capture_git,
             "validate": self.validate,
+            "max_artifact_bytes": self.max_artifact_bytes,
             "redaction": {
                 "enabled": self.redaction.enabled,
                 "patterns": self.redaction.patterns,
@@ -364,6 +368,8 @@ def load_config() -> Config:
     DEVQUBIT_VALIDATE : str
         Validate run records against JSON schema.
         Default is true.
+    DEVQUBIT_MAX_ARTIFACT_BYTES : str
+        Maximum artifact size in bytes. Default is 20971520 (20 MB).
     DEVQUBIT_REDACT_DISABLE : str
         Disable credential redaction. Values: "1", "true", "yes", "on".
         Default is false (redaction enabled).
@@ -412,6 +418,19 @@ def load_config() -> Config:
     capture_pip = _parse_bool(os.environ.get("DEVQUBIT_CAPTURE_PIP"), default=True)
     validate = _parse_bool(os.environ.get("DEVQUBIT_VALIDATE"), default=True)
 
+    # Artifact size limit
+    max_artifact_env = os.environ.get("DEVQUBIT_MAX_ARTIFACT_BYTES")
+    max_artifact_bytes = 20 * 1024 * 1024  # 20 MB default
+    if max_artifact_env:
+        try:
+            max_artifact_bytes = int(max_artifact_env)
+        except ValueError:
+            logger.warning(
+                "Invalid DEVQUBIT_MAX_ARTIFACT_BYTES=%r, using default %d",
+                max_artifact_env,
+                max_artifact_bytes,
+            )
+
     config = Config(
         root_dir=root_dir,
         storage_url=os.environ.get("DEVQUBIT_STORAGE_URL", ""),
@@ -419,6 +438,7 @@ def load_config() -> Config:
         capture_pip=capture_pip,
         capture_git=capture_git,
         validate=validate,
+        max_artifact_bytes=max_artifact_bytes,
         redaction=redaction,
     )
 

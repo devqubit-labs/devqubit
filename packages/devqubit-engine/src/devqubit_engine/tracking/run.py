@@ -71,8 +71,6 @@ from devqubit_engine.utils.serialization import json_dumps, to_jsonable
 
 logger = logging.getLogger(__name__)
 
-# Maximum artifact size in bytes (20 MB default)
-MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
 
 # Internal auto-flush interval.  Chosen to balance crash-safety (short
 # enough that a kill loses at most a few seconds of data) against I/O
@@ -120,10 +118,16 @@ class _FlushWorker:
                 # Logged inside flush(); nothing else to do.
                 pass
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 5.0) -> None:
         """Signal the worker to stop and wait for it to finish."""
         self._stop.set()
-        self._thread.join(timeout=5.0)
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            logger.warning(
+                "Flush worker did not stop within %.1fs timeout; "
+                "daemon thread will be abandoned",
+                timeout,
+            )
 
 
 class Run:
@@ -399,6 +403,25 @@ class Run:
         for key, value in metrics.items():
             self.log_metric(key, value)
 
+    def _stop_flush_worker_safely(self) -> None:
+        """Attempt to stop the background flush worker without hanging finalization.
+
+        This method is best-effort: it logs any errors raised by the worker's
+        stop routine instead of allowing them to propagate and block the
+        run finalization path.
+        """
+        worker = self._flush_worker
+        if worker is None:
+            return
+        try:
+            worker.stop()
+        except Exception:  # pragma: no cover - defensive, should not normally happen
+            logger.exception(
+                "Failed to stop flush worker cleanly during run finalization"
+            )
+        finally:
+            self._flush_worker = None
+
     def flush(self) -> None:
         """
         Persist the current run state and buffered metric history.
@@ -538,7 +561,7 @@ class Run:
         meta : dict, optional
             Additional metadata.
         max_bytes : int, optional
-            Maximum allowed size in bytes. Defaults to ``MAX_ARTIFACT_BYTES``.
+            Maximum allowed size in bytes.
         truncate : bool, optional
             If True and data exceeds max_bytes, truncate data.
 
@@ -552,7 +575,7 @@ class Run:
         ValueError
             If data exceeds max_bytes and truncate is False.
         """
-        limit = max_bytes if max_bytes is not None else MAX_ARTIFACT_BYTES
+        limit = max_bytes if max_bytes is not None else get_config().max_artifact_bytes
         size = len(data)
 
         if limit > 0 and size > limit:
@@ -1193,9 +1216,7 @@ class Run:
 
         # Stop background flush worker before the final synchronous flush
         # to avoid racing with it.
-        if self._flush_worker is not None:
-            self._flush_worker.stop()
-            self._flush_worker = None
+        self._stop_flush_worker_safely()
 
         # Flush any remaining metric buffer before final save
         self.flush()
