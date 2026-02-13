@@ -91,12 +91,14 @@ class TestRunsApi:
 
     def test_get_run_not_found(self, client, mock_registry):
         mock_registry.load.side_effect = KeyError("not found")
-        assert client.get("/api/runs/nonexistent").status_code == 404
+        resp = client.get("/api/runs/nonexistent")
+        assert resp.status_code == 404
 
     def test_get_run_file_not_found(self, client, mock_registry):
         """FileNotFoundError from storage also yields 404."""
         mock_registry.load.side_effect = FileNotFoundError("gone")
-        assert client.get("/api/runs/nonexistent").status_code == 404
+        resp = client.get("/api/runs/nonexistent")
+        assert resp.status_code == 404
 
     def test_get_run_success(self, client, mock_registry):
         mock_run = Mock()
@@ -125,7 +127,8 @@ class TestRunsApi:
 
     def test_delete_run_not_found(self, client, mock_registry):
         mock_registry.delete.return_value = False
-        assert client.delete("/api/runs/nonexistent").status_code == 404
+        resp = client.delete("/api/runs/nonexistent")
+        assert resp.status_code == 404
 
 
 class TestArtifactsApi:
@@ -133,17 +136,20 @@ class TestArtifactsApi:
 
     def test_get_artifact_not_found_run(self, client, mock_registry):
         mock_registry.load.side_effect = KeyError("not found")
-        assert client.get("/api/runs/nonexistent/artifacts/0").status_code == 404
+        resp = client.get("/api/runs/nonexistent/artifacts/0")
+        assert resp.status_code == 404
 
     def test_get_artifact_not_found_index(self, client, mock_registry):
         mock_run = Mock()
         mock_run.artifacts = []
         mock_registry.load.return_value = mock_run
-        assert client.get("/api/runs/test-123/artifacts/99").status_code == 404
+        resp = client.get("/api/runs/test-123/artifacts/99")
+        assert resp.status_code == 404
 
     def test_get_artifact_raw_not_found(self, client, mock_registry):
         mock_registry.load.side_effect = KeyError("not found")
-        assert client.get("/api/runs/nonexistent/artifacts/0/raw").status_code == 404
+        resp = client.get("/api/runs/nonexistent/artifacts/0/raw")
+        assert resp.status_code == 404
 
 
 class TestProjectsApi:
@@ -180,7 +186,8 @@ class TestGroupsApi:
     """Groups API endpoints."""
 
     def test_list_groups_empty(self, client):
-        assert client.get("/api/groups").json()["groups"] == []
+        resp = client.get("/api/groups")
+        assert resp.json()["groups"] == []
 
     def test_list_groups_filter_by_project(self, client, mock_registry):
         client.get("/api/groups?project=my-project")
@@ -192,7 +199,8 @@ class TestDiffApi:
 
     def test_diff_missing_run(self, client, mock_registry):
         mock_registry.load.side_effect = KeyError("not found")
-        assert client.get("/api/diff?a=bad-id&b=other-id").status_code == 404
+        resp = client.get("/api/diff?a=bad-id&b=other-id")
+        assert resp.status_code == 404
 
 
 class TestSpaRouting:
@@ -205,4 +213,5 @@ class TestSpaRouting:
 
     def test_frontend_routes_serve_spa(self, client):
         for path in ["/runs", "/projects", "/groups", "/diff", "/search"]:
-            assert client.get(path).status_code == 200
+            resp = client.get(path)
+            assert resp.status_code == 200
