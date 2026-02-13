@@ -27,11 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ---------------------------------------------------------------------------
-# Capabilities
-# ---------------------------------------------------------------------------
-
-
 @router.get("/capabilities")
 async def get_capabilities() -> dict[str, Any]:
     """
@@ -50,11 +45,6 @@ async def get_capabilities() -> dict[str, Any]:
             "service_accounts": False,
         },
     }
-
-
-# ---------------------------------------------------------------------------
-# Runs
-# ---------------------------------------------------------------------------
 
 
 @router.get("/runs")
@@ -128,9 +118,26 @@ async def delete_run(run_id: str, registry: RegistryDep):
     return JSONResponse(content={"status": "deleted", "run_id": run_id})
 
 
-# ---------------------------------------------------------------------------
-# Artifacts
-# ---------------------------------------------------------------------------
+@router.get("/runs/{run_id}/metric_series")
+async def get_metric_series(run_id: str, registry: RegistryDep):
+    """
+    Get metric time-series data for a run.
+
+    Returns all metric keys with their step/value history, suitable for
+    plotting. Only available when metrics were logged with ``step``.
+    """
+    if not hasattr(registry, "load_metric_series"):
+        raise HTTPException(
+            status_code=501,
+            detail="Backend does not support metric series",
+        )
+
+    try:
+        series = registry.load_metric_series(run_id)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    return JSONResponse(content={"run_id": run_id, "series": series})
 
 
 @router.get("/runs/{run_id}/artifacts/{idx}")
@@ -201,11 +208,6 @@ async def get_artifact_raw(
     )
 
 
-# ---------------------------------------------------------------------------
-# Projects
-# ---------------------------------------------------------------------------
-
-
 @router.get("/projects")
 async def list_projects(registry: RegistryDep):
     """List all projects with stats."""
@@ -235,11 +237,6 @@ async def set_baseline(
     return JSONResponse(
         content={"status": "ok", "project": project, "baseline_run_id": run_id}
     )
-
-
-# ---------------------------------------------------------------------------
-# Groups
-# ---------------------------------------------------------------------------
 
 
 @router.get("/groups")
@@ -290,11 +287,6 @@ async def get_group(group_id: str, registry: RegistryDep):
         elif isinstance(r, dict):
             runs_data.append(r)
     return JSONResponse(content={"group_id": group_id, "runs": runs_data})
-
-
-# ---------------------------------------------------------------------------
-# Diff
-# ---------------------------------------------------------------------------
 
 
 @router.get("/diff")
