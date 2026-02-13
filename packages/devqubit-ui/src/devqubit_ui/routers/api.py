@@ -55,7 +55,7 @@ async def list_runs(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     q: str = Query("", description="Search query"),
-):
+) -> JSONResponse:
     """
     List or search runs.
 
@@ -99,7 +99,7 @@ async def list_runs(
 
 
 @router.get("/runs/{run_id}")
-async def get_run(run_id: str, registry: RegistryDep):
+async def get_run(run_id: str, registry: RegistryDep) -> JSONResponse:
     """Get full run details."""
     service = RunService(registry)
     try:
@@ -110,7 +110,7 @@ async def get_run(run_id: str, registry: RegistryDep):
 
 
 @router.delete("/runs/{run_id}")
-async def delete_run(run_id: str, registry: RegistryDep):
+async def delete_run(run_id: str, registry: RegistryDep) -> JSONResponse:
     """Delete a run."""
     service = RunService(registry)
     if not service.delete_run(run_id):
@@ -119,7 +119,7 @@ async def delete_run(run_id: str, registry: RegistryDep):
 
 
 @router.get("/runs/{run_id}/metric_series")
-async def get_metric_series(run_id: str, registry: RegistryDep):
+async def get_metric_series(run_id: str, registry: RegistryDep) -> JSONResponse:
     """
     Get metric time-series data for a run.
 
@@ -149,7 +149,7 @@ async def get_artifact(
     idx: int,
     registry: RegistryDep,
     store: StoreDep,
-):
+) -> JSONResponse:
     """Get artifact metadata and preview."""
     service = ArtifactService(registry, store)
 
@@ -195,7 +195,7 @@ async def get_artifact_raw(
     idx: int,
     registry: RegistryDep,
     store: StoreDep,
-):
+) -> Response:
     """Download raw artifact."""
     service = ArtifactService(registry, store)
     try:
@@ -214,7 +214,7 @@ async def get_artifact_raw(
 
 
 @router.get("/projects")
-async def list_projects(registry: RegistryDep):
+async def list_projects(registry: RegistryDep) -> JSONResponse:
     """List all projects with stats."""
     service = ProjectService(registry)
     return JSONResponse(content={"projects": service.list_projects_with_stats()})
@@ -226,7 +226,7 @@ async def set_baseline(
     run_id: str,
     registry: RegistryDep,
     redirect: bool = Query(False),
-):
+) -> JSONResponse:
     """Set project baseline."""
     service = RunService(registry)
     try:
@@ -248,7 +248,7 @@ async def set_baseline(
 async def list_groups(
     registry: RegistryDep,
     project: str = Query("", description="Filter by project"),
-):
+) -> JSONResponse:
     """List run groups."""
     service = GroupService(registry)
     groups = service.list_groups(project=project or None)
@@ -272,7 +272,7 @@ async def list_groups(
 
 
 @router.get("/groups/{group_id}")
-async def get_group(group_id: str, registry: RegistryDep):
+async def get_group(group_id: str, registry: RegistryDep) -> JSONResponse:
     """Get group runs."""
     service = GroupService(registry)
     runs = service.get_group_runs(group_id)
@@ -300,7 +300,7 @@ async def get_diff(
     store: StoreDep,
     a: str = Query(..., description="Run A ID"),
     b: str = Query(..., description="Run B ID"),
-):
+) -> JSONResponse:
     """Compare two runs."""
     diff_service = DiffService(registry, store)
     try:

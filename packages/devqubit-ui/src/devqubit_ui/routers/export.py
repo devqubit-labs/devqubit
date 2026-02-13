@@ -225,7 +225,7 @@ async def create_export(
     registry: RegistryDep,
     store: StoreDep,
     include_artifacts: bool = True,
-):
+) -> JSONResponse:
     """
     Create a portable ZIP bundle for a run.
 
@@ -314,7 +314,7 @@ async def create_export(
 
 
 @router.get("/runs/{run_id}/export/download")
-async def download_export(run_id: str, registry: RegistryDep):
+async def download_export(run_id: str, registry: RegistryDep) -> FileResponse:
     """Download a previously created export bundle."""
     bundle_path = bundle_cache.get(run_id)
 
@@ -349,7 +349,11 @@ async def download_export(run_id: str, registry: RegistryDep):
 
 
 @router.get("/runs/{run_id}/export/info")
-async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
+async def get_export_info(
+    run_id: str,
+    registry: RegistryDep,
+    store: StoreDep,
+) -> JSONResponse:
     """Preview what would be exported without creating the bundle."""
     _validate_run_id(run_id)
 
@@ -394,7 +398,7 @@ async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
 
 
 @router.delete("/runs/{run_id}/export")
-async def cleanup_export(run_id: str):
+async def cleanup_export(run_id: str) -> JSONResponse:
     """Remove a previously created export bundle from disk."""
     _validate_run_id(run_id)
     bundle_path = bundle_cache.pop(run_id)
