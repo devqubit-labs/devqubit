@@ -133,4 +133,4 @@ def load_ui_plugins(app: "FastAPI") -> None:
     except ImportError:
         logger.debug("importlib.metadata not available, skipping plugins")
     except Exception as e:
-        logger.debug("Plugin loading skipped: %s", e)
+        logger.warning("Plugin loading skipped: %s", e)

@@ -349,12 +349,39 @@ class GroupService:
         self._registry = registry
 
     def list_groups(self, project: str | None = None) -> list[dict[str, Any]]:
+        """
+        List run groups with optional project filtering.
+
+        Parameters
+        ----------
+        project : str, optional
+            Restrict to groups within this project.
+
+        Returns
+        -------
+        list of dict
+            Group summaries with ``group_id``, ``group_name``, and
+            ``run_count`` keys.
+        """
         kwargs: dict[str, Any] = {}
         if project:
             kwargs["project"] = project
         return self._registry.list_groups(**kwargs)
 
     def get_group_runs(self, group_id: str) -> list[RunSummary]:
+        """
+        List runs belonging to a group.
+
+        Parameters
+        ----------
+        group_id : str
+            Group identifier.
+
+        Returns
+        -------
+        list of RunSummary
+            Runs in the group, ordered by creation time descending.
+        """
         return self._registry.list_runs_in_group(group_id)
 
 
