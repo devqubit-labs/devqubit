@@ -206,5 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Codex
+# AI tools directories and files
 .codex
+.claude
+*CLAUDE.md
