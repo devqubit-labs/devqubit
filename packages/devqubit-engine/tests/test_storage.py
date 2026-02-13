@@ -32,23 +32,29 @@ class TestObjectStore:
         """exists() reflects actual storage state."""
         digest = store.put_bytes(b"test data")
 
-        assert store.exists(digest)
-        assert not store.exists("sha256:" + "0" * 64)
+        result = store.exists(digest)
+        assert result
+        result = store.exists("sha256:" + "0" * 64)
+        assert not result
 
     def test_delete(self, store):
         """delete() removes object from store."""
         digest = store.put_bytes(b"to delete")
 
-        assert store.delete(digest)
-        assert not store.exists(digest)
-        assert not store.delete(digest)  # Second delete returns False
+        result = store.delete(digest)
+        assert result
+        result = store.exists(digest)
+        assert not result
+        result = store.delete(digest)  # Second delete returns False
+        assert not result
 
     def test_get_size(self, store):
         """get_size() returns correct byte count."""
         data = b"x" * 1000
         digest = store.put_bytes(data)
 
-        assert store.get_size(digest) == 1000
+        result = store.get_size(digest)
+        assert result == 1000
 
 
 class TestRegistry:

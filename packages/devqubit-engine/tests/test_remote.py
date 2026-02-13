@@ -397,7 +397,8 @@ class TestRemoteStore:
             status=200,
         )
 
-        assert remote_store.exists(sample_digest) is True
+        result = remote_store.exists(sample_digest)
+        assert result is True
 
     @responses.activate
     def test_exists_false(self, remote_store: RemoteStore, sample_digest: str):
@@ -408,7 +409,8 @@ class TestRemoteStore:
             status=404,
         )
 
-        assert remote_store.exists(sample_digest) is False
+        result = remote_store.exists(sample_digest)
+        assert result is False
 
     @responses.activate
     def test_delete_existing(self, remote_store: RemoteStore, sample_digest: str):
@@ -419,7 +421,8 @@ class TestRemoteStore:
             status=204,
         )
 
-        assert remote_store.delete(sample_digest) is True
+        result = remote_store.delete(sample_digest)
+        assert result is True
 
     @responses.activate
     def test_delete_missing(self, remote_store: RemoteStore, sample_digest: str):
@@ -430,7 +433,8 @@ class TestRemoteStore:
             status=404,
         )
 
-        assert remote_store.delete(sample_digest) is False
+        result = remote_store.delete(sample_digest)
+        assert result is False
 
     @responses.activate
     def test_get_size(self, remote_store: RemoteStore, sample_digest: str):
@@ -442,7 +446,8 @@ class TestRemoteStore:
             headers={"Content-Length": "1234"},
         )
 
-        assert remote_store.get_size(sample_digest) == 1234
+        result = remote_store.get_size(sample_digest)
+        assert result == 1234
 
     @responses.activate
     def test_list_digests(self, remote_store: RemoteStore):
@@ -586,7 +591,8 @@ class TestRemoteRegistry:
             status=404,
         )
 
-        assert remote_registry.load_or_none("MISSING") is None
+        result = remote_registry.load_or_none("MISSING")
+        assert result is None
 
     @responses.activate
     def test_exists_true(self, remote_registry: RemoteRegistry):
@@ -597,7 +603,8 @@ class TestRemoteRegistry:
             status=200,
         )
 
-        assert remote_registry.exists("EXISTS_1") is True
+        result = remote_registry.exists("EXISTS_1")
+        assert result is True
 
     @responses.activate
     def test_exists_false(self, remote_registry: RemoteRegistry):
@@ -608,7 +615,8 @@ class TestRemoteRegistry:
             status=404,
         )
 
-        assert remote_registry.exists("MISSING") is False
+        result = remote_registry.exists("MISSING")
+        assert result is False
 
     @responses.activate
     def test_delete_existing(self, remote_registry: RemoteRegistry):
@@ -619,7 +627,8 @@ class TestRemoteRegistry:
             status=204,
         )
 
-        assert remote_registry.delete("TO_DELETE") is True
+        result = remote_registry.delete("TO_DELETE")
+        assert result is True
 
     @responses.activate
     def test_delete_missing(self, remote_registry: RemoteRegistry):
@@ -630,7 +639,8 @@ class TestRemoteRegistry:
             status=404,
         )
 
-        assert remote_registry.delete("MISSING") is False
+        result = remote_registry.delete("MISSING")
+        assert result is False
 
     @responses.activate
     def test_list_runs(
@@ -741,7 +751,8 @@ class TestRemoteRegistry:
             status=200,
         )
 
-        assert remote_registry.count_runs() == 42
+        result = remote_registry.count_runs()
+        assert result == 42
 
     @responses.activate
     def test_set_baseline(self, remote_registry: RemoteRegistry):
@@ -790,7 +801,8 @@ class TestRemoteRegistry:
             status=204,
         )
 
-        assert remote_registry.clear_baseline("my_proj") is True
+        result = remote_registry.clear_baseline("my_proj")
+        assert result is True
 
 
 class TestRemoteStoreAndRegistryIntegration:
