@@ -310,7 +310,7 @@ async def create_export(
         logger.error("Failed to create export bundle: %s", exc)
         if bundle_path.exists():
             bundle_path.unlink()
-        raise HTTPException(status_code=500, detail=f"Export failed: {exc}")
+        raise HTTPException(status_code=500, detail="Export failed")
 
 
 @router.get("/runs/{run_id}/export/download")

@@ -615,7 +615,7 @@ def _reconstruct_measurement(m_dict: dict[str, Any], qml: Any) -> Any | None:
             if obs_dict:
                 obs = _reconstruct_observable(obs_dict, qml)
                 return meas_fn(obs)
-            elif wires is not None:
+            elif wires is not None and len(wires) > 0:
                 # Fallback: use PauliZ on measurement wires
                 if len(wires) == 1:
                     return meas_fn(qml.PauliZ(wires=wires[0]))

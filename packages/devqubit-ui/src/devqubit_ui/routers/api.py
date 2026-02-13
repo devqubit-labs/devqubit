@@ -205,7 +205,8 @@ async def get_artifact_raw(
     except IndexError:
         raise HTTPException(status_code=404, detail="Artifact not found")
     except RuntimeError as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error("Failed to load artifact %d for run %s: %s", idx, run_id, exc)
+        raise HTTPException(status_code=500, detail="Failed to load artifact")
     return Response(
         content=data,
         media_type=media_type,

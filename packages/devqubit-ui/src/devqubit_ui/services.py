@@ -12,6 +12,7 @@ testability, and prepares a clean seam for hub-backed remote APIs.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 
 MAX_ARTIFACT_PREVIEW_SIZE = 2 * 1024 * 1024
 """Maximum artifact size (bytes) to load into memory for preview."""
+
+_UNSAFE_FILENAME_CHARS = re.compile(r"[^a-zA-Z0-9._-]")
+"""Replace any character outside the allowlist to prevent header injection."""
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +307,7 @@ class ArtifactService:
             data = self._store.get_bytes(artifact.digest)
         except Exception as exc:
             raise RuntimeError(f"Failed to load artifact: {exc}") from exc
-        filename = artifact.kind.replace("/", "_").replace("\\", "_")
+        filename = _UNSAFE_FILENAME_CHARS.sub("_", artifact.kind) or "artifact"
         return data, artifact.media_type, filename
 
 
