@@ -64,6 +64,7 @@ from devqubit_engine.uec.models.envelope import ExecutionEnvelope
 from devqubit_engine.utils.distributions import (
     NoiseContext,
     compute_noise_context,
+    compute_noise_context_max,
     normalize_counts,
     total_variation_distance,
 )
@@ -453,6 +454,10 @@ def _compute_tvd_all_items(
     """
     Compute TVD across all items using worst-case (max TVD) approach.
 
+    Items are matched by their ``item_index`` (not list position) to avoid
+    silent mispairing when items are skipped or reordered. Requires that
+    both envelopes have the same set of item indices.
+
     Keeps counts_a/b consistent with the item that produced max TVD.
 
     Parameters
@@ -479,52 +484,71 @@ def _compute_tvd_all_items(
         result.tvd = None
         return
 
-    len_a, len_b = len(all_counts_a), len(all_counts_b)
-    if len_a != len_b:
+    # Build maps keyed by item_index for correct pairing
+    map_a = {idx: c for idx, c in all_counts_a}
+    map_b = {idx: c for idx, c in all_counts_b}
+
+    idx_a = set(map_a.keys())
+    idx_b = set(map_b.keys())
+
+    if idx_a != idx_b:
+        missing_in_b = sorted(idx_a - idx_b)
+        missing_in_a = sorted(idx_b - idx_a)
         result.warnings.append(
-            f"Batch size mismatch: baseline has {len_a} items, "
-            f"candidate has {len_b} items. TVD comparison skipped."
+            "Batch items mismatch (by item_index). "
+            f"missing_in_baseline={missing_in_a}, "
+            f"missing_in_candidate={missing_in_b}. "
+            "TVD comparison skipped."
         )
         result.tvd = None
         return
 
+    indices = sorted(idx_a)
+    batch_size = len(indices)
+
     worst_tvd: float | None = None
     worst_counts_a: dict[str, int] | None = None
     worst_counts_b: dict[str, int] | None = None
-    worst_noise_ctx: NoiseContext | None = None
     worst_item_idx: int | None = None
 
-    for i in range(len_a):
-        _, ca = all_counts_a[i]
-        _, cb = all_counts_b[i]
+    for idx in indices:
+        ca = map_a[idx]
+        cb = map_b[idx]
 
-        tvd, noise_ctx = _compute_tvd_for_item_pair(
-            ca,
-            cb,
-            include_noise_context=include_noise_context,
-            noise_alpha=noise_alpha,
-            noise_n_boot=noise_n_boot,
-            noise_seed=noise_seed + i,
-        )
+        probs_a = normalize_counts(ca)
+        probs_b = normalize_counts(cb)
+        tvd = total_variation_distance(probs_a, probs_b)
 
         if worst_tvd is None or tvd >= worst_tvd:
             worst_tvd = tvd
             worst_counts_a = ca
             worst_counts_b = cb
-            worst_noise_ctx = noise_ctx
-            worst_item_idx = i
+            worst_item_idx = idx
 
     result.tvd = worst_tvd
     result.counts_a = worst_counts_a
     result.counts_b = worst_counts_b
-    result.noise_context = worst_noise_ctx
+    result.tvd_item_index = worst_item_idx
+    result.tvd_batch_size = batch_size
+    result.tvd_aggregation = "max"
 
-    if worst_item_idx is not None and len_a > 1:
+    # Noise context for max-TVD statistic (FWER-correct bootstrap)
+    if include_noise_context and worst_tvd is not None:
+        pairs = [(map_a[idx], map_b[idx]) for idx in indices]
+        result.noise_context = compute_noise_context_max(
+            pairs,
+            worst_tvd,
+            n_boot=noise_n_boot,
+            alpha=noise_alpha,
+            seed=noise_seed,
+        )
+
+    if worst_item_idx is not None and batch_size > 1:
         logger.debug(
-            "Worst TVD %.6f found at item pair %d (of %d pairs)",
+            "Worst TVD %.6f found at item_index %d (of %d items)",
             worst_tvd or 0.0,
             worst_item_idx,
-            len_a,
+            batch_size,
         )
 
 

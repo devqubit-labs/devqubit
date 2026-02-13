@@ -368,7 +368,16 @@ class ResultFormatter:
         status = compute_tvd_status(result.tvd, ratio)
         suffix = self._status_suffix(status.level)
 
-        lines += self.r.kv("TVD:", f"{result.tvd:.6f}{suffix}")
+        if result.tvd_aggregation == "max" and result.tvd_batch_size > 1:
+            tvd_label = (
+                f"{result.tvd:.6f}{suffix}" f"  (max over {result.tvd_batch_size} items"
+            )
+            if result.tvd_item_index is not None:
+                tvd_label += f", worst at item_index={result.tvd_item_index}"
+            tvd_label += ")"
+            lines += self.r.kv("TVD:", tvd_label)
+        else:
+            lines += self.r.kv("TVD:", f"{result.tvd:.6f}{suffix}")
 
         if result.noise_context:
             nc = result.noise_context

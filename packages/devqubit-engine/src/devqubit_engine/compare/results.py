@@ -353,6 +353,12 @@ class ComparisonResult:
         Candidate measurement counts.
     tvd : float or None
         Total Variation Distance between distributions.
+    tvd_item_index : int or None
+        Item index that produced the reported TVD (for batch mode).
+    tvd_batch_size : int
+        Number of items compared (1 for single-item mode).
+    tvd_aggregation : str
+        TVD aggregation mode: "single" or "max".
     noise_context : NoiseContext or None
         Statistical noise analysis.
     circuit_diff : CircuitDiff or None
@@ -374,6 +380,9 @@ class ComparisonResult:
     counts_a: dict[str, int] | None = None
     counts_b: dict[str, int] | None = None
     tvd: float | None = None
+    tvd_item_index: int | None = None
+    tvd_batch_size: int = 1
+    tvd_aggregation: str = "single"
     noise_context: NoiseContext | None = None
     circuit_diff: CircuitDiff | None = None
     warnings: list[str] = field(default_factory=list)
@@ -467,6 +476,11 @@ class ComparisonResult:
 
         if self.tvd is not None:
             result["tvd"] = self.tvd
+            if self.tvd_aggregation == "max":
+                result["tvd_aggregation"] = self.tvd_aggregation
+                result["tvd_batch_size"] = self.tvd_batch_size
+                if self.tvd_item_index is not None:
+                    result["tvd_item_index"] = self.tvd_item_index
 
         if self.counts_a and self.counts_b:
             result["shots"] = {
