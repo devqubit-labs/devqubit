@@ -13,9 +13,6 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 #### Added
 - Added `RemoteStore` and `RemoteRegistry` for HTTP-based centralized tracking. ([#44](https://github.com/devqubit-labs/devqubit/pull/44))
 
-#### Changed
-- Migrated frontend from Jinja/HTMX to React. ([#41](https://github.com/devqubit-labs/devqubit/pull/41))
-
 ## [0.1.10](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.10) - 2026-01-30
 
 #### Changed
@@ -51,11 +48,11 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 - Support referencing runs by name via `--project` flag in CLI and `project` parameter in API functions (`diff`, `pack_run`, `verify_baseline`). ([#34](https://github.com/devqubit-labs/devqubit/pull/34))
 
 #### Changed
-- UEC ExecutionEnvelope is now the single source of truth for diffs/verification: adapter runs must emit a schema-valid envelope; “non-strict” fallback/synthesis for adapter runs was removed. Manual/replay runs still synthesize a best-effort envelope. Program comparison now distinguishes structural vs parametric hashes and results are canonicalized across bit orders. ([#16](https://github.com/devqubit-labs/devqubit/pull/16))
+- UEC ExecutionEnvelope is now the single source of truth for diffs/verification: adapter runs must emit a schema-valid envelope; "non-strict" fallback/synthesis for adapter runs was removed. Manual runs still synthesize a best-effort envelope. Program comparison now distinguishes structural vs parametric hashes and results are canonicalized across bit orders.
 
 - Redesigned public API surface: added high-level `verify_baseline()`, new `devqubit.runs` module for run navigation, `devqubit.errors` for public exceptions, `devqubit.adapters` for extension API, moved low-level symbols to appropriate submodules. ([#17](https://github.com/devqubit-labs/devqubit/pull/17))
 
-## [0.1.5](https://github.com/devqubit-labs/devqubit/releases/tag/vv0.1.5) - 2026-01-13
+## [0.1.5](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.5) - 2026-01-13
 
 #### Changed
 - Breaking: Align UEC Envelope 1.0 schemas/models and update all adapters to emit consistent producer/device/program/execution snapshots and unified artifact references. ([#14](https://github.com/devqubit-labs/devqubit/pull/14))
@@ -65,25 +62,33 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 ## [0.1.4](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.4) - 2026-01-11
 
+#### Added
+- `devqubit-ui` can now be installed and run independently of the full `devqubit` metapackage.
+
 #### Fixed
 - Fix top-level imports from devqubit_ui by exposing run_server and create_app. ([#9](https://github.com/devqubit-labs/devqubit/pull/9))
 
 ## [0.1.3](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.3) - 2026-01-10
 
+#### Added
+- `DEVQUBIT_HOME` environment variable is now respected by the UI server for custom workspace locations.
+
 #### Fixed
-- Workspace context preserved across navigation links in Teams mode.
+- Workspace context preserved across navigation links when using multi-workspace configuration.
 
 ## [0.1.2](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.2) - 2026-01-10
 
 #### Added
-- Add workspace selector to UI header for Teams integration. When current_workspace and workspaces are passed to templates, users can see and switch between workspaces.
+- Add workspace selector to UI header. When multiple workspaces are configured, users can see and switch between them directly from the navigation bar.
 
 ## [0.1.1](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.1) - 2026-01-07
 
-### Added
+#### Added
 
-- User menu component in base template for Teams integration
-- Support for `current_user` context variable in templates
+- User menu component in the base UI template with support for `current_user` context variable.
+
+#### Fixed
+- Corrected default workspace path resolution on Windows when `DEVQUBIT_HOME` is not set.
 
 ## [0.1.0](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.0) - 2026-01-07
 
