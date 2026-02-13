@@ -134,7 +134,7 @@ export function Modal({ open, onClose, title, children, actions }: ModalProps) {
 
   return (
     <div
-      className={cn('modal-backdrop', open && 'active')}
+      className={cn('modal-backdrop', 'active')}
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="modal" onClick={(e) => e.stopPropagation()}>
