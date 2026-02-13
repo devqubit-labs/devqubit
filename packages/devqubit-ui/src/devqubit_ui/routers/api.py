@@ -27,11 +27,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ---------------------------------------------------------------------------
-# Capabilities
-# ---------------------------------------------------------------------------
-
-
 @router.get("/capabilities")
 async def get_capabilities() -> dict[str, Any]:
     """
@@ -50,11 +45,6 @@ async def get_capabilities() -> dict[str, Any]:
             "service_accounts": False,
         },
     }
-
-
-# ---------------------------------------------------------------------------
-# Runs
-# ---------------------------------------------------------------------------
 
 
 @router.get("/runs")
@@ -128,9 +118,29 @@ async def delete_run(run_id: str, registry: RegistryDep):
     return JSONResponse(content={"status": "deleted", "run_id": run_id})
 
 
-# ---------------------------------------------------------------------------
-# Artifacts
-# ---------------------------------------------------------------------------
+@router.get("/runs/{run_id}/metric_series")
+async def get_metric_series(run_id: str, registry: RegistryDep):
+    """
+    Get metric time-series data for a run.
+
+    Returns all metric keys with their step/value history, suitable for
+    plotting. Only available when metrics were logged with ``step``.
+    """
+    if not hasattr(registry, "load_metric_series"):
+        raise HTTPException(
+            status_code=501,
+            detail="Backend does not support metric series",
+        )
+
+    try:
+        series = registry.load_metric_series(run_id)
+    except (KeyError, FileNotFoundError):
+        raise HTTPException(status_code=404, detail="Run not found")
+    except Exception:
+        logger.exception("Failed to load metric series for run %s", run_id)
+        raise HTTPException(status_code=500, detail="Failed to load metric series")
+
+    return JSONResponse(content={"run_id": run_id, "series": series})
 
 
 @router.get("/runs/{run_id}/artifacts/{idx}")
@@ -171,8 +181,10 @@ async def get_artifact(
                 response["content"] = content
                 if content_result.is_json:
                     response["content_json"] = json.loads(content)
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                pass
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                logger.debug(
+                    "Artifact %d preview decode failed for run %s: %s", idx, run_id, exc
+                )
 
     return JSONResponse(content=response)
 
@@ -199,11 +211,6 @@ async def get_artifact_raw(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-# ---------------------------------------------------------------------------
-# Projects
-# ---------------------------------------------------------------------------
 
 
 @router.get("/projects")
@@ -235,11 +242,6 @@ async def set_baseline(
     return JSONResponse(
         content={"status": "ok", "project": project, "baseline_run_id": run_id}
     )
-
-
-# ---------------------------------------------------------------------------
-# Groups
-# ---------------------------------------------------------------------------
 
 
 @router.get("/groups")
@@ -290,11 +292,6 @@ async def get_group(group_id: str, registry: RegistryDep):
         elif isinstance(r, dict):
             runs_data.append(r)
     return JSONResponse(content={"group_id": group_id, "runs": runs_data})
-
-
-# ---------------------------------------------------------------------------
-# Diff
-# ---------------------------------------------------------------------------
 
 
 @router.get("/diff")

@@ -27,3 +27,7 @@ export type { GroupsTableProps } from './GroupsTable';
 // Export Run
 export { ExportRunButton } from './ExportRunButton';
 export type { ExportRunButtonProps, ExportProgress } from './ExportRunButton';
+
+// Metric Charts
+export { MetricCharts } from './MetricChart';
+export type { MetricChartsProps } from './MetricChart';

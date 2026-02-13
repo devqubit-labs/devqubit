@@ -8,10 +8,10 @@ import { Layout } from '../components/Layout';
 import {
   Card, CardHeader, CardTitle, Badge, Button, Spinner, EmptyState, KVList,
   Table, TableHead, TableBody, TableRow, TableHeader, TableCell, Modal, Toast,
-  ExportRunButton,
+  ExportRunButton, MetricCharts,
 } from '../components';
 import { StatusBadge } from '../components/RunsTable';
-import { useRun, useProjects, useApp, useMutation } from '../hooks';
+import { useRun, useProjects, useApp, useMutation, useMetricSeries } from '../hooks';
 import { shortId, shortDigest, timeAgo, formatNumber, elapsedSeconds, formatDuration, isTerminalStatus } from '../utils';
 import type { Artifact, Project, RunStatus } from '../types';
 
@@ -47,9 +47,10 @@ export function RunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
   const { api } = useApp();
-  // useRun now auto-polls while the run is in a non-terminal state
   const { data: run, loading, error, refetch } = useRun(runId!);
   const { data: projects, refetch: refetchProjects } = useProjects();
+  const isRunning = run ? !isTerminalStatus(run.status) : false;
+  const { data: metricSeries } = useMetricSeries(runId!, isRunning);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; variant: 'success' | 'error' } | null>(null);
 
@@ -260,6 +261,16 @@ export function RunDetailPage() {
           )}
         </Card>
       </div>
+
+      {/* Metric Charts — only shown when step-based metrics exist */}
+      {metricSeries && (
+        <Card className="mb-4">
+          <CardHeader><CardTitle>Metric History</CardTitle></CardHeader>
+          <div className="p-4">
+            <MetricCharts series={metricSeries} />
+          </div>
+        </Card>
+      )}
 
       {/* Artifacts */}
       <Card className="mb-4">

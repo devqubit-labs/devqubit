@@ -152,8 +152,8 @@ class BundleCache:
             try:
                 if entry.path.exists():
                     entry.path.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("Failed to evict bundle for %s: %s", run_id, exc)
 
     def _enforce_limit(self) -> None:
         while len(self._entries) > self.max_entries:
@@ -330,7 +330,8 @@ async def download_export(run_id: str, registry: RegistryDep):
     try:
         run_record = registry.load(run_id)
         run_name = getattr(run_record, "run_name", None) or run_id[:8]
-    except Exception:
+    except Exception as exc:
+        logger.debug("Could not load run name for %s, using short ID: %s", run_id, exc)
         run_name = run_id[:8]
 
     safe_name = "".join(c if c.isalnum() or c in "_-" else "_" for c in run_name)
@@ -375,7 +376,8 @@ async def get_export_info(run_id: str, registry: RegistryDep, store: StoreDep):
                 available += 1
             else:
                 missing_count += 1
-        except Exception:
+        except Exception as exc:
+            logger.debug("Could not check object %s: %s", digest[:24], exc)
             missing_count += 1
 
     return JSONResponse(

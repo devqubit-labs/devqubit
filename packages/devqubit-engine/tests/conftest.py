@@ -39,6 +39,12 @@ def clean_env(monkeypatch):
     return monkeypatch
 
 
+@pytest.fixture
+def qml_config(workspace):
+    """Config with validation disabled (faster tests)."""
+    return Config(root_dir=workspace, validate=False, capture_git=False)
+
+
 # =============================================================================
 # Storage Fixtures
 # =============================================================================

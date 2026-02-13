@@ -342,6 +342,44 @@ export function useMutation<TArgs extends unknown[], TResult>(
   return { mutate, loading, error };
 }
 
+/**
+ * Fetch metric time-series for a run.
+ *
+ * Returns null when the run has no step-based metrics.
+ * Polls while the run is active so charts update in near-real-time.
+ * Does one final refetch when the run transitions to terminal state.
+ */
+export function useMetricSeries(runId: string, isRunning: boolean) {
+  const { api, pollingConfig } = useApp();
+  const result = useAsync(
+    async () => {
+      try {
+        const { series } = await api.getMetricSeries(runId);
+        // Only return if there's actual data
+        const hasData = Object.values(series).some(pts => pts.length > 0);
+        return hasData ? series : null;
+      } catch {
+        // 501 = backend doesn't support it, 404 = no data — both fine
+        return null;
+      }
+    },
+    [api, runId]
+  );
+
+  // Final refetch when run finishes (isRunning: true => false)
+  const prevRunning = useRef(isRunning);
+  useEffect(() => {
+    if (prevRunning.current && !isRunning) {
+      result.refetch();
+    }
+    prevRunning.current = isRunning;
+  }, [isRunning, result.refetch]);
+
+  usePolling(result.refetch, pollingConfig.runDetail, isRunning);
+
+  return result;
+}
+
 export type {
   AsyncState,
   AppContextValue,

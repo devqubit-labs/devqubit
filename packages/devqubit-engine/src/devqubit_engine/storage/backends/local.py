@@ -352,6 +352,17 @@ CREATE TABLE IF NOT EXISTS run_tags (
 );
 CREATE INDEX IF NOT EXISTS idx_run_tags_key ON run_tags(key);
 CREATE INDEX IF NOT EXISTS idx_run_tags_value ON run_tags(key, value);
+
+-- Append-only metric time-series history
+CREATE TABLE IF NOT EXISTS metric_points (
+    run_id TEXT NOT NULL,
+    key TEXT NOT NULL,
+    step INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    value REAL NOT NULL,
+    PRIMARY KEY (run_id, key, step)
+);
+CREATE INDEX IF NOT EXISTS idx_mp_run_key ON metric_points(run_id, key, step);
 """
 
 
@@ -601,6 +612,196 @@ class LocalRegistry:
 
         logger.debug("Saved run: %s", fields["run_id"])
 
+    def save_metric_points(self, points: list[dict[str, Any]]) -> None:
+        """
+        Batch-insert metric time-series points (append-only).
+
+        Uses ``INSERT OR REPLACE`` so duplicate (run_id, key, step) rows
+        are resolved with last-write-wins semantics.  A single
+        ``executemany`` call inside one transaction keeps overhead low
+        even for large batches.
+
+        Parameters
+        ----------
+        points : list of dict
+            Each dict must contain ``run_id``, ``key``, ``step``,
+            ``timestamp``, and ``value``.
+        """
+        if not points:
+            return
+
+        rows = [
+            (p["run_id"], p["key"], p["step"], p["timestamp"], p["value"])
+            for p in points
+        ]
+
+        self._execute_with_retry(
+            "save_metric_points",
+            self._save_metric_points_inner,
+            rows,
+        )
+
+    def _save_metric_points_inner(self, rows: list[tuple]) -> None:
+        """Execute the batched insert inside a connection context."""
+        with self._get_connection() as conn:
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO metric_points
+                    (run_id, key, step, timestamp, value)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def iter_metric_points(
+        self,
+        run_id: str,
+        key: str,
+        *,
+        start_step: int | None = None,
+        end_step: int | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        """
+        Yield metric points for a single key from the ``metric_points`` table.
+
+        Parameters
+        ----------
+        run_id : str
+            Run identifier.
+        key : str
+            Metric name.
+        start_step : int, optional
+            Inclusive lower bound.
+        end_step : int, optional
+            Inclusive upper bound.
+
+        Yields
+        ------
+        dict
+            ``{"value": float, "step": int, "timestamp": str}``
+        """
+        clauses = ["run_id = ?", "key = ?"]
+        params: list[Any] = [run_id, key]
+        if start_step is not None:
+            clauses.append("step >= ?")
+            params.append(start_step)
+        if end_step is not None:
+            clauses.append("step <= ?")
+            params.append(end_step)
+
+        sql = (
+            "SELECT step, timestamp, value FROM metric_points WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY step"
+        )
+
+        with self._get_connection() as conn:
+            for row in conn.execute(sql, params):
+                yield {
+                    "step": row["step"],
+                    "timestamp": row["timestamp"],
+                    "value": row["value"],
+                }
+
+    def load_metric_series(self, run_id: str) -> dict[str, list[dict[str, Any]]]:
+        """
+        Load all metric time-series for a run from the ``metric_points`` table.
+
+        Returns the data in the same shape as ``record["data"]["metric_series"]``
+        so callers can drop it straight into the record dict for backward
+        compatibility.
+
+        Parameters
+        ----------
+        run_id : str
+            Run identifier.
+
+        Returns
+        -------
+        dict
+            ``{key: [{"value": float, "step": int, "timestamp": str}, ...]}``
+            ordered by step within each key.  Empty ``{}`` if no rows exist.
+        """
+        sql = (
+            "SELECT key, step, timestamp, value FROM metric_points "
+            "WHERE run_id = ? ORDER BY key, step"
+        )
+        series: dict[str, list[dict[str, Any]]] = {}
+        with self._get_connection() as conn:
+            for row in conn.execute(sql, (run_id,)):
+                series.setdefault(row["key"], []).append(
+                    {
+                        "value": row["value"],
+                        "step": row["step"],
+                        "timestamp": row["timestamp"],
+                    }
+                )
+        return series
+
+    # ------------------------------------------------------------------
+    # Retry helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _execute_with_retry(
+        label: str,
+        fn: Any,
+        *args: Any,
+        max_attempts: int = 3,
+        backoff: float = 0.1,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Execute *fn* with exponential back-off on ``sqlite3.OperationalError``.
+
+        Parameters
+        ----------
+        label : str
+            Human-readable name for log messages.
+        fn : callable
+            Function to execute.
+        max_attempts : int, optional
+            Maximum retry attempts. Default is 3.
+        backoff : float, optional
+            Base back-off in seconds (doubled each retry). Default is 0.1.
+
+        Returns
+        -------
+        Any
+            Return value of *fn*.
+
+        Raises
+        ------
+        sqlite3.OperationalError
+            If all attempts are exhausted.
+        """
+        import time as _time
+
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return fn(*args, **kwargs)
+            except sqlite3.OperationalError as exc:
+                last_exc = exc
+                if attempt == max_attempts:
+                    break
+                wait = backoff * (2 ** (attempt - 1))
+                logger.warning(
+                    "%s: sqlite3.OperationalError on attempt %d/%d, "
+                    "retrying in %.2fs: %s",
+                    label,
+                    attempt,
+                    max_attempts,
+                    wait,
+                    exc,
+                )
+                _time.sleep(wait)
+        if last_exc is None:
+            raise sqlite3.OperationalError(
+                f"{label}: operation failed without captured sqlite3.OperationalError"
+            )
+        raise last_exc
+
     def load(self, run_id: str) -> RunRecord:
         """
         Load a run record by ID.
@@ -693,6 +894,7 @@ class LocalRegistry:
         """
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM metric_points WHERE run_id = ?", (run_id,))
 
         if cursor.rowcount > 0:
             logger.debug("Deleted run: %s", run_id)

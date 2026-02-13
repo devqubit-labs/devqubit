@@ -39,6 +39,7 @@ from __future__ import annotations
 import logging
 import threading
 import traceback as _tb
+import weakref
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -72,6 +73,57 @@ logger = logging.getLogger(__name__)
 
 # Maximum artifact size in bytes (20 MB default)
 MAX_ARTIFACT_BYTES: int = 20 * 1024 * 1024
+
+# Internal auto-flush interval.  Chosen to balance crash-safety (short
+# enough that a kill loses at most a few seconds of data) against I/O
+# overhead (long enough to batch many points per write).
+_FLUSH_INTERVAL_SECONDS: float = 10.0
+
+
+class _FlushWorker:
+    """
+    Daemon thread that periodically flushes run state to the registry.
+
+    Mirrors the approach used by W&B's internal sync thread: a background
+    daemon wakes every ``interval`` seconds and persists buffered data so
+    the user never has to think about crash-safety or flush timing.
+
+    Parameters
+    ----------
+    run : Run
+        The run to flush.  Stored as a weak reference so the worker
+        does not prevent garbage collection if the run is abandoned.
+    interval : float
+        Seconds between flush cycles.
+    """
+
+    def __init__(self, run: Run, interval: float = _FLUSH_INTERVAL_SECONDS) -> None:
+        self._run_ref: weakref.ref[Run] = weakref.ref(run)
+        self._interval = interval
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._loop,
+            daemon=True,
+            name="devqubit-flush",
+        )
+        self._thread.start()
+
+    def _loop(self) -> None:
+        """Wake every *interval* seconds and flush, until stopped."""
+        while not self._stop.wait(self._interval):
+            run = self._run_ref()
+            if run is None:
+                break
+            try:
+                run.flush()
+            except Exception:
+                # Logged inside flush(); nothing else to do.
+                pass
+
+    def stop(self) -> None:
+        """Signal the worker to stop and wait for it to finish."""
+        self._stop.set()
+        self._thread.join(timeout=5.0)
 
 
 class Run:
@@ -145,6 +197,13 @@ class Run:
         self._run_name = run_name
         self._artifacts: list[ArtifactRef] = []
         self._pending_tracked_jobs: list[Any] = []
+
+        # Metric-series buffer: accumulated points awaiting flush.
+        self._metric_buffer: list[dict[str, Any]] = []
+
+        # Background flush worker — started in __enter__, stopped in
+        # _finalize.  None until context manager entry.
+        self._flush_worker: _FlushWorker | None = None
 
         # Get config and backends
         cfg = config or get_config()
@@ -273,17 +332,21 @@ class Run:
         """
         Log a metric value.
 
-        Metrics are numeric values that measure experimental outcomes.
+        When ``step`` is provided the value is appended to the metric's
+        time-series history **and** the scalar summary
+        (``data.metrics[key]``) is updated to the latest value so that
+        run listings / comparisons always reflect the most recent state.
 
         Parameters
         ----------
         key : str
-            Metric name.
+            Metric name (e.g. ``"train/loss"``, ``"qnn/fidelity"``).
         value : float
             Metric value (will be converted to float).
         step : int, optional
             Step number for time series tracking. If provided, the metric
-            is stored as a time series point. If None, stores as a scalar.
+            is stored as a time series point **and** the scalar summary is
+            updated. If ``None``, stores only as a scalar summary.
 
         Raises
         ------
@@ -302,20 +365,22 @@ class Run:
             if step < 0:
                 raise ValueError(f"step must be non-negative, got {step}")
 
+            ts = utc_now_iso()
+            point = {"value": value_f, "step": step, "timestamp": ts}
+
             with self._lock:
-                if "metric_series" not in self.record["data"]:
-                    self.record["data"]["metric_series"] = {}
+                # Summary always reflects the latest value — used for
+                # run listings, comparisons, and sorting.
+                self.record["data"]["metrics"][key] = value_f
 
-                if key not in self.record["data"]["metric_series"]:
-                    self.record["data"]["metric_series"][key] = []
-
-                self.record["data"]["metric_series"][key].append(
-                    {
-                        "value": value_f,
-                        "step": step,
-                        "timestamp": utc_now_iso(),
-                    }
+                # Buffer for incremental flush to metric_points table.
+                # NOT stored in record["data"]["metric_series"] during
+                # the run to keep the record lean for periodic flushes.
+                # metric_series is reconstructed at finalize time.
+                self._metric_buffer.append(
+                    {"run_id": self._run_id, "key": key, **point}
                 )
+
             logger.debug("Logged metric series: %s[%d]=%f", key, step, value_f)
         else:
             with self._lock:
@@ -333,6 +398,39 @@ class Run:
         """
         for key, value in metrics.items():
             self.log_metric(key, value)
+
+    def flush(self) -> None:
+        """
+        Persist the current run state and buffered metric history.
+
+        Called automatically by the background flush worker every few
+        seconds while the run is active.  Can also be called manually
+        for immediate persistence (e.g. before a known-risky operation).
+
+        Thread-safe: acquires the internal lock only briefly to swap
+        out the buffer.
+        """
+        with self._lock:
+            buf = self._metric_buffer
+            self._metric_buffer = []
+
+        # Flush buffered metric points to the metric_points table
+        if buf and hasattr(self._registry, "save_metric_points"):
+            try:
+                self._registry.save_metric_points(buf)
+            except Exception:
+                logger.exception("Failed to flush metric points buffer")
+                # Re-queue so data is not lost
+                with self._lock:
+                    self._metric_buffer = buf + self._metric_buffer
+
+        # Persist run record (summary + status)
+        try:
+            self._registry.save(self.record)
+        except Exception:
+            logger.exception("Failed to flush run record")
+
+        logger.debug("Flushed run state: run_id=%s", self._run_id)
 
     def set_tag(self, key: str, value: str) -> None:
         """
@@ -1079,7 +1177,8 @@ class Run:
         2. Compute fingerprints from all envelopes
         3. Enrich all envelopes with tracker namespace + fingerprints
         4. Persist enriched envelopes (in-place artifact ref update)
-        5. Save to registry
+        5. Flush remaining metric buffer
+        6. Save to registry
 
         Parameters
         ----------
@@ -1091,6 +1190,15 @@ class Run:
             if success and self.record["info"]["status"] == "RUNNING":
                 self.record["info"]["status"] = "FINISHED"
                 self.record["info"]["ended_at"] = utc_now_iso()
+
+        # Stop background flush worker before the final synchronous flush
+        # to avoid racing with it.
+        if self._flush_worker is not None:
+            self._flush_worker.stop()
+            self._flush_worker = None
+
+        # Flush any remaining metric buffer before final save
+        self.flush()
 
         # Finalize pending tracked jobs
         self._finalize_pending_tracked_jobs()
@@ -1113,6 +1221,16 @@ class Run:
         with self._lock:
             self.record["fingerprints"] = fingerprints
             self.record["artifacts"] = [a.to_dict() for a in self._artifacts]
+
+            # Reconstruct metric_series from the metric_points table
+            # so the finalized record JSON is complete (backward compat,
+            # export, remote backends).  During the run this was kept
+            # out of the record to avoid O(n) JSON rewrites on flush.
+            if hasattr(self._registry, "load_metric_series"):
+                series = self._registry.load_metric_series(self._run_id)
+                if series:
+                    self.record["data"]["metric_series"] = series
+
             run_record = RunRecord(record=self.record, artifacts=list(self._artifacts))
 
         # Validate if enabled
@@ -1145,13 +1263,11 @@ class Run:
 
         The record is saved with ``status=RUNNING`` so that long-running
         hardware jobs are immediately visible in the registry and the
-        frontend while the experiment is in progress.
+        frontend while the experiment is in progress. A background
+        flush worker is started to periodically persist metric data.
         """
         self._registry.save(self.record)
-        logger.debug(
-            "Persisted initial RUNNING record: run_id=%s",
-            self._run_id,
-        )
+        self._flush_worker = _FlushWorker(self, interval=_FLUSH_INTERVAL_SECONDS)
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> bool:
