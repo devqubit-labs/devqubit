@@ -796,7 +796,11 @@ class LocalRegistry:
                     exc,
                 )
                 _time.sleep(wait)
-        raise last_exc  # type: ignore[misc]
+        if last_exc is None:
+            raise sqlite3.OperationalError(
+                f"{label}: operation failed without captured sqlite3.OperationalError"
+            )
+        raise last_exc
 
     def load(self, run_id: str) -> RunRecord:
         """
