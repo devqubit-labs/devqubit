@@ -37,7 +37,7 @@ async def get_capabilities() -> dict[str, Any]:
     """
     return {
         "mode": "local",
-        "version": "0.1.11",
+        "version": "0.1.12",
         "features": {
             "auth": False,
             "workspaces": False,

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "devqubit-pennylane"
-version = "0.1.11"
+version = "0.1.12"
 description = "devqubit adapter for Pennylane"
 readme = "README.md"
 license = "Apache-2.0"
@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "devqubit-engine>=0.1.11,<0.2.0",
+    "devqubit-engine>=0.1.12,<0.2.0",
     "pennylane>=0.43,<0.44",
 ]
 
