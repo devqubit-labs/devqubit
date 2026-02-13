@@ -47,14 +47,15 @@ def app(mock_registry: Mock, mock_store: Mock, mock_config: Mock) -> Any:
     """Create test FastAPI application."""
     try:
         from devqubit_ui.app import create_app
-
-        return create_app(
-            config=mock_config,
-            registry=mock_registry,
-            store=mock_store,
-        )
     except ImportError:
         pytest.skip("devqubit-ui not installed")
+        return
+
+    return create_app(
+        config=mock_config,
+        registry=mock_registry,
+        store=mock_store,
+    )
 
 
 @pytest.fixture
