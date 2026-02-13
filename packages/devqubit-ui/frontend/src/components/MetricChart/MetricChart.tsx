@@ -267,16 +267,31 @@ function LineChart({ metricKey, points, color }: LineChartProps) {
         onMouseMove={handleMouseMove}
         onMouseLeave={() => setHover(null)}
       >
-        {/* Grid lines */}
+        {/* Horizontal grid lines (dashed, subtle) */}
         {yTicks.map(v => (
           <line
-            key={v}
+            key={`gy-${v}`}
             x1={PADDING.left}
             x2={width - PADDING.right}
             y1={yScale(v)}
             y2={yScale(v)}
             stroke="var(--dq-border-color)"
-            strokeWidth={1}
+            strokeWidth={0.5}
+            strokeDasharray="3,3"
+          />
+        ))}
+
+        {/* Vertical grid lines (dashed, subtle) */}
+        {xTicks.map(v => (
+          <line
+            key={`gx-${v}`}
+            x1={xScale(v)}
+            x2={xScale(v)}
+            y1={PADDING.top}
+            y2={PADDING.top + plotH}
+            stroke="var(--dq-border-color)"
+            strokeWidth={0.5}
+            strokeDasharray="3,3"
           />
         ))}
 
@@ -358,8 +373,10 @@ function LineChart({ metricKey, points, color }: LineChartProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Public: renders one chart per metric key
+// Public: renders one chart per metric key, paginated
 // ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 6; // 2 rows × 3 columns max
 
 export interface MetricChartsProps {
   series: MetricSeries;
@@ -367,18 +384,47 @@ export interface MetricChartsProps {
 
 export function MetricCharts({ series }: MetricChartsProps) {
   const keys = Object.keys(series).sort();
+  const [page, setPage] = useState(0);
+
   if (!keys.length) return null;
 
+  const totalPages = Math.ceil(keys.length / PAGE_SIZE);
+  const pageKeys = keys.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
   return (
-    <div className="metric-charts-grid">
-      {keys.map((key, i) => (
-        <LineChart
-          key={key}
-          metricKey={key}
-          points={series[key]}
-          color={COLORS[i % COLORS.length]}
-        />
-      ))}
+    <div>
+      <div className="metric-charts-grid">
+        {pageKeys.map((key, i) => (
+          <LineChart
+            key={key}
+            metricKey={key}
+            points={series[key]}
+            color={COLORS[(page * PAGE_SIZE + i) % COLORS.length]}
+          />
+        ))}
+      </div>
+
+      {totalPages > 1 && (
+        <div className="metric-charts-pagination">
+          <button
+            className="metric-charts-page-btn"
+            onClick={() => setPage(p => p - 1)}
+            disabled={page === 0}
+          >
+            ‹ Prev
+          </button>
+          <span className="metric-charts-page-info">
+            {page + 1} / {totalPages}
+          </span>
+          <button
+            className="metric-charts-page-btn"
+            onClick={() => setPage(p => p + 1)}
+            disabled={page >= totalPages - 1}
+          >
+            Next ›
+          </button>
+        </div>
+      )}
     </div>
   );
 }

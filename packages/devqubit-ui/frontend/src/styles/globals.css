@@ -577,7 +577,19 @@
    ========================================================================= */
 .metric-charts-grid {
   @apply grid gap-4;
-  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 640px) {
+  .metric-charts-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (min-width: 1024px) {
+  .metric-charts-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 
 .metric-chart {
@@ -586,7 +598,9 @@
 }
 
 .metric-chart-header {
-  @apply flex items-baseline justify-between mb-1 px-1 gap-2;
+  @apply flex items-baseline justify-between mb-1 gap-2;
+  padding-left: 56px;   /* align with PADDING.left */
+  padding-right: 16px;  /* align with PADDING.right */
 }
 
 .metric-chart-label {
@@ -601,4 +615,28 @@
 .metric-chart-svg {
   @apply block select-none;
   max-width: 100%;
+}
+
+.metric-charts-pagination {
+  @apply flex items-center justify-center gap-3 mt-4 pt-3;
+  border-top: 1px solid var(--dq-border-color);
+}
+
+.metric-charts-page-btn {
+  @apply px-3 py-1 text-sm font-medium rounded-md transition-colors duration-150;
+  color: var(--dq-text-muted);
+}
+
+.metric-charts-page-btn:hover:not(:disabled) {
+  color: var(--dq-text-primary);
+  background: var(--dq-bg-secondary);
+}
+
+.metric-charts-page-btn:disabled {
+  @apply opacity-30 cursor-not-allowed;
+}
+
+.metric-charts-page-info {
+  @apply text-xs font-mono tabular-nums;
+  color: var(--dq-text-muted);
 }
