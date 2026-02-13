@@ -133,7 +133,7 @@ def create_app(
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-        @app.get("/{full_path:path}", response_class=HTMLResponse)
+        @app.get("/{full_path:path}", response_class=HTMLResponse, response_model=None)
         async def serve_spa(
             request: Request,
             full_path: str,
