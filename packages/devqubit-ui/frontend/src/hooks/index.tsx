@@ -347,6 +347,7 @@ export function useMutation<TArgs extends unknown[], TResult>(
  *
  * Returns null when the run has no step-based metrics.
  * Polls while the run is active so charts update in near-real-time.
+ * Does one final refetch when the run transitions to terminal state.
  */
 export function useMetricSeries(runId: string, isRunning: boolean) {
   const { api, pollingConfig } = useApp();
@@ -364,6 +365,15 @@ export function useMetricSeries(runId: string, isRunning: boolean) {
     },
     [api, runId]
   );
+
+  // Final refetch when run finishes (isRunning: true => false)
+  const prevRunning = useRef(isRunning);
+  useEffect(() => {
+    if (prevRunning.current && !isRunning) {
+      result.refetch();
+    }
+    prevRunning.current = isRunning;
+  }, [isRunning, result.refetch]);
 
   usePolling(result.refetch, pollingConfig.runDetail, isRunning);
 
