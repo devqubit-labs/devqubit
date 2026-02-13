@@ -62,3 +62,28 @@ def client(app: Any) -> Generator[TestClient, None, None]:
     """Create test client."""
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture()
+def mock_run_record(mock_registry, mock_store):
+    """Configure mocks for a run with one artifact."""
+    record = Mock()
+    record.run_name = "test-run"
+    record.record = {
+        "run_name": "test-run",
+        "project": "proj",
+        "adapter": "qiskit",
+        "artifacts": [
+            {
+                "kind": "result.json",
+                "digest": "sha256:" + "ab" * 32,
+                "role": "result",
+                "media_type": "application/json",
+            }
+        ],
+        "fingerprints": {"run": "fp1"},
+    }
+    mock_registry.load.return_value = record
+    mock_store.get_bytes.return_value = b'{"counts": {"00": 500}}'
+    mock_store.exists.return_value = True
+    return record
