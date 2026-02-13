@@ -298,7 +298,6 @@ def _to_jsonable(value: Any) -> Any:
                 }
             except (AttributeError, OSError, TypeError, ValueError) as e:
                 logger.debug("Failed to serialize array arg: %s", e)
-                pass  # Fall through to str() or repr() below.
 
     # CUDA-Q types: str() is more stable than repr()
     if "cudaq" in mod:
@@ -306,7 +305,6 @@ def _to_jsonable(value: Any) -> Any:
             return str(value)
         except (TypeError, ValueError) as e:
             logger.debug("Failed to str() cudaq value: %s", e)
-            pass  # Fall through to repr() below.
 
     # Last resort: repr, scrub hex addresses for cross-process stability
     s = repr(value)

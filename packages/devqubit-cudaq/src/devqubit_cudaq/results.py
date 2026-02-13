@@ -222,14 +222,12 @@ def _extract_sample_raw(sample_obj: Any) -> dict[str, Any]:
                 out["register_names"] = [str(n) for n in names]
         except (AttributeError, TypeError) as e:
             logger.debug("Failed to extract register_names: %s", e)
-            pass  # Best-effort: register_names extraction is non-fatal.
 
     if hasattr(sample_obj, "most_probable"):
         try:
             out["most_probable"] = str(sample_obj.most_probable())
         except (AttributeError, TypeError, ValueError) as e:
             logger.debug("Failed to get most_probable: %s", e)
-            pass  # Best-effort: most_probable not critical.
 
     if hasattr(sample_obj, "get_register_counts") and out.get("register_names"):
         reg_counts: dict[str, Any] = {}
@@ -359,7 +357,6 @@ def _extract_observe_raw(
                 out["counts_obj"] = _extract_observe_counts_raw(sr)
             except (AttributeError, TypeError, ValueError) as e:
                 logger.debug("Failed to extract observe counts: %s", e)
-                pass  # Best-effort: observe counts extraction is optional.
 
     return out
 
@@ -465,7 +462,6 @@ def _extract_counts_and_meta(
             meta["shots"] = int(sample_obj.get_total_shots())
         except (TypeError, ValueError) as e:
             logger.debug("Failed to get total_shots: %s", e)
-            pass  # Best-effort: total_shots not critical.
 
     if not skip_registers and hasattr(sample_obj, "register_names"):
         try:
@@ -474,7 +470,6 @@ def _extract_counts_and_meta(
                 meta["register_names"] = names
         except (AttributeError, TypeError) as e:
             logger.debug("Failed to extract register_names: %s", e)
-            pass  # Best-effort: register_names not critical.
 
     try:
         if hasattr(sample_obj, "items"):
