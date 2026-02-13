@@ -679,7 +679,6 @@ class TrackedCudaqExecutor:
                     return structural, h
             except (OSError, TypeError, ValueError) as e:
                 logger.debug("Source-based kernel hashing failed: %s", e)
-                pass
 
             payload = f"{get_kernel_name(kernel)}:{repr(args)}"
             h = f"sha256:{hashlib.sha256(payload.encode()).hexdigest()}"
