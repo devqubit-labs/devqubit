@@ -8,6 +8,22 @@ This project uses [towncrier](https://towncrier.readthedocs.io/) and the changes
 
 <!-- towncrier release notes start -->
 
+## [0.1.12](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.12) - 2026-02-13
+
+#### Added
+- Added ``--since``/``--until`` time-range filtering to ``devqubit list``, ``devqubit doctor`` command for stale run recovery, and full ``RegistryProtocol`` alignment for remote, S3, and GCS backends (context managers, connection lifecycle, time-range queries).
+- The runs table now shows a live-ticking Duration column for running experiments. New runs and status changes appear automatically without page refresh. ([#47](https://github.com/devqubit-labs/devqubit/pull/47))
+- Added `devqubit-cudaq` adapter for NVIDIA CUDA-Q. Track `sample()` and `observe()` executions with automatic kernel artifact capture (JSON, MLIR, QIR), target snapshots, and UEC-compliant result envelopes. Install with `pip install "devqubit[cudaq]"`. ([#54](https://github.com/devqubit-labs/devqubit/pull/54))
+- Added metric time-series tracking with automatic background persistence and live SVG charts on the run detail page. Metrics logged with `step` are batch-inserted into a dedicated `metric_points` table every 10 seconds, keeping memory and I/O constant regardless of run length. All storage backends (local, S3, GCS, remote) support the new read/write API. ([#60](https://github.com/devqubit-labs/devqubit/pull/60))
+
+#### Changed
+- Unified pagination response on GET /api/runs (adds total, offset, has_more)
+- ExportRunButton now routes requests through ApiClient instead of raw fetch(); the unused apiBaseUrl prop has been removed. ([#48](https://github.com/devqubit-labs/devqubit/pull/48))
+
+#### Fixed
+- Fixed inconsistent type coercion for the `!=` query operator, ensured SQLite connections are not reused after a failed rollback, respected `Config.capture_pip` when capturing environment, stabilized ULID generation by pinning a single ULID library, closed registries at the end of a run, added per-process caching for `pip freeze`, lazily loaded plugins to avoid import-time side effects, and rejected parameter keys containing dots. ([#46](https://github.com/devqubit-labs/devqubit/pull/46))
+- Fixed run lifecycle: ``RUNNING`` state is now persisted immediately on context entry, SQLite connection leaks in multi-threaded usage are resolved (including a Python 3.12+ ``WeakSet`` crash), and all exceptions inherit from ``DevQubitError``. ([#47](https://github.com/devqubit-labs/devqubit/pull/47))
+
 ## [0.1.11](https://github.com/devqubit-labs/devqubit/releases/tag/v0.1.11) - 2026-02-04
 
 #### Added
