@@ -127,7 +127,16 @@ export function RunDetailPage() {
     try {
       const url = api.getArtifactDownloadUrl(run.run_id, idx);
       const response = await fetch(url);
-      if (!response.ok) throw new Error('Download failed');
+      if (!response.ok) {
+        const messages: Record<number, string> = {
+          404: 'Artifact not found',
+          403: 'Permission denied',
+        };
+        throw new Error(
+          messages[response.status]
+            ?? (response.status >= 500 ? 'Server error' : `Download failed (${response.status})`)
+        );
+      }
 
       const blob = await response.blob();
       const a = document.createElement('a');
@@ -137,8 +146,9 @@ export function RunDetailPage() {
       URL.revokeObjectURL(a.href);
 
       setToast({ message: 'Download complete', variant: 'success' });
-    } catch {
-      setToast({ message: 'Download failed', variant: 'error' });
+    } catch (err) {
+      const message = err instanceof Error && err.message ? err.message : 'Download failed';
+      setToast({ message, variant: 'error' });
     }
   };
 

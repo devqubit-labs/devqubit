@@ -56,7 +56,7 @@ def serialize_record(record: RunRecord) -> dict[str, Any]:
         "adapter": record.adapter,
         "status": record.status,
         "created_at": str(record.created_at) if record.created_at else None,
-        "ended_at": record.ended_at,
+        "ended_at": str(record.ended_at) if record.ended_at else None,
         "fingerprints": record.fingerprints,
         "group_id": record.group_id,
         "group_name": record.group_name,
@@ -80,6 +80,8 @@ def serialize_record_summary(record: RunRecord) -> dict[str, Any]:
     ended_at = getattr(record, "ended_at", None)
     if ended_at is None and hasattr(record, "record"):
         ended_at = record.record.get("info", {}).get("ended_at")
+    if ended_at is not None:
+        ended_at = str(ended_at)
 
     return {
         "run_id": record.run_id,
@@ -252,9 +254,12 @@ class ArtifactService:
             record = self._registry.load(run_id)
         except Exception as exc:
             raise KeyError(f"Run not found: {run_id}") from exc
-        if idx < 0 or idx >= len(record.artifacts):
+        artifacts = getattr(record, "artifacts", None)
+        if not artifacts:
+            raise IndexError(f"No artifacts available for run {run_id}")
+        if idx < 0 or idx >= len(artifacts):
             raise IndexError(f"Artifact index {idx} out of range")
-        return record, record.artifacts[idx]
+        return record, artifacts[idx]
 
     def get_artifact_content(self, run_id: str, idx: int) -> ArtifactContent:
         """Load artifact content with size guard."""
