@@ -171,3 +171,11 @@ export interface LayoutConfig {
   appendNavLinks?: NavLink[];
   headerRight?: React.ReactNode;
 }
+
+export interface MetricPoint {
+  step: number;
+  value: number;
+  timestamp: string;
+}
+
+export type MetricSeries = Record<string, MetricPoint[]>;

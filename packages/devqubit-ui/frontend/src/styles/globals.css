@@ -571,3 +571,34 @@
     transform: rotate(360deg);
   }
 }
+
+/* =========================================================================
+   Metric Charts
+   ========================================================================= */
+.metric-charts-grid {
+  @apply grid gap-4;
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
+}
+
+.metric-chart {
+  @apply relative;
+  min-width: 0;
+}
+
+.metric-chart-header {
+  @apply flex items-baseline justify-between mb-1 px-1 gap-2;
+}
+
+.metric-chart-label {
+  @apply text-sm font-medium truncate;
+}
+
+.metric-chart-latest {
+  @apply font-mono text-xs shrink-0;
+  color: var(--dq-text-muted);
+}
+
+.metric-chart-svg {
+  @apply block select-none;
+  max-width: 100%;
+}

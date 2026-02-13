@@ -12,6 +12,7 @@ import type {
   Capabilities,
   DiffReport,
   Artifact,
+  MetricSeries,
 } from '../types';
 
 export class ApiError extends Error {
@@ -185,6 +186,10 @@ export class ApiClient {
 
   getExportDownloadUrl(runId: string): string {
     return `${this.baseUrl}/api/runs/${runId}/export/download`;
+  }
+
+  async getMetricSeries(runId: string): Promise<{ run_id: string; series: MetricSeries }> {
+    return this.request('GET', `/api/runs/${runId}/metric_series`);
   }
 }
 
