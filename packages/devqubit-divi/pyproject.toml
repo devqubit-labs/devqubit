@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "devqubit-divi"
+version = "0.1.12"
+description = "devqubit adapter for Qoro Divi"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11,<3.14"
+
+authors = [{ name = "devqubit" }]
+keywords = ["quantum", "divi", "experiment-tracking"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "devqubit-engine>=0.1.12,<0.2.0",
+]
+
+[project.entry-points."devqubit.adapters"]
+divi = "devqubit_divi.adapter:DiviAdapter"
+
+[project.entry-points."devqubit.circuit.loaders"]
+divi = "devqubit_divi.serialization:DiviCircuitLoader"
+
+[project.entry-points."devqubit.circuit.serializers"]
+divi = "devqubit_divi.serialization:DiviCircuitSerializer"
+
+[project.entry-points."devqubit.circuit.summarizers"]
+divi = "devqubit_divi.serialization:summarize_divi_circuit"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/devqubit_divi"]
+
+[tool.uv.sources]
+devqubit-engine = { workspace = true }
