@@ -21,6 +21,10 @@ from numpy.typing import NDArray
 
 logger = logging.getLogger(__name__)
 
+# Maximum number of outcomes before bootstrap falls back to heuristic.
+# Prevents excessive memory usage from multinomial sampling matrices.
+OUTCOME_CAP = 4096
+
 
 def normalize_counts(counts: dict[str, int]) -> dict[str, float]:
     """
@@ -279,7 +283,7 @@ class NoiseContext:
         Computed with +1 correction to avoid p=0.
         None if bootstrap was not performed.
     method : str
-        Estimation method: "bootstrap" or "heuristic".
+        Estimation method: "bootstrap", "bootstrap_max", or "heuristic".
     n_boot : int
         Number of bootstrap iterations (0 if heuristic).
     alpha : float
@@ -339,7 +343,7 @@ class NoiseContext:
         str
             Plain-English interpretation based on bootstrap results.
         """
-        if self.method == "bootstrap" and self.p_value is not None:
+        if self.method in ("bootstrap", "bootstrap_max") and self.p_value is not None:
             if self.p_value >= 0.10:
                 return "Difference is consistent with sampling noise (p >= 0.10)"
             elif self.p_value >= 0.05:
@@ -425,23 +429,27 @@ def compute_noise_context(
     if tvd is None:
         tvd = tvd_from_counts(counts_a, counts_b)
 
-    # Compute heuristic as fallback / lower bound
+    # Compute heuristic as fallback
     if shots_a > 0 and shots_b > 0:
         effective_shots = int(2.0 * shots_a * shots_b / (shots_a + shots_b))
     else:
         effective_shots = max(shots_a, shots_b, 1)
 
-    heuristic = expected_tvd_from_shots(effective_shots, max(num_outcomes, 1))
+    heuristic_p95 = expected_tvd_from_shots(effective_shots, max(num_outcomes, 1))
 
     # Default values (heuristic fallback)
     method = "heuristic"
-    noise_mean = heuristic
-    noise_p95 = min(1.0, 2.0 * heuristic)  # Conservative fallback
+    noise_mean = heuristic_p95
+    noise_p95 = min(1.0, heuristic_p95)
     p_value: float | None = None
     actual_n_boot = 0
 
-    # Attempt bootstrap if we have sufficient data
-    if shots_a > 0 and shots_b > 0 and num_outcomes > 0:
+    # Attempt bootstrap if we have sufficient data and outcomes are manageable
+    can_bootstrap = (
+        shots_a > 0 and shots_b > 0 and num_outcomes > 0 and num_outcomes <= OUTCOME_CAP
+    )
+
+    if can_bootstrap:
         try:
             p_a, p_b, _ = counts_to_arrays(counts_a, counts_b)
 
@@ -452,22 +460,12 @@ def compute_noise_context(
             rng = np.random.default_rng(seed)
             sims = _bootstrap_tvd_null(pooled, shots_a, shots_b, n_boot=n_boot, rng=rng)
 
-            bootstrap_mean = float(np.mean(sims))
-            bootstrap_p95 = float(np.quantile(sims, alpha))
+            noise_mean = float(np.mean(sims))
+            noise_p95 = min(1.0, float(np.quantile(sims, alpha)))
 
             # +1 correction for p-value (standard bootstrap practice)
-            # This ensures p-value is never exactly 0 and provides
-            # more conservative estimates for small n_boot
-            bootstrap_pval = float((1 + np.sum(sims >= tvd)) / (n_boot + 1))
+            p_value = float((1 + np.sum(sims >= tvd)) / (n_boot + 1))
 
-            # Conservative approach: never let bootstrap underestimate noise
-            # This protects against pathological cases with unobserved outcomes
-            noise_mean = max(bootstrap_mean, heuristic)
-
-            # Clamp to [0, 1] range (TVD is always in this range)
-            noise_p95 = min(1.0, max(bootstrap_p95, 1.5 * heuristic))
-
-            p_value = bootstrap_pval
             method = "bootstrap"
             actual_n_boot = n_boot
 
@@ -481,6 +479,12 @@ def compute_noise_context(
         except Exception as e:
             logger.debug("Bootstrap failed, using heuristic: %s", e)
             # Keep heuristic values
+    elif num_outcomes > OUTCOME_CAP:
+        logger.debug(
+            "Outcome count %d exceeds cap %d, using heuristic fallback",
+            num_outcomes,
+            OUTCOME_CAP,
+        )
 
     # Compute ratio for backward compatibility
     if noise_mean > 0:
@@ -511,5 +515,174 @@ def compute_noise_context(
         p_value=p_value,
         method=method,
         n_boot=actual_n_boot,
+        alpha=alpha,
+    )
+
+
+def _pooled_distribution(
+    counts_a: dict[str, int],
+    counts_b: dict[str, int],
+) -> tuple[NDArray[np.float64], int, int]:
+    """
+    Compute pooled probability distribution under H0.
+
+    Parameters
+    ----------
+    counts_a : dict
+        First count distribution.
+    counts_b : dict
+        Second count distribution.
+
+    Returns
+    -------
+    pooled : ndarray
+        Normalized pooled probabilities.
+    shots_a : int
+        Total shots in counts_a.
+    shots_b : int
+        Total shots in counts_b.
+    """
+    shots_a = sum(counts_a.values())
+    shots_b = sum(counts_b.values())
+    p_a, p_b, _ = counts_to_arrays(counts_a, counts_b)
+    pooled = (p_a * shots_a + p_b * shots_b) / float(shots_a + shots_b)
+    pooled = pooled / pooled.sum()
+    return pooled, shots_a, shots_b
+
+
+def compute_noise_context_max(
+    pairs: list[tuple[dict[str, int], dict[str, int]]],
+    tvd_max: float,
+    *,
+    n_boot: int = 1000,
+    alpha: float = 0.95,
+    seed: int = 12345,
+) -> NoiseContext:
+    """
+    Compute noise context for the max-TVD statistic over multiple item pairs.
+
+    When comparing batches (item_index="all"), the aggregated statistic is
+    max(TVD_i). The noise threshold must correspond to the distribution of
+    max(TVD_i) under H0, not to a single-item TVD. This avoids inflated
+    false-positive rates (FWER) when testing multiple items.
+
+    Parameters
+    ----------
+    pairs : list of (counts_a, counts_b)
+        Count dictionaries for each matched item pair.
+    tvd_max : float
+        Observed max TVD across all pairs.
+    n_boot : int, default=1000
+        Number of bootstrap iterations.
+    alpha : float, default=0.95
+        Quantile level for noise_p95 threshold.
+    seed : int, default=12345
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    NoiseContext
+        Noise context calibrated for the max-TVD statistic.
+    """
+    if not pairs:
+        return NoiseContext(
+            tvd=tvd_max,
+            expected_noise=1.0,
+            noise_ratio=0.0,
+            shots_a=0,
+            shots_b=0,
+            num_outcomes=0,
+            exceeds_noise=False,
+            noise_p95=1.0,
+            p_value=None,
+            method="heuristic",
+            n_boot=0,
+            alpha=alpha,
+        )
+
+    rng = np.random.default_rng(seed)
+    max_sims: NDArray[np.float64] | None = None
+
+    total_shots_a = 0
+    total_shots_b = 0
+    max_outcomes = 0
+    any_over_cap = False
+
+    for counts_a, counts_b in pairs:
+        shots_a = sum(counts_a.values())
+        shots_b = sum(counts_b.values())
+        total_shots_a += shots_a
+        total_shots_b += shots_b
+
+        if shots_a <= 0 or shots_b <= 0:
+            continue
+
+        pooled, _, _ = _pooled_distribution(counts_a, counts_b)
+        max_outcomes = max(max_outcomes, pooled.size)
+
+        if pooled.size > OUTCOME_CAP:
+            any_over_cap = True
+            continue
+
+        sims_i = _bootstrap_tvd_null(pooled, shots_a, shots_b, n_boot=n_boot, rng=rng)
+
+        if max_sims is None:
+            max_sims = sims_i.copy()
+        else:
+            np.maximum(max_sims, sims_i, out=max_sims)
+
+    if any_over_cap:
+        logger.debug(
+            "Some items exceed outcome cap %d, bootstrap_max is partial",
+            OUTCOME_CAP,
+        )
+
+    if max_sims is None:
+        # All items skipped — heuristic fallback
+        effective_shots = max(total_shots_a, total_shots_b, 1)
+        heuristic_p95 = expected_tvd_from_shots(effective_shots, max(max_outcomes, 1))
+        noise_ratio = (
+            (tvd_max / heuristic_p95)
+            if heuristic_p95 > 0
+            else (float("inf") if tvd_max > 0 else 0.0)
+        )
+        return NoiseContext(
+            tvd=tvd_max,
+            expected_noise=heuristic_p95,
+            noise_ratio=noise_ratio,
+            shots_a=total_shots_a,
+            shots_b=total_shots_b,
+            num_outcomes=max_outcomes,
+            exceeds_noise=tvd_max > heuristic_p95,
+            noise_p95=min(1.0, heuristic_p95),
+            p_value=None,
+            method="heuristic",
+            n_boot=0,
+            alpha=alpha,
+        )
+
+    noise_mean = float(np.mean(max_sims))
+    noise_p95 = min(1.0, float(np.quantile(max_sims, alpha)))
+    p_value = float((1 + np.sum(max_sims >= tvd_max)) / (n_boot + 1))
+
+    exceeds = tvd_max > noise_p95
+    noise_ratio = (
+        (tvd_max / noise_mean)
+        if noise_mean > 0
+        else (float("inf") if tvd_max > 0 else 0.0)
+    )
+
+    return NoiseContext(
+        tvd=tvd_max,
+        expected_noise=noise_mean,
+        noise_ratio=noise_ratio,
+        shots_a=total_shots_a,
+        shots_b=total_shots_b,
+        num_outcomes=max_outcomes,
+        exceeds_noise=exceeds,
+        noise_p95=noise_p95,
+        p_value=p_value,
+        method="bootstrap_max",
+        n_boot=n_boot,
         alpha=alpha,
     )
