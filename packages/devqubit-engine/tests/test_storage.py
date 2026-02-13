@@ -82,7 +82,8 @@ class TestRegistry:
         """delete() removes run from registry."""
         registry.save(run_factory(run_id="TODELETE1").to_dict())
 
-        assert registry.delete("TODELETE1")
+        result = registry.delete("TODELETE1")
+        assert result
         assert not registry.exists("TODELETE1")
 
     def test_list_runs(self, registry, run_factory):
