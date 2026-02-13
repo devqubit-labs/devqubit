@@ -134,8 +134,11 @@ async def get_metric_series(run_id: str, registry: RegistryDep):
 
     try:
         series = registry.load_metric_series(run_id)
-    except Exception:
+    except (KeyError, FileNotFoundError):
         raise HTTPException(status_code=404, detail="Run not found")
+    except Exception:
+        logger.exception("Failed to load metric series for run %s", run_id)
+        raise HTTPException(status_code=500, detail="Failed to load metric series")
 
     return JSONResponse(content={"run_id": run_id, "series": series})
 
@@ -178,8 +181,10 @@ async def get_artifact(
                 response["content"] = content
                 if content_result.is_json:
                     response["content_json"] = json.loads(content)
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                pass
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                logger.debug(
+                    "Artifact %d preview decode failed for run %s: %s", idx, run_id, exc
+                )
 
     return JSONResponse(content=response)
 
