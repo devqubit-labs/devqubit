@@ -12,7 +12,9 @@ license-files = ["LICENSE*"]
 requires-python = ">=3.11,<3.14"
 
 
-authors = [{ name = "devqubit" }]
+authors = [
+    { name = "Mateusz Papierz", email = "m2papierz@gmail.com" }
+]
 keywords = ["quantum", "experiment-tracking"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -32,7 +34,6 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://devqubit.com"
 Repository = "https://github.com/devqubit-labs/devqubit"
 Issues = "https://github.com/devqubit-labs/devqubit/issues"
 Documentation = "https://devqubit.readthedocs.io"
