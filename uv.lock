@@ -62,7 +62,7 @@ wheels = [
 
 [[package]]
 name = "amazon-braket-sdk"
-version = "1.107.0"
+version = "1.117.3"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "amazon-braket-default-simulator" },
@@ -80,9 +80,9 @@ dependencies = [
     { name = "oqpy" },
     { name = "sympy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3a/7b/0b3b01422326747988572e401296d5d30e2cc94833e57a82e2c8a0ab1d42/amazon_braket_sdk-1.107.0.tar.gz", hash = "sha256:e90d1607a2f1a71a8a2bfb81562ca5b4a3754781b5e6475cd0c94f6b4a00b214", size = 480626, upload-time = "2025-12-22T16:15:15.671Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/3c/d6996fa1e258182a68852c1e33f7d2e7b6ca32ca67ee00fc73e93eba6221/amazon_braket_sdk-1.117.3.tar.gz", hash = "sha256:d1f40023b05fb2a6b3b28fc18f9acbe23aa5ebe14f4879d1d86bfd626e801727", size = 500145, upload-time = "2026-05-14T16:17:10.446Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/52/939b5cdbca1d5d53d3d505f777886a86a0a5457003c9c2238efd38a9ad54/amazon_braket_sdk-1.107.0-py3-none-any.whl", hash = "sha256:34b971c4a1cd8f9795ae9053575b01f89e22a28fdde3cfdba104895a48515e5b", size = 372411, upload-time = "2025-12-22T16:15:14.425Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/b3/3fb717ea1dc04903710db3fd23523db7535425efe462b31df021ded05877/amazon_braket_sdk-1.117.3-py3-none-any.whl", hash = "sha256:27fe7b2ea61b981bbed5f002d021b10df90a6aca400b04787b28a8e439ef5333", size = 388008, upload-time = "2026-05-14T16:17:08.374Z" },
 ]
 
 [[package]]
