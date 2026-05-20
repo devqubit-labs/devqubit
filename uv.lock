@@ -683,7 +683,7 @@ wheels = [
 
 [[package]]
 name = "cuda-quantum-cu12"
-version = "0.13.0"
+version = "0.14.2"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "astpretty" },
@@ -702,12 +702,12 @@ dependencies = [
     { name = "scipy" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/2f/2e9531ccaababedb11e5640618b1fc69a131243d7055d98de8bdf10e503b/cuda_quantum_cu12-0.13.0-cp311-cp311-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:43cc9219c4b0b27a41a344ab1a0c6f4c5ab4d24bedc005717d7a042adbb4b6c8", size = 116324532, upload-time = "2025-11-18T21:40:50.326Z" },
-    { url = "https://files.pythonhosted.org/packages/56/45/ed7e0aafa8e446cf489a740fbbf8b110d79d99d1edb0e73b32ebacbc9f2d/cuda_quantum_cu12-0.13.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2151ef63d0204c1a756d12808efe6b7bfaa4b7c2aca894d4fd6141c74f7240aa", size = 122481674, upload-time = "2025-11-18T21:41:54.449Z" },
-    { url = "https://files.pythonhosted.org/packages/11/04/2a15ada27d859e165a9bd328f27198497680dc53c6e9a67cb3145370b1b2/cuda_quantum_cu12-0.13.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:afa4ee7dd5c3fa2bb29b308e98777a84e6d13ff24d724b01b649680ed57af4f0", size = 116312530, upload-time = "2025-11-18T21:43:08.399Z" },
-    { url = "https://files.pythonhosted.org/packages/30/5b/f09c96567d4c0fe70722750c87f3952a7c3b7bc48e50c45420069e7a171c/cuda_quantum_cu12-0.13.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f8d5156c88f7105ccfebd84d0e996693f3894effe04cb6efafe7071c9cf48614", size = 122468686, upload-time = "2025-11-18T21:44:12.98Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/92/9ad9d75eb8a22d9b15b680e2fda58664544639a683196dd35f04cffdffde/cuda_quantum_cu12-0.13.0-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:17bbe5862af745e9111f426c9e36d729d95abfb0df3dea97b4c18ad44abdf02e", size = 116312386, upload-time = "2025-11-18T21:45:12.708Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/00/8d0d2a99904d24ad31a539929ddd05da57160bd72dc09bbb2917e11bfda6/cuda_quantum_cu12-0.13.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3cf33b9cba6da178ca4c0583b9f8019f65d0924c7617679a1527d65b573022b8", size = 122471631, upload-time = "2025-11-18T21:46:14.364Z" },
+    { url = "https://files.pythonhosted.org/packages/74/e4/14371fcdc978e2b14e53de703c75f8c9b66402c818e329392e5731d5e177/cuda_quantum_cu12-0.14.2-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:eb347dd1d5ac4d144744bc7319efde51704219e0d78a04d6a6b14909b820dcfe", size = 114546475, upload-time = "2026-04-30T18:51:16.18Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/40/d76d2409fdf781826d882d4958a4aadcd1a8696e7fb61b0df6670d919166/cuda_quantum_cu12-0.14.2-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:314c086b21a4263f4550eed45d6ca599a00e1f3899eb4789e0ee3ef626fe1c02", size = 128872318, upload-time = "2026-04-30T18:52:10.886Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/59/5d3ef3703ece50453debec8512becca6922c20d542662ac171d4184cdbe5/cuda_quantum_cu12-0.14.2-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:651a9d26e41aa736788c98a2c343df720444079283f52ef4469169827b0462a6", size = 114534144, upload-time = "2026-04-30T18:52:22.591Z" },
+    { url = "https://files.pythonhosted.org/packages/80/a3/658057d365bd9f873e3d7576bce92c30eaed8f9581cbc9c103d835a18487/cuda_quantum_cu12-0.14.2-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:30cb8e27a4ca3369d554c20849fee90c1103d969cd409ec43b1108691a0fe32e", size = 128856873, upload-time = "2026-04-30T18:52:41.252Z" },
+    { url = "https://files.pythonhosted.org/packages/74/d3/8ea8c82955151f7646c831b7d4d68122a0b496883c57188eb0c428a2198a/cuda_quantum_cu12-0.14.2-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:64477eee23499c7f65289706468caaf9d4cc803f4ceb954aeb88d0a49e235fc5", size = 114534816, upload-time = "2026-04-30T18:52:51.835Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/f7/3a18b3251d29644b2da7a8f42ef1111ef2dc289c5a5c49bb5507fe5e034d/cuda_quantum_cu12-0.14.2-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:dc9ea2a579f8a49629c5258a944db96b31bca6fb1cbf047559e1d6b2d68e079f", size = 128862238, upload-time = "2026-04-30T18:52:58.41Z" },
 ]
 
 [[package]]
@@ -997,7 +997,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cuda-quantum-cu12", specifier = ">=0.13.0,<0.14.0" },
+    { name = "cuda-quantum-cu12", specifier = ">=0.13.0,<0.15.0" },
     { name = "cudaq", specifier = ">=0.13.0,<0.14.0" },
     { name = "devqubit-engine", editable = "packages/devqubit-engine" },
 ]
