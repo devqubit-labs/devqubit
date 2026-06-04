@@ -712,9 +712,9 @@ wheels = [
 
 [[package]]
 name = "cudaq"
-version = "0.13.0"
+version = "0.14.2"
 source = { registry = "https://pypi.org/simple/" }
-sdist = { url = "https://files.pythonhosted.org/packages/b7/7e/e87a3f735e24e8355a290ebf34ab8ab35a05afea3ca98d5c166392997304/cudaq-0.13.0.tar.gz", hash = "sha256:9b49d281780f7c62b17cd16f840cc2d03fae4da76459c7f15dbfc1f44159c6e5", size = 9188, upload-time = "2025-11-18T22:18:25.72Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/61/72a2940b4c515ba7a596fec4be0131138a756a0ebf0bf85825004413ee85/cudaq-0.14.2.tar.gz", hash = "sha256:ae222032933bc5d7f17d5e4110bcf9089282d50e3ca3a51ec308786226c0ac98", size = 9971, upload-time = "2026-04-30T19:20:42.461Z" }
 
 [[package]]
 name = "cudensitymat-cu12"
@@ -998,7 +998,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "cuda-quantum-cu12", specifier = ">=0.13.0,<0.14.0" },
-    { name = "cudaq", specifier = ">=0.13.0,<0.14.0" },
+    { name = "cudaq", specifier = ">=0.13.0,<0.15.0" },
     { name = "devqubit-engine", editable = "packages/devqubit-engine" },
 ]
 
