@@ -687,7 +687,7 @@ wheels = [
 
 [[package]]
 name = "cuda-quantum-cu12"
-version = "0.15.0"
+version = "0.15.1"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "astpretty" },
@@ -706,12 +706,12 @@ dependencies = [
     { name = "scipy" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/d3/ae36edd75c013dc28a5a3a9c39e22bf2d1122272a16889569a88cebce2ce/cuda_quantum_cu12-0.15.0-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:7390bf6c4eaab823d8668387478d3f2485acfddb73afc9f6ae377cf4166f215f", size = 112777665, upload-time = "2026-07-02T11:52:44.657Z" },
-    { url = "https://files.pythonhosted.org/packages/e4/b2/49083658e8c7eae95698562fc84de322fdaa9c7570446f90630f967ba2ef/cuda_quantum_cu12-0.15.0-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:fb0cde25a6bf4d37f75fa3c6c2cb5eb4b7855769e4329ef66358b2c472202081", size = 125323916, upload-time = "2026-07-02T11:53:49.689Z" },
-    { url = "https://files.pythonhosted.org/packages/3d/de/2f9b8349603a80070992f98566fa352e5774e8d6f1e4c254d21b2313c27e/cuda_quantum_cu12-0.15.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:167e73f78c7b186abe0535d3f50728fc095738bf7cccf6f609d05561b2ec1ccb", size = 112780348, upload-time = "2026-07-02T11:54:56.116Z" },
-    { url = "https://files.pythonhosted.org/packages/a5/c6/18300c9dd952ae9ed3eb0c46746df7a6974a3722552646bf606abcb54a44/cuda_quantum_cu12-0.15.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:46419e0745c022fe2ded0018ab785d6546396753df5d616f604bbd9fa7125153", size = 125326598, upload-time = "2026-07-02T11:56:08.134Z" },
-    { url = "https://files.pythonhosted.org/packages/d3/5a/7dc250e74950840fcbe12b3e18af8cb34a83a65ba9fb691ab51c2857d5c1/cuda_quantum_cu12-0.15.0-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:535d4476a61dcd2902527a48dd13455026217e256e6d0efa03e469216e28dc3c", size = 112785188, upload-time = "2026-07-02T11:57:07.815Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/49/e04c487bfbf8f6e3feaedf2489584c93d46f7c8790811cea1ab1ed530f11/cuda_quantum_cu12-0.15.0-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:c589d708ffdef1d59714407838e5a613dfe0d27414367f86b54fb2cc8312bbdd", size = 125328710, upload-time = "2026-07-02T11:58:00.588Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/c7/bbb3307e7502b4640f68d7b3fd732ad8ef58fad0110d2692983519682819/cuda_quantum_cu12-0.15.1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:77bb78af44566058cff29904c91b5e9bb7ee5e36d4f8aa7301e9b74f07a8f08f", size = 113268313, upload-time = "2026-08-03T17:14:34.539Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/53/4c2fc7996a1a4a0c8db5df30df7758e2bd0dbfbe50db637c40c7158e61db/cuda_quantum_cu12-0.15.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:7d084d650b16af9c639d56a515b96a7316abcf621ddf3e1fdb4dde10554e30d7", size = 125873284, upload-time = "2026-08-03T17:14:39.956Z" },
+    { url = "https://files.pythonhosted.org/packages/44/42/3a4d75bda038439beb8a4091206b9c5774492dcaa15e1bf3bd339bc4291d/cuda_quantum_cu12-0.15.1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:0bfe3f3571b2451c1ca0cf41adfdb6c0861cd5d74b6eff414982a0f48f55b1de", size = 113271780, upload-time = "2026-08-03T17:14:45.751Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/a1/c646cc9d1006c24ee53a37dc3df342b603fc6b6bf323ae1be46e92f45dd5/cuda_quantum_cu12-0.15.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:2ddade14524e67b8a83dfbaf0da0e27f4e8b979d96bfa41ca3e73b7e79177219", size = 125876949, upload-time = "2026-08-03T17:14:50.708Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/f9/d5d572c4618b6f85fe5781b2ee3e361e619932ace503ae02bbe517acb3aa/cuda_quantum_cu12-0.15.1-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:de178c4e44990c94f9dcdb06bb35460f0c6103928b8db3a901e04e9057623274", size = 113276156, upload-time = "2026-08-03T17:14:55.498Z" },
+    { url = "https://files.pythonhosted.org/packages/11/f6/88bac5dc23bdd681a121e8009ed8fc23b36c29d7d52385f65980f3bdc9e5/cuda_quantum_cu12-0.15.1-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:002939d9dce108cee6b4260b7c6ad91df0d303857f01aa336fc6487f9edcb144", size = 125880589, upload-time = "2026-08-03T17:15:00.761Z" },
 ]
 
 [[package]]
