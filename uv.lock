@@ -56,25 +56,24 @@ wheels = [
 
 [[package]]
 name = "amazon-braket-schemas"
-version = "1.27.0"
+version = "1.32.1.post0"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/74/bb/7c9316bad4de6904136785c7a2977380672e1fb55ff0de78cab0d69060af/amazon_braket_schemas-1.27.0.tar.gz", hash = "sha256:7d0b44e1343367732deeba4fc8a7f2711ada43278e0a90678bff018daab68c9c", size = 59736, upload-time = "2025-11-18T15:36:28.52Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/9f/33a5e8c8acba21741538795ed23f3d564606268143d726e0b9227826250f/amazon_braket_schemas-1.32.1.post0.tar.gz", hash = "sha256:4659c1b7b2f392ac74baf32835b34bdcfc7fc2a7d4e06c2121dc436527ea3694", size = 60722, upload-time = "2026-09-02T16:43:59.323Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/63/b833ec54afe8470749a46ac75d68e466ab585209a54161432c3bcbab3824/amazon_braket_schemas-1.27.0-py3-none-any.whl", hash = "sha256:708d2e5101c78a96f06d00ab81130e8a068e85f72f16d23899226f1f7c61961e", size = 152789, upload-time = "2025-11-18T15:36:27.174Z" },
+    { url = "https://files.pythonhosted.org/packages/4a/b2/ae8fb926e139b15d78c12f498a76cfc1b1bf3374c9dcf9c6e927d4f91e40/amazon_braket_schemas-1.32.1.post0-py3-none-any.whl", hash = "sha256:eae8c404ee21da8c01e18cc242a90032b0ed4fb3b104671ac3a05a8dee693d51", size = 153245, upload-time = "2026-09-02T16:43:57.996Z" },
 ]
 
 [[package]]
 name = "amazon-braket-sdk"
-version = "1.124.0"
+version = "1.126.1"
 source = { registry = "https://pypi.org/simple/" }
 dependencies = [
     { name = "amazon-braket-default-simulator" },
     { name = "amazon-braket-schemas" },
     { name = "backoff" },
-    { name = "backports-entry-points-selectable" },
     { name = "boltons" },
     { name = "boto3" },
     { name = "cloudpickle" },
@@ -86,9 +85,9 @@ dependencies = [
     { name = "oqpy" },
     { name = "sympy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7b/39/7f240963ca1d5620e142c4b1af677f915ed6896126a5e52631ed8f262009/amazon_braket_sdk-1.124.0.tar.gz", hash = "sha256:2ac3b4ff92551841c93a918705b7e13584ef2e62c3910dd4f6a8bfedf199dafa", size = 273350, upload-time = "2026-07-14T16:33:51.12Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/35/6f31d4943c011e749f6d6333b305eddf7ed9c1844d76009d4c394cb7256c/amazon_braket_sdk-1.126.1.tar.gz", hash = "sha256:d7ba7dd4dc386e0eada1a0254757d0aac8c1e572856e874a37e1e3a2fcf32c4a", size = 279480, upload-time = "2026-08-28T17:14:47.218Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/e5/85746667e666dcedfd13ad7a9c7a643557604f6cb2cbc4a7d8d79343e036/amazon_braket_sdk-1.124.0-py3-none-any.whl", hash = "sha256:bbfb9b4ecbb8c8db9cc1654e36cdac074c4f60214ced00f623c3722b751466a7", size = 400627, upload-time = "2026-07-14T16:33:49.445Z" },
+    { url = "https://files.pythonhosted.org/packages/2b/dc/fb61c8bc092bc7c847a099819d84d3272b5be60b7022806a73e8b05131e2/amazon_braket_sdk-1.126.1-py3-none-any.whl", hash = "sha256:845ff4c1f19bbc412e5df1499c83709b6cbad6ea0155f2e499f40f498a73994e", size = 402277, upload-time = "2026-08-28T17:14:45.801Z" },
 ]
 
 [[package]]
@@ -226,15 +225,6 @@ source = { registry = "https://pypi.org/simple/" }
 sdist = { url = "https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba", size = 17001, upload-time = "2022-10-05T19:19:32.061Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/73/b6e24bd22e6720ca8ee9a85a0c4a2971af8497d8f3193fa05390cbd46e09/backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8", size = 15148, upload-time = "2022-10-05T19:19:30.546Z" },
-]
-
-[[package]]
-name = "backports-entry-points-selectable"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple/" }
-sdist = { url = "https://files.pythonhosted.org/packages/fc/25/dae014b114397a6f60578d7358bf5fcb103f71556e5363a50d7b42e9bc51/backports.entry_points_selectable-1.3.0.tar.gz", hash = "sha256:17a8b44ae700fba548686dd274ddc91c060371565cd63806c20a1d33911746e6", size = 9882, upload-time = "2023-11-27T19:03:06.585Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/78/b3ba5d804ae21e26e6179bbe4e1338deaaba9d20161918f59e20e9d92ea0/backports.entry_points_selectable-1.3.0-py3-none-any.whl", hash = "sha256:66f5da003eb4b283c7b60581bc8bb0baf0d810eb3e3068da786d3821b4d5746a", size = 6217, upload-time = "2023-11-27T19:03:04.844Z" },
 ]
 
 [[package]]
